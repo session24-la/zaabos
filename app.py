@@ -1174,7 +1174,7 @@ def public_create_order():
     order_id = cur.lastrowid
     for it in prepared_items:
         oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
-            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], now()))
+            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
         oi_id = oi_cur.lastrowid
         for opt in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
@@ -1289,7 +1289,7 @@ def staff_create_order():
     order_id = cur.lastrowid
     for it in prepared_items:
         oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
-            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], now()))
+            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
         oi_id = oi_cur.lastrowid
         for opt in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
@@ -1411,10 +1411,10 @@ def add_order_items(oid):
     d=request.get_json() or {}
     try: prepared,_=_validate_and_price_cart(conn,g.tenant_id,order['branch_id'],d.get('items') or [])
     except ValueError as e: return jsonify(error=str(e)),400
-    ids=[]; ts=now()
+    ids=[]
     for it in prepared:
         cur=conn.execute('INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at) VALUES(?,?,?,?,?,?,?,?)',
-            (oid,it['menu_item_id'],it['item_name'],it['quantity'],it['unit_price'],it['line_total'],it['notes'],ts))
+            (oid,it['menu_item_id'],it['item_name'],it['quantity'],it['unit_price'],it['line_total'],it['notes'],None))
         iid=cur.lastrowid; ids.append(iid)
         for op in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
