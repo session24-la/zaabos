@@ -387,6 +387,7 @@ def ensure_schema_migrations(conn):
     conn.commit()
     record_migration(conn, 14, 'restaurant_operations_foundation')
     record_migration(conn, 15, 'restaurant_menu_modifiers')
+    record_migration(conn, 16, 'critical_operations_approval')
 
 def init_db():
     if IS_POSTGRES:
@@ -1546,12 +1547,17 @@ def update_order_status(oid):
     if status not in STATUS_TRANSITIONS.get(current, set()):
         return jsonify(error=f'ไม่สามารถเปลี่ยนสถานะจาก {current} เป็น {status} ได้'), 409
     if status == 'cancelled':
+        reason=(d.get('reason') or '').strip()[:300]
+        if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการยกเลิกออเดอร์'),400
+        approved_by, approval_err = _critical_approval(conn,d)
+        if approval_err: return approval_err
         rows = conn.execute('SELECT * FROM order_items WHERE order_id=?', (oid,)).fetchall()
         for it in rows:
             remaining = max(0, int(it['quantity']) - int(it['cancelled_quantity'] or 0))
             _restore_stock(conn, it['menu_item_id'], remaining)
             conn.execute('UPDATE order_items SET cancelled_quantity=quantity,cancelled_at=COALESCE(cancelled_at,?) WHERE id=?', (now(), it['id']))
     conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (status, now(), oid))
+    if status == 'cancelled': _record_critical(conn,'cancel_order',order['branch_id'],'order',oid,reason,approved_by,f'{current} -> cancelled')
     log_action('update_order_status', detail=f'{oid}: {current} -> {status}')
     conn.commit()
     return jsonify(ok=True)
@@ -1673,13 +1679,18 @@ def cancel_order_item(oid,iid):
     it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,oid)).fetchone()
     if not it: return jsonify(error='ไม่พบรายการ'),404
     d=request.get_json() or {}; remaining=max(0,int(it['quantity'])-int(it['cancelled_quantity'] or 0))
+    reason=(d.get('reason') or '').strip()[:300]
+    if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการยกเลิกรายการ'),400
+    approved_by, approval_err = _critical_approval(conn,d)
+    if approval_err: return approval_err
     try: qty=int(d.get('quantity') or remaining)
     except: return jsonify(error='จำนวนไม่ถูกต้อง'),400
     if qty<1 or qty>remaining: return jsonify(error='จำนวนยกเลิกไม่ถูกต้อง'),400
     new_cancel=int(it['cancelled_quantity'] or 0)+qty
-    conn.execute('UPDATE order_items SET cancelled_quantity=?,cancellation_reason=?,cancelled_at=? WHERE id=?',(new_cancel,(d.get('reason') or '')[:200],now(),iid))
+    conn.execute('UPDATE order_items SET cancelled_quantity=?,cancellation_reason=?,cancelled_at=? WHERE id=?',(new_cancel,reason[:200],now(),iid))
     _restore_stock(conn,it['menu_item_id'],qty); total=_recalculate_order_total(conn,oid)
-    log_action('cancel_order_item',detail=f'{oid}/{iid}: {qty}'); conn.commit()
+    _record_critical(conn,'cancel_item',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} qty={qty}')
+    log_action('cancel_order_item',detail=f'{oid}/{iid}: {qty} / {reason}'); conn.commit()
     return jsonify(ok=True,total_amount=total,cancelled_quantity=new_cancel)
 
 @app.put('/api/orders/<int:oid>/items/<int:iid>/quantity')
@@ -1722,6 +1733,45 @@ def move_order_table(oid):
     conn.execute('UPDATE orders SET table_id=?,table_name_snapshot=?,updated_at=? WHERE id=?',(table_id,tb['name'],now(),oid))
     log_action('move_order_table',detail=f'{oid}: {order["table_id"]} -> {table_id}'); conn.commit(); return jsonify(ok=True)
 
+# ---------- Round 14C: critical operations / manager approval ----------
+def _critical_approval(conn, payload):
+    # Staff must provide manager/owner credentials; managers approve their own critical action.
+    if g.user['role'] in ('owner','manager','super_admin'):
+        return g.user['id'], None
+    username=(payload.get('approval_username') or '').strip()
+    password=payload.get('approval_password') or ''
+    if not username or not password:
+        return None, (jsonify(error='รายการนี้ต้องได้รับอนุมัติจาก Owner/Manager'), 403)
+    approver=conn.execute("SELECT * FROM users WHERE tenant_id=? AND username=? AND active=1 AND role IN ('owner','manager') LIMIT 1",(g.tenant_id,username)).fetchone()
+    if not approver or not verify_password(approver['password_hash'],password):
+        return None, (jsonify(error='ข้อมูลผู้อนุมัติไม่ถูกต้อง'), 403)
+    return approver['id'], None
+
+def _record_critical(conn, operation_type, branch_id=None, entity_type='', entity_id=None, reason_text='', approved_by=None, detail=''):
+    conn.execute('''INSERT INTO critical_operations(tenant_id,branch_id,operation_type,entity_type,entity_id,reason_text,performed_by_user_id,approved_by_user_id,detail,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                 (g.tenant_id,branch_id,operation_type,entity_type,entity_id,(reason_text or '')[:300],g.user['id'],approved_by,(detail or '')[:1000],now()))
+
+@app.get('/api/operations/reasons')
+@login_required
+@role_required('owner','manager','staff')
+def list_operation_reasons():
+    typ=(request.args.get('operation_type') or '').strip()
+    conn=db(); q='SELECT * FROM operation_reasons WHERE tenant_id=? AND active=1'; args=[g.tenant_id]
+    if typ: q+=' AND operation_type=?'; args.append(typ)
+    q+=' ORDER BY operation_type,sort_order,id'
+    return jsonify([dict(x) for x in conn.execute(q,args).fetchall()])
+
+@app.post('/api/operations/reasons')
+@login_required
+@role_required('owner','manager')
+def create_operation_reason():
+    d=request.get_json() or {}; typ=(d.get('operation_type') or '').strip()[:50]; label=(d.get('label') or '').strip()[:120]
+    if typ not in ('cancel_item','cancel_order','refund','discount','cash_in','cash_out') or not label:
+        return jsonify(error='ประเภทหรือเหตุผลไม่ถูกต้อง'),400
+    conn=db(); cur=conn.execute('INSERT INTO operation_reasons(tenant_id,operation_type,label,active,sort_order,created_at) VALUES(?,?,?,?,?,?)',(g.tenant_id,typ,label,1,int(d.get('sort_order') or 0),now())); conn.commit()
+    return jsonify(ok=True,id=cur.lastrowid)
+
 # ---------- production completion: refund/void + merge bills ----------
 
 @app.post('/api/orders/<int:oid>/refund')
@@ -1738,10 +1788,13 @@ def refund_order(oid):
     if not payment: return jsonify(error='ไม่พบข้อมูลการชำระเงินเดิม'),409
     d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
     if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการคืนเงิน'),400
+    approved_by, approval_err = _critical_approval(conn,d)
+    if approval_err: return approval_err
     amount=float(payment['amount'] or 0); ts=now()
     try:
         conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at) VALUES(?,?,?,?,?,?,?,?)',
                      (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts))
+        _record_critical(conn,'refund',order['branch_id'],'order',oid,reason,approved_by,f'amount={amount} payment={payment["id"]}')
         log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}')
         conn.commit()
     except INTEGRITY_ERRORS:
@@ -2035,7 +2088,7 @@ def close_shift():
 @login_required
 @role_required('owner','manager')
 def list_critical_operations():
-    conn=db(); rows=conn.execute("SELECT c.*,u.display_name AS performed_by_name FROM critical_operations c LEFT JOIN users u ON u.id=c.performed_by_user_id WHERE c.tenant_id=? ORDER BY c.id DESC LIMIT 200",(g.tenant_id,)).fetchall()
+    conn=db(); rows=conn.execute("SELECT c.*,u.display_name AS performed_by_name,a.display_name AS approved_by_name FROM critical_operations c LEFT JOIN users u ON u.id=c.performed_by_user_id LEFT JOIN users a ON a.id=c.approved_by_user_id WHERE c.tenant_id=? ORDER BY c.id DESC LIMIT 200",(g.tenant_id,)).fetchall()
     return jsonify([dict(x) for x in rows])
 
 @app.get('/api/expenses')
