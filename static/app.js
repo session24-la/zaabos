@@ -41,9 +41,9 @@ async function api(url, opts) {
   if (r.status === 401) {
     me = null;
     showLogin();
-    throw new Error((body && body.error) || 'กรุณาเข้าสู่ระบบ');
+    throw new Error((body && body.error) || t('err_please_login'));
   }
-  if (!r.ok) throw new Error((body && body.error) || 'เกิดข้อผิดพลาด');
+  if (!r.ok) throw new Error((body && body.error) || t('err_generic'));
   return body;
 }
 function apiJson(url, method, data) {
@@ -54,6 +54,19 @@ function openModal(sel) { $(sel).classList.add('show'); }
 function closeModals() { $$('.modal').forEach(m => m.classList.remove('show')); }
 document.addEventListener('click', (e) => {
   if (e.target.matches('[data-close]') || e.target.classList.contains('modal')) closeModals();
+});
+
+// ===================== i18n wiring =====================
+
+initLangSwitcher('#langSelect');
+initLangSwitcher('#loginLangSelect');
+applyI18n();
+onLangChange(() => {
+  applyI18n();
+  if (me) {
+    $('#whoRole').textContent = t('role_' + me.role) || me.role;
+    refreshCurrentTab();
+  }
 });
 
 // ===================== Auth =====================
@@ -77,10 +90,10 @@ $('#loginForm').addEventListener('submit', async (e) => {
       body: JSON.stringify({ username: $('#loginUsername').value.trim(), password: $('#loginPassword').value }),
     });
     const body = await r.json();
-    if (!r.ok) { $('#loginError').textContent = body.error || 'เข้าสู่ระบบไม่สำเร็จ'; return; }
+    if (!r.ok) { $('#loginError').textContent = body.error || t('err_login_failed'); return; }
     me = body;
     await afterLogin();
-  } catch (err) { $('#loginError').textContent = 'เชื่อมต่อไม่ได้ กรุณาลองใหม่'; }
+  } catch (err) { $('#loginError').textContent = t('err_connect_failed'); }
 });
 
 $('#logoutBtn').addEventListener('click', async () => {
@@ -97,14 +110,13 @@ async function afterLogin() {
   showApp();
   $('#whoAvatar').textContent = (me.display_name || me.username || '?').slice(0, 1).toUpperCase();
   $('#whoName').textContent = me.display_name || me.username;
-  const roleLabels = { super_admin: 'ผู้ดูแลระบบ', owner: 'เจ้าของร้าน', manager: 'ผู้จัดการ', staff: 'พนักงาน' };
-  $('#whoRole').textContent = roleLabels[me.role] || me.role;
+  $('#whoRole').textContent = t('role_' + me.role) || me.role;
 
   if (me.role === 'super_admin') {
     $('#tenantSwitcher').classList.remove('hidden');
     $('#tenantsTabBtn').classList.remove('hidden');
     const sel = $('#tenantSwitcher');
-    sel.innerHTML = '<option value="all">ทุกร้าน</option>' + (me.tenants || []).map(t => `<option value="${t.id}">${escapeHtml(t.icon || '')} ${escapeHtml(t.name)}</option>`).join('');
+    sel.innerHTML = `<option value="all">${escapeHtml(t('tenant_switcher_all'))}</option>` + (me.tenants || []).map(t2 => `<option value="${t2.id}">${escapeHtml(t2.icon || '')} ${escapeHtml(t2.name)}</option>`).join('');
     sel.value = me.tenant_id ? String(me.tenant_id) : 'all';
     sel.onchange = async () => {
       await apiJson('/api/switch-tenant', 'POST', { tenant_id: sel.value === 'all' ? 'all' : parseInt(sel.value, 10) });
@@ -171,6 +183,7 @@ function activeTab() {
   return b ? b.dataset.tab : 'orders';
 }
 function refreshCurrentTab(tab) {
+  if (!me) return;
   tab = tab || activeTab();
   if (tab === 'orders') loadOrders();
   else if (tab === 'tables') renderTables();
@@ -190,12 +203,12 @@ $('#changePwBtn').addEventListener('click', () => { $('#whoMenu').classList.add(
 $('#pwSave').addEventListener('click', async () => {
   $('#pwError').textContent = '';
   const current = $('#pwCurrent').value, next = $('#pwNew').value;
-  if (!current || !next) { $('#pwError').textContent = 'กรุณากรอกข้อมูลให้ครบ'; return; }
-  if (next.length < 6) { $('#pwError').textContent = 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร'; return; }
+  if (!current || !next) { $('#pwError').textContent = t('err_fill_all'); return; }
+  if (next.length < 6) { $('#pwError').textContent = t('err_pw_new_len'); return; }
   try {
     await apiJson('/api/change-password', 'POST', { current_password: current, new_password: next });
     me.must_change_password = false;
-    closeModals(); toast('เปลี่ยนรหัสผ่านสำเร็จ', 'ok');
+    closeModals(); toast(t('toast_password_changed'), 'ok');
   } catch (e) { $('#pwError').textContent = e.message; }
 });
 
@@ -207,12 +220,12 @@ $('#changeUsernameBtn').addEventListener('click', () => {
 $('#usernameSave').addEventListener('click', async () => {
   $('#usernameError').textContent = '';
   const newUsername = $('#usernameNew').value.trim(), pw = $('#usernamePassword').value;
-  if (!newUsername || !pw) { $('#usernameError').textContent = 'กรุณากรอกข้อมูลให้ครบ'; return; }
-  if (newUsername.length < 3) { $('#usernameError').textContent = 'ชื่อผู้ใช้ต้องยาวอย่างน้อย 3 ตัวอักษร'; return; }
+  if (!newUsername || !pw) { $('#usernameError').textContent = t('err_fill_all'); return; }
+  if (newUsername.length < 3) { $('#usernameError').textContent = t('err_username_len'); return; }
   try {
     const r = await apiJson('/api/change-username', 'POST', { new_username: newUsername, password: pw });
     me.username = r.username; $('#whoName').textContent = me.display_name || me.username;
-    closeModals(); toast('เปลี่ยนชื่อผู้ใช้สำเร็จ', 'ok');
+    closeModals(); toast(t('toast_username_changed'), 'ok');
   } catch (e) { $('#usernameError').textContent = e.message; }
 });
 
@@ -220,12 +233,12 @@ $('#usernameSave').addEventListener('click', async () => {
 
 function renderBranches() {
   const list = $('#branchesList');
-  if (!boot.branches.length) { list.innerHTML = emptyState('🏠', 'ยังไม่มีสาขา'); return; }
+  if (!boot.branches.length) { list.innerHTML = emptyState('🏠', t('empty_branches')); return; }
   list.innerHTML = boot.branches.map(b => `
     <div class="row">
       <div style="display:flex;align-items:center;gap:12px">
         <span class="avatar-badge">${escapeHtml(b.icon || '🏠')}</span>
-        <div><div style="font-weight:700">${escapeHtml(b.name)}</div><small>รหัสสาขา #${b.id}</small></div>
+        <div><div style="font-weight:700">${escapeHtml(b.name)}</div><small>${escapeHtml(t('label_branch_code_prefix'))} #${b.id}</small></div>
       </div>
       <div class="row-right">
         <button class="icon-btn" data-edit-branch="${b.id}">✏️</button>
@@ -234,28 +247,28 @@ function renderBranches() {
     </div>`).join('');
 }
 $('#addBranchBtn').addEventListener('click', () => {
-  $('#branchModalTitle').textContent = 'เพิ่มสาขา'; $('#branchId').value = ''; $('#branchIcon').value = '🏠'; $('#branchName').value = ''; $('#branchError').textContent = '';
+  $('#branchModalTitle').textContent = t('modal_add_branch_title'); $('#branchId').value = ''; $('#branchIcon').value = '🏠'; $('#branchName').value = ''; $('#branchError').textContent = '';
   openModal('#branchModal');
 });
 $('#branchesList').addEventListener('click', (e) => {
   const editId = e.target.dataset.editBranch, delId = e.target.dataset.delBranch;
   if (editId) {
     const b = boot.branches.find(x => x.id === parseInt(editId, 10));
-    $('#branchModalTitle').textContent = 'แก้ไขสาขา'; $('#branchId').value = b.id; $('#branchIcon').value = b.icon; $('#branchName').value = b.name; $('#branchError').textContent = '';
+    $('#branchModalTitle').textContent = t('modal_edit_branch_title'); $('#branchId').value = b.id; $('#branchIcon').value = b.icon; $('#branchName').value = b.name; $('#branchError').textContent = '';
     openModal('#branchModal');
   } else if (delId) {
-    if (!confirm('ยืนยันการลบสาขานี้?')) return;
-    apiJson('/api/branches/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderBranchSelect(); renderBranches(); toast('ลบสาขาแล้ว', 'ok'); }).catch(e => toast(e.message, 'err'));
+    if (!confirm(t('confirm_delete_branch'))) return;
+    apiJson('/api/branches/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderBranchSelect(); renderBranches(); toast(t('toast_deleted'), 'ok'); }).catch(e => toast(e.message, 'err'));
   }
 });
 $('#branchSave').addEventListener('click', async () => {
   $('#branchError').textContent = '';
   const id = $('#branchId').value, name = $('#branchName').value.trim(), icon = $('#branchIcon').value.trim() || '🏠';
-  if (!name) { $('#branchError').textContent = 'กรุณาใส่ชื่อสาขา'; return; }
+  if (!name) { $('#branchError').textContent = t('err_branch_name_required'); return; }
   try {
     if (id) await apiJson('/api/branches/' + id, 'PUT', { name, icon });
     else await apiJson('/api/branches', 'POST', { name, icon });
-    closeModals(); await loadBootstrap(); renderBranchSelect(); renderBranches(); toast('บันทึกแล้ว', 'ok');
+    closeModals(); await loadBootstrap(); renderBranchSelect(); renderBranches(); toast(t('toast_saved'), 'ok');
   } catch (e) { $('#branchError').textContent = e.message; }
 });
 
@@ -266,7 +279,7 @@ function tableOrderUrl(token) { return location.origin + '/order/' + token; }
 function renderTables() {
   const grid = $('#tableGrid');
   const tables = branchTables();
-  if (!tables.length) { grid.innerHTML = emptyState('🍽️', 'ยังไม่มีโต๊ะในสาขานี้'); return; }
+  if (!tables.length) { grid.innerHTML = emptyState('🍽️', t('empty_tables')); return; }
   grid.innerHTML = tables.map(t => `
     <div class="table-chip">
       <div class="tc-name">${escapeHtml(t.name)}</div>
@@ -278,17 +291,17 @@ function renderTables() {
     </div>`).join('');
 }
 $('#addTableBtn').addEventListener('click', () => {
-  $('#tableModalTitle').textContent = 'เพิ่มโต๊ะ'; $('#tableId').value = ''; $('#tableName').value = ''; $('#tableError').textContent = '';
+  $('#tableModalTitle').textContent = t('modal_add_table_title'); $('#tableId').value = ''; $('#tableName').value = ''; $('#tableError').textContent = '';
   openModal('#tableModal');
 });
 $('#tableSave').addEventListener('click', async () => {
   $('#tableError').textContent = '';
   const id = $('#tableId').value, name = $('#tableName').value.trim();
-  if (!name) { $('#tableError').textContent = 'กรุณาใส่ชื่อโต๊ะ'; return; }
+  if (!name) { $('#tableError').textContent = t('err_table_name_required'); return; }
   try {
     if (id) await apiJson('/api/tables/' + id, 'PUT', { name });
     else await apiJson('/api/tables', 'POST', { name, branch_id: currentBranchId });
-    closeModals(); await loadBootstrap(); renderTables(); toast('บันทึกแล้ว', 'ok');
+    closeModals(); await loadBootstrap(); renderTables(); toast(t('toast_saved'), 'ok');
   } catch (e) { $('#tableError').textContent = e.message; }
 });
 $('#bulkAddTablesBtn').addEventListener('click', () => { $('#bulkTableError').textContent = ''; $('#bulkTableCount').value = 10; openModal('#bulkTableModal'); });
@@ -297,19 +310,19 @@ $('#bulkTableSave').addEventListener('click', async () => {
   const count = parseInt($('#bulkTableCount').value, 10);
   try {
     const r = await apiJson('/api/tables/bulk', 'POST', { branch_id: currentBranchId, count });
-    closeModals(); await loadBootstrap(); renderTables(); toast(`สร้าง ${r.created} โต๊ะแล้ว`, 'ok');
+    closeModals(); await loadBootstrap(); renderTables(); toast(t('toast_tables_created', { n: r.created }), 'ok');
   } catch (e) { $('#bulkTableError').textContent = e.message; }
 });
 $('#tableGrid').addEventListener('click', (e) => {
   const qrId = e.target.dataset.qr, editId = e.target.dataset.editTable, delId = e.target.dataset.delTable;
   if (qrId) showTableQr(parseInt(qrId, 10));
   else if (editId) {
-    const t = boot.tables.find(x => x.id === parseInt(editId, 10));
-    $('#tableModalTitle').textContent = 'แก้ไขโต๊ะ'; $('#tableId').value = t.id; $('#tableName').value = t.name; $('#tableError').textContent = '';
+    const tb = boot.tables.find(x => x.id === parseInt(editId, 10));
+    $('#tableModalTitle').textContent = t('modal_edit_table_title'); $('#tableId').value = tb.id; $('#tableName').value = tb.name; $('#tableError').textContent = '';
     openModal('#tableModal');
   } else if (delId) {
-    if (!confirm('ยืนยันการลบโต๊ะนี้?')) return;
-    apiJson('/api/tables/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderTables(); toast('ลบโต๊ะแล้ว', 'ok'); }).catch(e => toast(e.message, 'err'));
+    if (!confirm(t('confirm_delete_table'))) return;
+    apiJson('/api/tables/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderTables(); toast(t('toast_deleted'), 'ok'); }).catch(e => toast(e.message, 'err'));
   }
 });
 
@@ -317,27 +330,27 @@ function qrImgUrl(text, size) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size || 220}x${size || 220}&data=${encodeURIComponent(text)}`;
 }
 function showTableQr(tableId) {
-  const t = boot.tables.find(x => x.id === tableId);
-  const url = tableOrderUrl(t.qr_token);
-  $('#qrModalTitle').textContent = 'QR โต๊ะ: ' + t.name;
+  const tb = boot.tables.find(x => x.id === tableId);
+  const url = tableOrderUrl(tb.qr_token);
+  $('#qrModalTitle').textContent = t('qr_table_prefix') + ': ' + tb.name;
   $('#qrModalBody').innerHTML = `
     <div style="text-align:center">
       <img src="${qrImgUrl(url)}" alt="QR" style="border-radius:16px;border:1px solid var(--border)">
       <p class="hint" style="word-break:break-all">${escapeHtml(url)}</p>
-      <button class="ghost-btn" id="copyQrUrlBtn">📋 คัดลอกลิงก์</button>
-      <a class="ghost-btn" href="${url}" target="_blank" style="text-decoration:none;display:inline-block;margin-left:8px">🔗 เปิดหน้าสั่งอาหาร</a>
+      <button class="ghost-btn" id="copyQrUrlBtn">${escapeHtml(t('btn_copy_link'))}</button>
+      <a class="ghost-btn" href="${url}" target="_blank" style="text-decoration:none;display:inline-block;margin-left:8px">${escapeHtml(t('btn_open_order_page'))}</a>
     </div>`;
-  $('#copyQrUrlBtn').onclick = () => { navigator.clipboard.writeText(url).then(() => toast('คัดลอกลิงก์แล้ว', 'ok')); };
+  $('#copyQrUrlBtn').onclick = () => { navigator.clipboard.writeText(url).then(() => toast(t('toast_link_copied'), 'ok')); };
   openModal('#qrModal');
 }
 $('#qrOverviewBtn').addEventListener('click', () => {
   const tables = branchTables();
-  if (!tables.length) { toast('ยังไม่มีโต๊ะในสาขานี้', 'err'); return; }
-  $('#qrModalTitle').textContent = 'QR โต๊ะทั้งหมด';
+  if (!tables.length) { toast(t('empty_tables'), 'err'); return; }
+  $('#qrModalTitle').textContent = t('qr_modal_title_all');
   $('#qrModalBody').innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:14px">` +
-    tables.map(t => {
-      const url = tableOrderUrl(t.qr_token);
-      return `<div style="text-align:center"><img src="${qrImgUrl(url, 150)}" style="border-radius:12px;border:1px solid var(--border)"><div style="font-weight:700;margin-top:6px">${escapeHtml(t.name)}</div></div>`;
+    tables.map(tb => {
+      const url = tableOrderUrl(tb.qr_token);
+      return `<div style="text-align:center"><img src="${qrImgUrl(url, 150)}" style="border-radius:12px;border:1px solid var(--border)"><div style="font-weight:700;margin-top:6px">${escapeHtml(tb.name)}</div></div>`;
     }).join('') + `</div>`;
   openModal('#qrModal');
 });
@@ -352,7 +365,7 @@ function renderMenu() {
 function renderCategoriesList() {
   const cats = branchCategories();
   const list = $('#categoriesList');
-  if (!cats.length) { list.innerHTML = emptyState('🍜', 'ยังไม่มีหมวดหมู่เมนู'); return; }
+  if (!cats.length) { list.innerHTML = emptyState('🍜', t('empty_categories')); return; }
   list.innerHTML = cats.map(c => `
     <div class="row">
       <div style="display:flex;align-items:center;gap:12px">
@@ -369,48 +382,48 @@ $('#categoriesList').addEventListener('click', (e) => {
   const editId = e.target.dataset.editCat, delId = e.target.dataset.delCat;
   if (editId) {
     const c = boot.categories.find(x => x.id === parseInt(editId, 10));
-    $('#categoryModalTitle').textContent = 'แก้ไขหมวดหมู่'; $('#categoryId').value = c.id; $('#categoryIcon').value = c.icon; $('#categoryName').value = c.name; $('#categoryError').textContent = '';
+    $('#categoryModalTitle').textContent = t('modal_edit_category_title'); $('#categoryId').value = c.id; $('#categoryIcon').value = c.icon; $('#categoryName').value = c.name; $('#categoryError').textContent = '';
     openModal('#categoryModal');
   } else if (delId) {
-    if (!confirm('ยืนยันการลบหมวดหมู่นี้?')) return;
-    apiJson('/api/menu-categories/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderMenu(); toast('ลบแล้ว', 'ok'); }).catch(e => toast(e.message, 'err'));
+    if (!confirm(t('confirm_delete_category'))) return;
+    apiJson('/api/menu-categories/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderMenu(); toast(t('toast_deleted'), 'ok'); }).catch(e => toast(e.message, 'err'));
   }
 });
 $('#addCategoryBtn').addEventListener('click', () => {
-  $('#categoryModalTitle').textContent = 'เพิ่มหมวดหมู่'; $('#categoryId').value = ''; $('#categoryIcon').value = '🍜'; $('#categoryName').value = ''; $('#categoryError').textContent = '';
+  $('#categoryModalTitle').textContent = t('modal_add_category_title'); $('#categoryId').value = ''; $('#categoryIcon').value = '🍜'; $('#categoryName').value = ''; $('#categoryError').textContent = '';
   openModal('#categoryModal');
 });
 $('#categorySave').addEventListener('click', async () => {
   $('#categoryError').textContent = '';
   const id = $('#categoryId').value, name = $('#categoryName').value.trim(), icon = $('#categoryIcon').value.trim() || '🍜';
-  if (!name) { $('#categoryError').textContent = 'กรุณาใส่ชื่อหมวดหมู่'; return; }
+  if (!name) { $('#categoryError').textContent = t('err_category_name_required'); return; }
   try {
     if (id) await apiJson('/api/menu-categories/' + id, 'PUT', { name, icon });
     else await apiJson('/api/menu-categories', 'POST', { name, icon, branch_id: currentBranchId });
-    closeModals(); await loadBootstrap(); renderMenu(); toast('บันทึกแล้ว', 'ok');
+    closeModals(); await loadBootstrap(); renderMenu(); toast(t('toast_saved'), 'ok');
   } catch (e) { $('#categoryError').textContent = e.message; }
 });
 
 function fillCategorySelect() {
   const sel = $('#menuItemCategory');
   const cats = branchCategories();
-  sel.innerHTML = '<option value="">(ไม่มีหมวดหมู่)</option>' + cats.map(c => `<option value="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</option>`).join('');
+  sel.innerHTML = `<option value="">${escapeHtml(t('option_no_category'))}</option>` + cats.map(c => `<option value="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</option>`).join('');
 }
 
 function renderMenuItemsGrid() {
   const items = branchItems();
   const grid = $('#menuItemsGrid');
-  if (!items.length) { grid.innerHTML = emptyState('📋', 'ยังไม่มีเมนูในสาขานี้'); return; }
+  if (!items.length) { grid.innerHTML = emptyState('📋', t('empty_menu_items')); return; }
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}">
-      ${it.sold_out ? '<span class="mc-badge">หมด</span>' : ''}
+      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
       <div class="mc-top"><span class="mc-name">${escapeHtml(it.name)}</span></div>
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
-      ${it.option_groups.length ? `<div class="hint">ตัวเลือก: ${it.option_groups.map(g => escapeHtml(g.name)).join(', ')}</div>` : ''}
+      ${it.option_groups.length ? `<div class="hint">${escapeHtml(t('label_options_prefix'))}: ${it.option_groups.map(g => escapeHtml(g.name)).join(', ')}</div>` : ''}
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
       <div class="mc-actions">
-        <button class="ghost-btn" data-edit-item="${it.id}">✏️ แก้ไข</button>
-        <button class="ghost-btn" data-toggle-soldout="${it.id}">${it.sold_out ? '✅ กลับมามีของ' : '🚫 แจ้งของหมด'}</button>
+        <button class="ghost-btn" data-edit-item="${it.id}">${escapeHtml(t('btn_edit'))}</button>
+        <button class="ghost-btn" data-toggle-soldout="${it.id}">${escapeHtml(it.sold_out ? t('btn_mark_available') : t('btn_mark_sold_out'))}</button>
         <button class="ghost-btn" data-del-item="${it.id}">🗑️</button>
       </div>
     </div>`).join('');
@@ -419,8 +432,8 @@ $('#menuItemsGrid').addEventListener('click', (e) => {
   const editId = e.target.dataset.editItem, delId = e.target.dataset.delItem, soId = e.target.dataset.toggleSoldout;
   if (editId) openMenuItemModal(parseInt(editId, 10));
   else if (delId) {
-    if (!confirm('ยืนยันการลบเมนูนี้?')) return;
-    apiJson('/api/menu-items/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderMenu(); toast('ลบแล้ว', 'ok'); }).catch(e => toast(e.message, 'err'));
+    if (!confirm(t('confirm_delete_menu_item'))) return;
+    apiJson('/api/menu-items/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderMenu(); toast(t('toast_deleted'), 'ok'); }).catch(e => toast(e.message, 'err'));
   } else if (soId) {
     const it = boot.items.find(x => x.id === parseInt(soId, 10));
     apiJson('/api/menu-items/' + soId + '/sold-out', 'PUT', { sold_out: !it.sold_out }).then(async () => { await loadBootstrap(); renderMenu(); }).catch(e => toast(e.message, 'err'));
@@ -434,7 +447,7 @@ function openMenuItemModal(id) {
   $('#menuItemError').textContent = '';
   if (id) {
     const it = boot.items.find(x => x.id === id);
-    $('#menuItemModalTitle').textContent = 'แก้ไขเมนู';
+    $('#menuItemModalTitle').textContent = t('modal_edit_menu_item_title');
     $('#menuItemId').value = it.id;
     $('#menuItemName').value = it.name;
     $('#menuItemDesc').value = it.description || '';
@@ -443,7 +456,7 @@ function openMenuItemModal(id) {
     $('#menuItemSoldOut').checked = !!it.sold_out;
     optGroupsDraft = JSON.parse(JSON.stringify(it.option_groups || []));
   } else {
-    $('#menuItemModalTitle').textContent = 'เพิ่มเมนู';
+    $('#menuItemModalTitle').textContent = t('modal_add_menu_item_title');
     $('#menuItemId').value = ''; $('#menuItemName').value = ''; $('#menuItemDesc').value = '';
     $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false;
     optGroupsDraft = [];
@@ -457,17 +470,17 @@ function renderOptGroupsBox() {
   box.innerHTML = optGroupsDraft.map((g, gi) => `
     <div class="opt-group-box" data-gi="${gi}">
       <div class="og-head">
-        <input placeholder="ชื่อกลุ่ม เช่น ขนาด" value="${escapeHtml(g.name || '')}" data-og-name="${gi}" style="margin:0">
-        <label style="margin:0;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" ${g.required ? 'checked' : ''} data-og-required="${gi}" style="width:auto">บังคับเลือก</label>
+        <input placeholder="${escapeHtml(t('placeholder_group_name'))}" value="${escapeHtml(g.name || '')}" data-og-name="${gi}" style="margin:0">
+        <label style="margin:0;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" ${g.required ? 'checked' : ''} data-og-required="${gi}" style="width:auto">${escapeHtml(t('label_required_choice'))}</label>
         <button type="button" data-og-del="${gi}" class="icon-btn danger">🗑️</button>
       </div>
       ${(g.options || []).map((o, oi) => `
         <div class="opt-row" data-oi="${oi}">
-          <input placeholder="ชื่อตัวเลือก" value="${escapeHtml(o.name || '')}" data-opt-name="${gi}:${oi}">
-          <input type="number" step="0.01" placeholder="+ราคา" value="${o.price_delta || 0}" data-opt-delta="${gi}:${oi}">
+          <input placeholder="${escapeHtml(t('placeholder_option_name'))}" value="${escapeHtml(o.name || '')}" data-opt-name="${gi}:${oi}">
+          <input type="number" step="0.01" placeholder="${escapeHtml(t('placeholder_option_price'))}" value="${o.price_delta || 0}" data-opt-delta="${gi}:${oi}">
           <button type="button" data-opt-del="${gi}:${oi}" class="icon-btn danger">✕</button>
         </div>`).join('')}
-      <button class="add-opt-btn" type="button" data-add-opt="${gi}">➕ เพิ่มตัวเลือก</button>
+      <button class="add-opt-btn" type="button" data-add-opt="${gi}">${escapeHtml(t('btn_add_option'))}</button>
     </div>`).join('');
 }
 $('#addOptGroupBtn').addEventListener('click', () => { optGroupsDraft.push({ name: '', required: false, options: [] }); renderOptGroupsBox(); });
@@ -493,8 +506,8 @@ $('#menuItemSave').addEventListener('click', async () => {
   const id = $('#menuItemId').value;
   const name = $('#menuItemName').value.trim();
   const price = parseFloat($('#menuItemPrice').value);
-  if (!name) { $('#menuItemError').textContent = 'กรุณาใส่ชื่อเมนู'; return; }
-  if (isNaN(price) || price < 0) { $('#menuItemError').textContent = 'ราคาไม่ถูกต้อง'; return; }
+  if (!name) { $('#menuItemError').textContent = t('err_menu_item_name_required'); return; }
+  if (isNaN(price) || price < 0) { $('#menuItemError').textContent = t('err_price_invalid'); return; }
   const payload = {
     name, description: $('#menuItemDesc').value.trim(), category_id: $('#menuItemCategory').value || null,
     base_price: price, sold_out: $('#menuItemSoldOut').checked, option_groups: optGroupsDraft,
@@ -502,7 +515,7 @@ $('#menuItemSave').addEventListener('click', async () => {
   try {
     if (id) await apiJson('/api/menu-items/' + id, 'PUT', payload);
     else await apiJson('/api/menu-items', 'POST', Object.assign({ branch_id: currentBranchId }, payload));
-    closeModals(); await loadBootstrap(); renderMenu(); toast('บันทึกแล้ว', 'ok');
+    closeModals(); await loadBootstrap(); renderMenu(); toast(t('toast_saved'), 'ok');
   } catch (e) { $('#menuItemError').textContent = e.message; }
 });
 
@@ -511,13 +524,12 @@ $('#menuItemSave').addEventListener('click', async () => {
 async function loadUsers() {
   const users = await api('/api/users');
   const list = $('#usersList');
-  if (!users.length) { list.innerHTML = emptyState('👥', 'ยังไม่มีผู้ใช้งาน'); return; }
-  const roleLabels = { owner: 'เจ้าของร้าน', manager: 'ผู้จัดการ', staff: 'พนักงาน' };
+  if (!users.length) { list.innerHTML = emptyState('👥', t('empty_users')); return; }
   list.innerHTML = users.map(u => `
     <div class="row">
       <div style="display:flex;align-items:center;gap:12px">
         <span class="avatar-badge">${escapeHtml((u.display_name || u.username || '?').slice(0, 1).toUpperCase())}</span>
-        <div><div style="font-weight:700">${escapeHtml(u.display_name)} ${u.active ? '' : '<small>(ปิดใช้งาน)</small>'}</div><small>@${escapeHtml(u.username)} · ${roleLabels[u.role] || u.role}</small></div>
+        <div><div style="font-weight:700">${escapeHtml(u.display_name)} ${u.active ? '' : `<small>${escapeHtml(t('label_inactive_suffix'))}</small>`}</div><small>@${escapeHtml(u.username)} · ${escapeHtml(t('role_' + u.role) || u.role)}</small></div>
       </div>
       <div class="row-right">
         <button class="icon-btn" data-edit-user="${u.id}">✏️</button>
@@ -527,8 +539,8 @@ async function loadUsers() {
   list.dataset.cache = JSON.stringify(users);
 }
 $('#addUserBtn').addEventListener('click', () => {
-  $('#userModalTitle').textContent = 'เพิ่มผู้ใช้งาน'; $('#userId').value = ''; $('#userUsername').value = ''; $('#userUsername').disabled = false;
-  $('#userDisplayName').value = ''; $('#userRole').value = 'staff'; $('#userPassword').value = ''; $('#userPasswordLbl').textContent = 'รหัสผ่าน';
+  $('#userModalTitle').textContent = t('modal_add_user_title'); $('#userId').value = ''; $('#userUsername').value = ''; $('#userUsername').disabled = false;
+  $('#userDisplayName').value = ''; $('#userRole').value = 'staff'; $('#userPassword').value = ''; $('#userPasswordLbl').textContent = t('label_password');
   $('#userActiveRow').classList.add('hidden'); $('#userError').textContent = '';
   openModal('#userModal');
 });
@@ -537,13 +549,13 @@ $('#usersList').addEventListener('click', (e) => {
   const users = JSON.parse($('#usersList').dataset.cache || '[]');
   if (editId) {
     const u = users.find(x => x.id === parseInt(editId, 10));
-    $('#userModalTitle').textContent = 'แก้ไขผู้ใช้งาน'; $('#userId').value = u.id; $('#userUsername').value = u.username; $('#userUsername').disabled = true;
-    $('#userDisplayName').value = u.display_name; $('#userRole').value = u.role; $('#userPassword').value = ''; $('#userPasswordLbl').textContent = 'ตั้งรหัสผ่านใหม่ (เว้นว่างถ้าไม่เปลี่ยน)';
+    $('#userModalTitle').textContent = t('modal_edit_user_title'); $('#userId').value = u.id; $('#userUsername').value = u.username; $('#userUsername').disabled = true;
+    $('#userDisplayName').value = u.display_name; $('#userRole').value = u.role; $('#userPassword').value = ''; $('#userPasswordLbl').textContent = t('label_password_new_optional');
     $('#userActiveRow').classList.remove('hidden'); $('#userActive').checked = !!u.active; $('#userError').textContent = '';
     openModal('#userModal');
   } else if (delId) {
-    if (!confirm('ยืนยันการปิดใช้งานบัญชีนี้?')) return;
-    apiJson('/api/users/' + delId, 'DELETE').then(() => { loadUsers(); toast('ปิดใช้งานแล้ว', 'ok'); }).catch(e => toast(e.message, 'err'));
+    if (!confirm(t('confirm_deactivate_user'))) return;
+    apiJson('/api/users/' + delId, 'DELETE').then(() => { loadUsers(); toast(t('toast_deactivated'), 'ok'); }).catch(e => toast(e.message, 'err'));
   }
 });
 $('#userSave').addEventListener('click', async () => {
@@ -557,10 +569,10 @@ $('#userSave').addEventListener('click', async () => {
       await apiJson('/api/users/' + id, 'PUT', payload);
     } else {
       const username = $('#userUsername').value.trim();
-      if (!username || !displayName || !password) { $('#userError').textContent = 'กรุณากรอกข้อมูลให้ครบ'; return; }
+      if (!username || !displayName || !password) { $('#userError').textContent = t('err_fill_all'); return; }
       await apiJson('/api/users', 'POST', { username, display_name: displayName, role, password });
     }
-    closeModals(); loadUsers(); toast('บันทึกแล้ว', 'ok');
+    closeModals(); loadUsers(); toast(t('toast_saved'), 'ok');
   } catch (e) { $('#userError').textContent = e.message; }
 });
 
@@ -569,21 +581,21 @@ $('#userSave').addEventListener('click', async () => {
 async function loadTenants() {
   const r = await api('/api/tenants');
   const list = $('#tenantsList');
-  if (!r.tenants.length) { list.innerHTML = emptyState('🏢', 'ยังไม่มีร้านค้า'); return; }
-  list.innerHTML = r.tenants.map(t => `
+  if (!r.tenants.length) { list.innerHTML = emptyState('🏢', t('empty_tenants')); return; }
+  list.innerHTML = r.tenants.map(tn => `
     <div class="row">
       <div style="display:flex;align-items:center;gap:12px">
-        <span class="avatar-badge">${escapeHtml(t.icon || '🍽️')}</span>
-        <div><div style="font-weight:700">${escapeHtml(t.name)}</div><small>${t.active ? 'ใช้งานอยู่' : 'ถูกระงับ'} · ${escapeHtml(t.currency)}</small></div>
+        <span class="avatar-badge">${escapeHtml(tn.icon || '🍽️')}</span>
+        <div><div style="font-weight:700">${escapeHtml(tn.name)}</div><small>${tn.active ? escapeHtml(t('tenant_active')) : escapeHtml(t('tenant_suspended'))} · ${escapeHtml(tn.currency)}</small></div>
       </div>
-      <div class="row-right"><button class="icon-btn danger" data-del-tenant="${t.id}">🗑️</button></div>
+      <div class="row-right"><button class="icon-btn danger" data-del-tenant="${tn.id}">🗑️</button></div>
     </div>`).join('');
 }
 $('#tenantsList').addEventListener('click', (e) => {
   const delId = e.target.dataset.delTenant;
   if (delId) {
-    if (!confirm('ยืนยันการระงับร้านค้านี้?')) return;
-    apiJson('/api/tenants/' + delId, 'DELETE').then(() => { loadTenants(); toast('ระงับร้านค้าแล้ว', 'ok'); }).catch(e => toast(e.message, 'err'));
+    if (!confirm(t('confirm_suspend_tenant'))) return;
+    apiJson('/api/tenants/' + delId, 'DELETE').then(() => { loadTenants(); toast(t('toast_tenant_suspended'), 'ok'); }).catch(e => toast(e.message, 'err'));
   }
 });
 $('#addTenantBtn').addEventListener('click', () => {
@@ -598,15 +610,15 @@ $('#tenantSave').addEventListener('click', async () => {
   };
   try {
     await apiJson('/api/tenants', 'POST', payload);
-    closeModals(); toast('สร้างร้านค้าใหม่แล้ว', 'ok');
+    closeModals(); toast(t('toast_tenant_created'), 'ok');
   } catch (e) { $('#tenantError').textContent = e.message; }
 });
 
 // ===================== Orders (staff view) =====================
 
-const STATUS_LABELS = { received: 'รับออเดอร์แล้ว', preparing: 'กำลังทำ', ready: 'พร้อมเสิร์ฟ', served: 'เสิร์ฟแล้ว', completed: 'เสร็จสิ้น', cancelled: 'ยกเลิก' };
 const STATUS_FLOW = { received: 'preparing', preparing: 'ready', ready: 'served', served: 'completed' };
-const ORDER_TYPE_LABELS = { dine_in: '🍽️ ทานที่ร้าน', takeaway: '🥡 กลับบ้าน', delivery: '🛵 เดลิเวอรี่' };
+function statusLabel(s) { return t('status_' + s) || s; }
+function orderTypeLabel(s) { return t('order_type_' + s) || s; }
 
 async function loadOrders() {
   const status = $('#orderStatusFilter').value;
@@ -620,7 +632,7 @@ $('#refreshOrdersBtn').addEventListener('click', loadOrders);
 
 function renderOrdersList(orders) {
   const list = $('#ordersList');
-  if (!orders.length) { list.innerHTML = emptyState('🧾', 'ยังไม่มีออเดอร์'); return; }
+  if (!orders.length) { list.innerHTML = emptyState('🧾', t('empty_orders')); return; }
   list.innerHTML = orders.map(o => {
     const nextStatus = STATUS_FLOW[o.status];
     const itemsHtml = o.items.map(it => `<li><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : ''}</li>`).join('');
@@ -628,21 +640,21 @@ function renderOrdersList(orders) {
     <div class="order-card" style="margin-top:12px">
       <div class="oc-head">
         <div>
-          <div class="oc-no">#${escapeHtml(o.order_no)} — ${ORDER_TYPE_LABELS[o.order_type] || o.order_type}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${new Date(o.created_at).toLocaleString('th-TH')}</div>
+          <div class="oc-no">#${escapeHtml(o.order_no)} — ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
+          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${new Date(o.created_at).toLocaleString(localeFor(currentLang))}</div>
         </div>
         <div style="text-align:right">
-          <span class="pill ${o.status}"><span class="pill-dot ${o.status}"></span>${STATUS_LABELS[o.status]}</span><br>
-          <span class="pill ${o.payment_status}" style="margin-top:6px">${o.payment_status === 'paid' ? 'ชำระแล้ว' : 'ยังไม่ชำระ'}</span>
+          <span class="pill ${o.status}"><span class="pill-dot ${o.status}"></span>${escapeHtml(statusLabel(o.status))}</span><br>
+          <span class="pill ${o.payment_status}" style="margin-top:6px">${escapeHtml(o.payment_status === 'paid' ? t('payment_paid') : t('payment_unpaid'))}</span>
         </div>
       </div>
       <ul class="oc-items">${itemsHtml}</ul>
-      ${o.notes ? `<div class="hint">หมายเหตุ: ${escapeHtml(o.notes)}</div>` : ''}
-      <div class="row" style="border-top:1px dashed var(--border)"><b>รวม</b><b>${fmtMoney(o.total_amount)}</b></div>
+      ${o.notes ? `<div class="hint">${escapeHtml(t('label_notes'))}: ${escapeHtml(o.notes)}</div>` : ''}
+      <div class="row" style="border-top:1px dashed var(--border)"><b>${escapeHtml(t('label_total_short'))}</b><b>${fmtMoney(o.total_amount)}</b></div>
       <div class="head-actions" style="margin-top:8px">
-        ${nextStatus ? `<button class="ghost-btn primary" data-set-status="${o.id}:${nextStatus}">➡️ ${STATUS_LABELS[nextStatus]}</button>` : ''}
-        ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">✕ ยกเลิก</button>` : ''}
-        ${o.payment_status === 'unpaid' ? `<button class="ghost-btn" data-set-payment="${o.id}:paid">💰 บันทึกว่าชำระแล้ว</button>` : `<button class="ghost-btn" data-set-payment="${o.id}:unpaid">↩️ ยกเลิกการชำระ</button>`}
+        ${nextStatus ? `<button class="ghost-btn primary" data-set-status="${o.id}:${nextStatus}">➡️ ${escapeHtml(statusLabel(nextStatus))}</button>` : ''}
+        ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">${escapeHtml(t('kt_btn_cancel'))}</button>` : ''}
+        ${o.payment_status === 'unpaid' ? `<button class="ghost-btn" data-set-payment="${o.id}:paid">${escapeHtml(t('btn_mark_paid'))}</button>` : `<button class="ghost-btn" data-set-payment="${o.id}:unpaid">${escapeHtml(t('btn_unmark_paid'))}</button>`}
       </div>
     </div>`;
   }).join('');
@@ -684,7 +696,7 @@ function renderTakeOrderCategories() {
   const cats = branchCategories();
   takeOrderActiveCat = null;
   const el = $('#takeOrderCatScroll');
-  el.innerHTML = `<button class="cat-chip active" data-cat="">ทั้งหมด</button>` + cats.map(c => `<button class="cat-chip" data-cat="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</button>`).join('');
+  el.innerHTML = `<button class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` + cats.map(c => `<button class="cat-chip" data-cat="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</button>`).join('');
 }
 $('#takeOrderCatScroll').addEventListener('click', (e) => {
   const btn = e.target.closest('.cat-chip');
@@ -697,10 +709,10 @@ function renderTakeOrderMenu() {
   let items = branchItems();
   if (takeOrderActiveCat) items = items.filter(i => String(i.category_id) === String(takeOrderActiveCat));
   const grid = $('#takeOrderMenuGrid');
-  if (!items.length) { grid.innerHTML = emptyState('📋', 'ไม่มีเมนู'); return; }
+  if (!items.length) { grid.innerHTML = emptyState('📋', t('empty_menu')); return; }
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick-item="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
-      ${it.sold_out ? '<span class="mc-badge">หมด</span>' : ''}
+      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
       <span class="mc-name">${escapeHtml(it.name)}</span>
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
     </div>`).join('');
@@ -719,7 +731,7 @@ function openItemOptionPicker(item) {
   $('#itemOptionNotes').value = ''; $('#itemOptionQty').textContent = '1'; $('#itemOptionError').textContent = '';
   const body = $('#itemOptionBody');
   if (!item.option_groups.length) {
-    body.innerHTML = `<p class="hint">ไม่มีตัวเลือกเพิ่มเติมสำหรับเมนูนี้</p>`;
+    body.innerHTML = `<p class="hint">${escapeHtml(t('hint_no_options'))}</p>`;
   } else {
     body.innerHTML = item.option_groups.map(g => `
       <label style="margin:14px 0 4px">${escapeHtml(g.name)}${g.required ? ' <span style="color:var(--neg)">*</span>' : ''}</label>
@@ -743,7 +755,7 @@ $('#itemOptionAdd').addEventListener('click', () => {
   let unitPrice = item.base_price;
   for (const g of item.option_groups) {
     const checked = $(`input[name="grp-${g.id}"]:checked`);
-    if (g.required && !checked) { $('#itemOptionError').textContent = `กรุณาเลือก "${g.name}"`; return; }
+    if (g.required && !checked) { $('#itemOptionError').textContent = `${t('err_choose_option_group')} "${g.name}"`; return; }
     if (checked) {
       const opt = g.options.find(o => String(o.id) === checked.value);
       selected[g.id] = opt.id;
@@ -758,12 +770,12 @@ $('#itemOptionAdd').addEventListener('click', () => {
 
 function renderCart() {
   const el = $('#takeOrderCart');
-  if (!cart.length) { el.innerHTML = '<p class="hint">ยังไม่มีรายการในตะกร้า</p>'; $('#takeOrderTotal').textContent = fmtMoney(0); return; }
+  if (!cart.length) { el.innerHTML = `<p class="hint">${escapeHtml(t('empty_cart_staff'))}</p>`; $('#takeOrderTotal').textContent = fmtMoney(0); return; }
   let total = 0;
   el.innerHTML = cart.map((c, idx) => {
     const lineTotal = c.unit_price * c.qty; total += lineTotal;
     return `<div class="cart-line">
-      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">หมายเหตุ: ${escapeHtml(c.notes)}</div>` : ''}</div>
+      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
       <div style="text-align:right"><div class="cl-price">${fmtMoney(lineTotal)}</div><button class="icon-btn danger" data-cart-remove="${idx}">✕</button></div>
     </div>`;
   }).join('');
@@ -776,17 +788,17 @@ $('#takeOrderCart').addEventListener('click', (e) => {
 
 $('#takeOrderSubmit').addEventListener('click', async () => {
   $('#takeOrderError').textContent = '';
-  if (!cart.length) { $('#takeOrderError').textContent = 'กรุณาเลือกเมนูอย่างน้อย 1 รายการ'; return; }
+  if (!cart.length) { $('#takeOrderError').textContent = t('err_cart_empty_min1'); return; }
   const payload = {
     branch_id: currentBranchId, order_type: takeOrderType,
-    customer_name: $('#takeOrderCustomerName').value.trim() || 'ลูกค้า',
+    customer_name: $('#takeOrderCustomerName').value.trim() || t('placeholder_customer_name'),
     cart: cart.map(c => ({ menu_item_id: c.menu_item_id, quantity: c.qty, selected_options: c.selected_options, notes: c.notes })),
   };
   if (takeOrderType === 'dine_in') payload.table_id = parseInt($('#takeOrderTable').value, 10);
   if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); }
   try {
     const r = await apiJson('/api/orders', 'POST', payload);
-    closeModals(); toast('บันทึกออเดอร์ #' + r.order_no + ' แล้ว', 'ok'); loadOrders();
+    closeModals(); toast(t('toast_order_saved', { no: r.order_no }), 'ok'); loadOrders();
   } catch (e) { $('#takeOrderError').textContent = e.message; }
 });
 

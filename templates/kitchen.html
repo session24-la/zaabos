@@ -1,26 +1,28 @@
 <!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>หน้าจอครัว — ZaabOS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 <meta name="theme-color" content="#ea580c">
 </head><body>
 
 <section id="loginView" class="login-screen">
+  <select id="loginLangSelect" class="lang-select lang-select-login"></select>
   <form id="loginForm" class="login-card">
     <div class="brand center">Zaab<b>OS</b> 👨‍🍳</div>
-    <p class="login-sub">เข้าสู่ระบบพนักงานเพื่อดูคิวออเดอร์ครัว</p>
-    <label><span>ชื่อผู้ใช้</span><input id="loginUsername" autocomplete="username" required></label>
-    <label><span>รหัสผ่าน</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
+    <p class="login-sub" data-i18n="kitchen_login_sub">เข้าสู่ระบบพนักงานเพื่อดูคิวออเดอร์ครัว</p>
+    <label><span data-i18n="login_username">ชื่อผู้ใช้</span><input id="loginUsername" autocomplete="username" required></label>
+    <label><span data-i18n="login_password">รหัสผ่าน</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
     <div class="login-error" id="loginError"></div>
-    <button class="save" type="submit">เข้าสู่ระบบ</button>
+    <button class="save" type="submit" data-i18n="login_submit">เข้าสู่ระบบ</button>
   </form>
 </section>
 
 <div id="boardView" class="hidden">
   <header>
-    <div class="brand">Zaab<b>OS</b> 👨‍🍳 หน้าจอครัว</div>
+    <div class="brand">Zaab<b>OS</b> <span data-i18n="kitchen_header_title">👨‍🍳 หน้าจอครัว</span></div>
     <div class="head-right">
+      <select id="langSelect" class="lang-select"></select>
       <select id="branchSelect"></select>
       <button class="ghost-btn" id="refreshBtn">🔄</button>
       <a class="ghost-btn" href="/" style="text-decoration:none">🏠</a>
@@ -32,5 +34,7 @@
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
+<script>const DEFAULT_LANG = 'th';</script>
+<script src="/static/i18n.js"></script>
 <script src="/static/kitchen.js"></script>
 </body></html>

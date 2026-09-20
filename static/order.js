@@ -37,6 +37,15 @@ document.addEventListener('click', (e) => {
   if (e.target.matches('[data-close]') || e.target.classList.contains('modal')) closeModals();
 });
 
+// ===================== i18n wiring =====================
+
+initLangSwitcher('#langSelect');
+applyI18n();
+onLangChange(() => {
+  applyI18n();
+  if (menuData) { renderCategories(); renderMenuGrid(); updateCartFab(); }
+});
+
 function getTableTokenFromPath() {
   const m = location.pathname.match(/^\/order\/([^/]+)$/);
   return m ? decodeURIComponent(m[1]) : null;
@@ -48,15 +57,15 @@ async function loadMenu() {
   let url = '/api/public/menu?';
   if (token) url += 'table=' + encodeURIComponent(token);
   else if (params.get('branch_id')) url += 'branch_id=' + encodeURIComponent(params.get('branch_id'));
-  else { showError('ไม่พบข้อมูลร้าน กรุณาสแกน QR โค้ดที่โต๊ะอีกครั้ง'); return; }
+  else { showError(t('err_shop_not_found')); return; }
 
   try {
     const r = await fetch(url, { credentials: 'same-origin' });
     const body = await r.json();
-    if (!r.ok) { showError(body.error || 'ไม่พบข้อมูลร้าน'); return; }
+    if (!r.ok) { showError(body.error || t('err_shop_not_found')); return; }
     menuData = body;
     showMenu();
-  } catch (e) { showError('เชื่อมต่อไม่ได้ กรุณาลองใหม่อีกครั้ง'); }
+  } catch (e) { showError(t('err_connect_failed')); }
 }
 
 function showError(msg) {
@@ -81,8 +90,9 @@ function showMenu() {
 let activeCat = null;
 function renderCategories() {
   const el = $('#catScroll');
-  el.innerHTML = `<button class="cat-chip active" data-cat="">ทั้งหมด</button>` +
+  el.innerHTML = `<button class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` +
     menuData.categories.map(c => `<button class="cat-chip" data-cat="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</button>`).join('');
+  $$('#catScroll .cat-chip').forEach(b => b.classList.toggle('active', (b.dataset.cat || null) === activeCat));
 }
 $('#catScroll').addEventListener('click', (e) => {
   const btn = e.target.closest('.cat-chip');
@@ -96,10 +106,10 @@ function renderMenuGrid() {
   let items = menuData.items;
   if (activeCat) items = items.filter(i => String(i.category_id) === String(activeCat));
   const grid = $('#menuGrid');
-  if (!items.length) { grid.innerHTML = `<div class="empty-state"><span class="es-ic">📋</span>ยังไม่มีเมนูในหมวดนี้</div>`; return; }
+  if (!items.length) { grid.innerHTML = `<div class="empty-state"><span class="es-ic">📋</span>${escapeHtml(t('empty_menu_category'))}</div>`; return; }
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
-      ${it.sold_out ? '<span class="mc-badge">หมด</span>' : ''}
+      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
       <span class="mc-name">${escapeHtml(it.name)}</span>
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
@@ -154,7 +164,7 @@ $('#itemAdd').addEventListener('click', () => {
   const selected = {}; const labels = [];
   for (const g of pendingItem.option_groups) {
     const checked = $(`input[name="ig-${g.id}"]:checked`);
-    if (g.required && !checked) { $('#itemError').textContent = `กรุณาเลือก "${g.name}"`; return; }
+    if (g.required && !checked) { $('#itemError').textContent = `${t('err_choose_option_group')} "${g.name}"`; return; }
     if (checked) {
       const opt = g.options.find(o => String(o.id) === checked.value);
       selected[g.id] = opt.id; labels.push(opt.name);
@@ -164,7 +174,7 @@ $('#itemAdd').addEventListener('click', () => {
   cart.push({ menu_item_id: pendingItem.id, name: pendingItem.name, unit_price: currentItemUnitPrice(), qty, selected_options: selected, optionLabels: labels, notes: $('#itemNotes').value.trim() });
   closeModals();
   updateCartFab();
-  toast('เพิ่มลงตะกร้าแล้ว', 'ok');
+  toast(t('toast_added_to_cart'), 'ok');
 });
 
 function cartTotal() { return cart.reduce((s, c) => s + c.unit_price * c.qty, 0); }
@@ -173,7 +183,7 @@ function updateCartFab() {
   if (!cart.length) { fab.classList.add('hidden'); return; }
   fab.classList.remove('hidden');
   const count = cart.reduce((s, c) => s + c.qty, 0);
-  $('#cartFabCount').textContent = count + ' รายการ';
+  $('#cartFabCount').textContent = t('cart_fab_count', { n: count });
   $('#cartFabTotal').textContent = fmtMoney(cartTotal());
 }
 $('#cartFab').addEventListener('click', openCart);
@@ -190,10 +200,10 @@ async function openCart() {
 }
 function renderCartLines() {
   const el = $('#cartLines');
-  if (!cart.length) { el.innerHTML = '<p class="hint">ตะกร้าว่างเปล่า</p>'; $('#cartTotal').textContent = fmtMoney(0); return; }
+  if (!cart.length) { el.innerHTML = `<p class="hint">${escapeHtml(t('empty_cart_customer'))}</p>`; $('#cartTotal').textContent = fmtMoney(0); return; }
   el.innerHTML = cart.map((c, idx) => `
     <div class="cart-line">
-      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">หมายเหตุ: ${escapeHtml(c.notes)}</div>` : ''}</div>
+      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
       <div style="text-align:right"><div class="cl-price">${fmtMoney(c.unit_price * c.qty)}</div><button class="icon-btn danger" data-remove="${idx}">✕</button></div>
     </div>`).join('');
   $('#cartTotal').textContent = fmtMoney(cartTotal());
@@ -235,8 +245,8 @@ async function updateTableUi() {
     } catch (e) { publicTablesCache = []; }
   }
   const grid = $('#tablePickGrid');
-  if (!publicTablesCache.length) { grid.innerHTML = '<p class="hint">ร้านยังไม่ได้ตั้งค่าโต๊ะ กรุณาติดต่อพนักงาน</p>'; return; }
-  grid.innerHTML = publicTablesCache.map(t => `<button type="button" data-table="${t.id}">${escapeHtml(t.name)}</button>`).join('');
+  if (!publicTablesCache.length) { grid.innerHTML = `<p class="hint">${escapeHtml(t('err_no_tables_setup'))}</p>`; return; }
+  grid.innerHTML = publicTablesCache.map(t2 => `<button type="button" data-table="${t2.id}">${escapeHtml(t2.name)}</button>`).join('');
 }
 $('#tablePickGrid').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-table]');
@@ -248,13 +258,13 @@ $('#tablePickGrid').addEventListener('click', (e) => {
 
 $('#checkoutSubmit').addEventListener('click', async () => {
   $('#checkoutError').textContent = '';
-  if (!cart.length) { $('#checkoutError').textContent = 'ตะกร้าว่างเปล่า'; return; }
+  if (!cart.length) { $('#checkoutError').textContent = t('empty_cart_customer'); return; }
   const customerName = $('#custName').value.trim();
-  if (!customerName) { $('#checkoutError').textContent = 'กรุณากรอกชื่อผู้สั่ง'; return; }
+  if (!customerName) { $('#checkoutError').textContent = t('err_customer_name_required'); return; }
 
   if (orderType === 'dine_in' && !pickedTableId) {
     $('#tableSelectError').classList.remove('hidden');
-    $('#checkoutError').textContent = 'กรุณาเลือกโต๊ะก่อนยืนยันออเดอร์';
+    $('#checkoutError').textContent = t('err_pick_table_first');
     return;
   }
 
@@ -270,8 +280,8 @@ $('#checkoutSubmit').addEventListener('click', async () => {
   }
   if (orderType === 'delivery') {
     const phone = $('#custPhone').value.trim(), phoneConfirm = $('#custPhoneConfirm').value.trim();
-    if (!phone || !phoneConfirm) { $('#checkoutError').textContent = 'กรุณากรอกเบอร์โทรทั้งสองช่อง'; return; }
-    if (phone !== phoneConfirm) { $('#checkoutError').textContent = 'เบอร์โทรทั้งสองช่องไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง'; return; }
+    if (!phone || !phoneConfirm) { $('#checkoutError').textContent = t('err_phone_both_required'); return; }
+    if (phone !== phoneConfirm) { $('#checkoutError').textContent = t('err_phone_mismatch'); return; }
     payload.customer_phone = phone;
     payload.customer_address = $('#custAddress').value.trim();
   } else {
@@ -281,14 +291,14 @@ $('#checkoutSubmit').addEventListener('click', async () => {
   try {
     const r = await fetch('/api/public/orders', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const body = await r.json();
-    if (!r.ok) { $('#checkoutError').textContent = body.error || 'เกิดข้อผิดพลาด'; return; }
+    if (!r.ok) { $('#checkoutError').textContent = body.error || t('err_generic'); return; }
     closeModals();
     cart = []; updateCartFab();
     $('#successOrderNo').textContent = '#' + body.order_no;
     const trackPhone = payload.customer_phone || '';
     $('#successTrackLink').href = '/track?order_no=' + encodeURIComponent(body.order_no) + '&phone=' + encodeURIComponent(trackPhone);
     openModal('#successModal');
-  } catch (e) { $('#checkoutError').textContent = 'เชื่อมต่อไม่ได้ กรุณาลองใหม่'; }
+  } catch (e) { $('#checkoutError').textContent = t('err_connect_failed'); }
 });
 $('#successNewOrderBtn').addEventListener('click', () => { closeModals(); });
 

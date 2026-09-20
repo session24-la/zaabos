@@ -1,19 +1,20 @@
 <!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ZaabOS</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 <meta name="theme-color" content="#ea580c">
 </head><body>
 
 <section id="loginView" class="login-screen">
+  <select id="loginLangSelect" class="lang-select lang-select-login"></select>
   <form id="loginForm" class="login-card">
     <div class="brand center">Zaab<b>OS</b></div>
-    <p class="login-sub">ระบบจัดการร้านอาหาร — เข้าสู่ระบบเพื่อจัดการร้านของคุณ</p>
-    <label><span>ชื่อผู้ใช้</span><input id="loginUsername" autocomplete="username" required></label>
-    <label><span>รหัสผ่าน</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
+    <p class="login-sub" data-i18n="admin_login_sub">ระบบจัดการร้านอาหาร — เข้าสู่ระบบเพื่อจัดการร้านของคุณ</p>
+    <label><span data-i18n="login_username">ชื่อผู้ใช้</span><input id="loginUsername" autocomplete="username" required></label>
+    <label><span data-i18n="login_password">รหัสผ่าน</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
     <div class="login-error" id="loginError"></div>
-    <button class="save" type="submit">เข้าสู่ระบบ</button>
+    <button class="save" type="submit" data-i18n="login_submit">เข้าสู่ระบบ</button>
   </form>
 </section>
 
@@ -21,6 +22,7 @@
 <header>
   <div class="brand">Zaab<b>OS</b></div>
   <div class="head-right">
+    <select id="langSelect" class="lang-select"></select>
     <select id="tenantSwitcher" class="hidden"></select>
     <div class="who-wrap">
       <button class="who" id="whoBtn" type="button">
@@ -29,9 +31,9 @@
         <span class="who-caret">▾</span>
       </button>
       <div class="who-menu hidden" id="whoMenu">
-        <button id="changePwBtn" type="button">🔒 เปลี่ยนรหัสผ่าน</button>
-        <button id="changeUsernameBtn" type="button">👤 เปลี่ยนชื่อผู้ใช้</button>
-        <button id="logoutBtn" type="button">🚪 ออกจากระบบ</button>
+        <button id="changePwBtn" type="button" data-i18n="menu_change_password">🔒 เปลี่ยนรหัสผ่าน</button>
+        <button id="changeUsernameBtn" type="button" data-i18n="menu_change_username">👤 เปลี่ยนชื่อผู้ใช้</button>
+        <button id="logoutBtn" type="button" data-i18n="menu_logout">🚪 ออกจากระบบ</button>
       </div>
     </div>
   </div>
@@ -39,37 +41,37 @@
 
 <main>
   <div class="biz-scope-bar" id="branchScopeBar">
-    <span class="biz-scope-lbl">สาขา</span>
+    <span class="biz-scope-lbl" data-i18n="scope_branch_label">สาขา</span>
     <select id="branchSelect"></select>
-    <button class="ghost-btn" id="qrOverviewBtn" type="button">📱 QR โต๊ะทั้งหมด</button>
+    <button class="ghost-btn" id="qrOverviewBtn" type="button" data-i18n="btn_qr_all_tables">📱 QR โต๊ะทั้งหมด</button>
   </div>
 
   <div class="tabs" id="mainTabs">
-    <button data-tab="orders" class="active"><span class="tab-ic">🧾</span><span class="tab-lb">ออเดอร์</span></button>
-    <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb">โต๊ะ &amp; QR</span></button>
-    <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb">เมนู</span></button>
-    <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb">สาขา</span></button>
-    <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb">ผู้ใช้งาน</span></button>
-    <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb">ร้านค้า</span></button>
+    <button data-tab="orders" class="active"><span class="tab-ic">🧾</span><span class="tab-lb" data-i18n="tab_orders">ออเดอร์</span></button>
+    <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
+    <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
+    <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
+    <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
   </div>
 
   <!-- ===== Orders tab ===== -->
   <section id="tab-orders" class="tab-panel">
     <div class="panel">
       <div class="panel-head">
-        <h2>คิวออเดอร์</h2>
+        <h2 data-i18n="orders_queue_title">คิวออเดอร์</h2>
         <div class="head-actions">
           <select id="orderStatusFilter">
-            <option value="">ทุกสถานะ</option>
-            <option value="received">รับออเดอร์แล้ว</option>
-            <option value="preparing">กำลังทำ</option>
-            <option value="ready">พร้อมเสิร์ฟ</option>
-            <option value="served">เสิร์ฟแล้ว</option>
-            <option value="completed">เสร็จสิ้น</option>
-            <option value="cancelled">ยกเลิก</option>
+            <option value="" data-i18n="status_all">ทุกสถานะ</option>
+            <option value="received" data-i18n="status_received">รับออเดอร์แล้ว</option>
+            <option value="preparing" data-i18n="status_preparing">กำลังทำ</option>
+            <option value="ready" data-i18n="status_ready">พร้อมเสิร์ฟ</option>
+            <option value="served" data-i18n="status_served">เสิร์ฟแล้ว</option>
+            <option value="completed" data-i18n="status_completed">เสร็จสิ้น</option>
+            <option value="cancelled" data-i18n="status_cancelled">ยกเลิก</option>
           </select>
-          <button class="ghost-btn primary" id="takeOrderBtn">➕ รับออเดอร์ลูกค้า</button>
-          <button class="ghost-btn" id="refreshOrdersBtn">🔄 รีเฟรช</button>
+          <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order">➕ รับออเดอร์ลูกค้า</button>
+          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
         </div>
       </div>
       <div id="ordersList"></div>
@@ -80,10 +82,10 @@
   <section id="tab-tables" class="tab-panel hidden">
     <div class="panel">
       <div class="panel-head">
-        <h2>โต๊ะในสาขานี้</h2>
+        <h2 data-i18n="tables_title">โต๊ะในสาขานี้</h2>
         <div class="head-actions">
-          <button class="ghost-btn" id="bulkAddTablesBtn">🔢 สร้างหลายโต๊ะ</button>
-          <button class="ghost-btn primary" id="addTableBtn">➕ เพิ่มโต๊ะ</button>
+          <button class="ghost-btn" id="bulkAddTablesBtn" data-i18n="btn_bulk_add_tables">🔢 สร้างหลายโต๊ะ</button>
+          <button class="ghost-btn primary" id="addTableBtn" data-i18n="btn_add_table">➕ เพิ่มโต๊ะ</button>
         </div>
       </div>
       <div class="table-grid" id="tableGrid"></div>
@@ -94,15 +96,15 @@
   <section id="tab-menu" class="tab-panel hidden">
     <div class="panel">
       <div class="panel-head">
-        <h2>หมวดหมู่เมนู</h2>
-        <button class="ghost-btn primary" id="addCategoryBtn">➕ เพิ่มหมวดหมู่</button>
+        <h2 data-i18n="categories_title">หมวดหมู่เมนู</h2>
+        <button class="ghost-btn primary" id="addCategoryBtn" data-i18n="btn_add_category">➕ เพิ่มหมวดหมู่</button>
       </div>
       <div id="categoriesList"></div>
     </div>
     <div class="panel">
       <div class="panel-head">
-        <h2>รายการเมนู</h2>
-        <button class="ghost-btn primary" id="addMenuItemBtn">➕ เพิ่มเมนู</button>
+        <h2 data-i18n="menu_items_title">รายการเมนู</h2>
+        <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item">➕ เพิ่มเมนู</button>
       </div>
       <div class="menu-grid" id="menuItemsGrid"></div>
     </div>
@@ -112,8 +114,8 @@
   <section id="tab-branches" class="tab-panel hidden">
     <div class="panel">
       <div class="panel-head">
-        <h2>สาขาทั้งหมด</h2>
-        <button class="ghost-btn primary" id="addBranchBtn">➕ เพิ่มสาขา</button>
+        <h2 data-i18n="branches_title">สาขาทั้งหมด</h2>
+        <button class="ghost-btn primary" id="addBranchBtn" data-i18n="btn_add_branch">➕ เพิ่มสาขา</button>
       </div>
       <div id="branchesList"></div>
     </div>
@@ -123,8 +125,8 @@
   <section id="tab-users" class="tab-panel hidden">
     <div class="panel">
       <div class="panel-head">
-        <h2>ผู้ใช้งานในร้าน</h2>
-        <button class="ghost-btn primary" id="addUserBtn">➕ เพิ่มผู้ใช้งาน</button>
+        <h2 data-i18n="users_title">ผู้ใช้งานในร้าน</h2>
+        <button class="ghost-btn primary" id="addUserBtn" data-i18n="btn_add_user">➕ เพิ่มผู้ใช้งาน</button>
       </div>
       <div id="usersList"></div>
     </div>
@@ -134,8 +136,8 @@
   <section id="tab-tenants" class="tab-panel hidden">
     <div class="panel">
       <div class="panel-head">
-        <h2>ร้านค้าทั้งหมด (ผู้ดูแลระบบ)</h2>
-        <button class="ghost-btn primary" id="addTenantBtn">➕ เพิ่มร้านค้าใหม่</button>
+        <h2 data-i18n="tenants_title">ร้านค้าทั้งหมด (ผู้ดูแลระบบ)</h2>
+        <button class="ghost-btn primary" id="addTenantBtn" data-i18n="btn_add_tenant">➕ เพิ่มร้านค้าใหม่</button>
       </div>
       <div id="tenantsList"></div>
     </div>
@@ -144,130 +146,132 @@
 </div>
 
 <!-- ===== Modals ===== -->
-<div class="modal" id="pwModal"><div class="sheet small"><div class="sheet-head"><h2>ตั้งรหัสผ่านใหม่</h2><button data-close>×</button></div>
-  <p class="hint">เพื่อความปลอดภัย กรุณาตั้งรหัสผ่านใหม่ก่อนใช้งานต่อ</p>
-  <label><span>รหัสผ่านปัจจุบัน</span><input id="pwCurrent" type="password"></label>
-  <label><span>รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span><input id="pwNew" type="password"></label>
+<div class="modal" id="pwModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_new_password_title">ตั้งรหัสผ่านใหม่</h2><button data-close>×</button></div>
+  <p class="hint" data-i18n="pw_forced_hint">เพื่อความปลอดภัย กรุณาตั้งรหัสผ่านใหม่ก่อนใช้งานต่อ</p>
+  <label><span data-i18n="label_current_password">รหัสผ่านปัจจุบัน</span><input id="pwCurrent" type="password"></label>
+  <label><span data-i18n="label_new_password">รหัสผ่านใหม่ (อย่างน้อย 6 ตัว)</span><input id="pwNew" type="password"></label>
   <div class="login-error" id="pwError"></div>
-  <button class="save" id="pwSave">บันทึก</button>
+  <button class="save" id="pwSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="usernameModal"><div class="sheet small"><div class="sheet-head"><h2>เปลี่ยนชื่อผู้ใช้</h2><button data-close>×</button></div>
-  <label><span>ชื่อผู้ใช้ปัจจุบัน</span><input id="usernameCurrentDisplay" disabled></label>
-  <label><span>ชื่อผู้ใช้ใหม่</span><input id="usernameNew" autocomplete="username"></label>
-  <label><span>รหัสผ่าน (เพื่อยืนยันตัวตน)</span><input id="usernamePassword" type="password" autocomplete="current-password"></label>
+<div class="modal" id="usernameModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_change_username_title">เปลี่ยนชื่อผู้ใช้</h2><button data-close>×</button></div>
+  <label><span data-i18n="label_current_username">ชื่อผู้ใช้ปัจจุบัน</span><input id="usernameCurrentDisplay" disabled></label>
+  <label><span data-i18n="label_new_username">ชื่อผู้ใช้ใหม่</span><input id="usernameNew" autocomplete="username"></label>
+  <label><span data-i18n="label_password_confirm">รหัสผ่าน (เพื่อยืนยันตัวตน)</span><input id="usernamePassword" type="password" autocomplete="current-password"></label>
   <div class="login-error" id="usernameError"></div>
-  <button class="save" id="usernameSave">บันทึก</button>
+  <button class="save" id="usernameSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="branchModal"><div class="sheet small"><div class="sheet-head"><h2 id="branchModalTitle">เพิ่มสาขา</h2><button data-close>×</button></div>
+<div class="modal" id="branchModal"><div class="sheet small"><div class="sheet-head"><h2 id="branchModalTitle" data-i18n="modal_add_branch_title">เพิ่มสาขา</h2><button data-close>×</button></div>
   <input type="hidden" id="branchId">
-  <label><span>ไอคอน</span><input id="branchIcon" maxlength="4" value="🏠"></label>
-  <label><span>ชื่อสาขา</span><input id="branchName" placeholder="เช่น สาขาหลัก"></label>
+  <label><span data-i18n="label_icon">ไอคอน</span><input id="branchIcon" maxlength="4" value="🏠"></label>
+  <label><span data-i18n="label_branch_name">ชื่อสาขา</span><input id="branchName" placeholder="เช่น สาขาหลัก" data-i18n-ph="placeholder_branch_name"></label>
   <div class="login-error" id="branchError"></div>
-  <button class="save" id="branchSave">บันทึก</button>
+  <button class="save" id="branchSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="tableModal"><div class="sheet small"><div class="sheet-head"><h2 id="tableModalTitle">เพิ่มโต๊ะ</h2><button data-close>×</button></div>
+<div class="modal" id="tableModal"><div class="sheet small"><div class="sheet-head"><h2 id="tableModalTitle" data-i18n="modal_add_table_title">เพิ่มโต๊ะ</h2><button data-close>×</button></div>
   <input type="hidden" id="tableId">
-  <label><span>ชื่อโต๊ะ</span><input id="tableName" placeholder="เช่น โต๊ะ 1"></label>
+  <label><span data-i18n="label_table_name">ชื่อโต๊ะ</span><input id="tableName" placeholder="เช่น โต๊ะ 1" data-i18n-ph="placeholder_table_name"></label>
   <div class="login-error" id="tableError"></div>
-  <button class="save" id="tableSave">บันทึก</button>
+  <button class="save" id="tableSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="bulkTableModal"><div class="sheet small"><div class="sheet-head"><h2>สร้างหลายโต๊ะพร้อมกัน</h2><button data-close>×</button></div>
-  <p class="hint">ระบบจะสร้างโต๊ะให้อัตโนมัติ พร้อม QR โค้ดเฉพาะของแต่ละโต๊ะ</p>
-  <label><span>จำนวนโต๊ะที่ต้องการสร้าง</span><input id="bulkTableCount" type="number" min="1" max="200" value="10"></label>
+<div class="modal" id="bulkTableModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_bulk_tables_title">สร้างหลายโต๊ะพร้อมกัน</h2><button data-close>×</button></div>
+  <p class="hint" data-i18n="bulk_tables_hint">ระบบจะสร้างโต๊ะให้อัตโนมัติ พร้อม QR โค้ดเฉพาะของแต่ละโต๊ะ</p>
+  <label><span data-i18n="label_table_count">จำนวนโต๊ะที่ต้องการสร้าง</span><input id="bulkTableCount" type="number" min="1" max="200" value="10"></label>
   <div class="login-error" id="bulkTableError"></div>
-  <button class="save" id="bulkTableSave">สร้างโต๊ะ</button>
+  <button class="save" id="bulkTableSave" data-i18n="btn_create_tables">สร้างโต๊ะ</button>
 </div></div>
 
-<div class="modal" id="qrModal"><div class="sheet" id="qrSheet"><div class="sheet-head"><h2 id="qrModalTitle">QR โต๊ะ</h2><button data-close>×</button></div>
+<div class="modal" id="qrModal"><div class="sheet" id="qrSheet"><div class="sheet-head"><h2 id="qrModalTitle" data-i18n="qr_modal_title_all">QR โต๊ะ</h2><button data-close>×</button></div>
   <div id="qrModalBody"></div>
 </div></div>
 
-<div class="modal" id="categoryModal"><div class="sheet small"><div class="sheet-head"><h2 id="categoryModalTitle">เพิ่มหมวดหมู่</h2><button data-close>×</button></div>
+<div class="modal" id="categoryModal"><div class="sheet small"><div class="sheet-head"><h2 id="categoryModalTitle" data-i18n="modal_add_category_title">เพิ่มหมวดหมู่</h2><button data-close>×</button></div>
   <input type="hidden" id="categoryId">
-  <label><span>ไอคอน</span><input id="categoryIcon" maxlength="4" value="🍜"></label>
-  <label><span>ชื่อหมวดหมู่</span><input id="categoryName" placeholder="เช่น อาหารจานหลัก"></label>
+  <label><span data-i18n="label_icon">ไอคอน</span><input id="categoryIcon" maxlength="4" value="🍜"></label>
+  <label><span data-i18n="label_category_name">ชื่อหมวดหมู่</span><input id="categoryName" placeholder="เช่น อาหารจานหลัก" data-i18n-ph="placeholder_category_name"></label>
   <div class="login-error" id="categoryError"></div>
-  <button class="save" id="categorySave">บันทึก</button>
+  <button class="save" id="categorySave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="menuItemModal"><div class="sheet wide"><div class="sheet-head"><h2 id="menuItemModalTitle">เพิ่มเมนู</h2><button data-close>×</button></div>
+<div class="modal" id="menuItemModal"><div class="sheet wide"><div class="sheet-head"><h2 id="menuItemModalTitle" data-i18n="modal_add_menu_item_title">เพิ่มเมนู</h2><button data-close>×</button></div>
   <input type="hidden" id="menuItemId">
-  <label><span>ชื่อเมนู</span><input id="menuItemName" placeholder="เช่น ผัดไทย"></label>
-  <label><span>รายละเอียด</span><textarea id="menuItemDesc" placeholder="คำอธิบายสั้น ๆ (ถ้ามี)"></textarea></label>
-  <label><span>หมวดหมู่</span><select id="menuItemCategory"></select></label>
-  <label><span>ราคาพื้นฐาน</span><input id="menuItemPrice" type="number" min="0" step="0.01"></label>
-  <div class="checkbox-row"><input type="checkbox" id="menuItemSoldOut"><label style="margin:0" for="menuItemSoldOut">หมดชั่วคราว (ของหมด)</label></div>
-  <h3 style="margin-top:20px">ตัวเลือกเพิ่มเติม (เช่น ขนาด, ความเผ็ด)</h3>
+  <label><span data-i18n="label_menu_item_name">ชื่อเมนู</span><input id="menuItemName" placeholder="เช่น ผัดไทย" data-i18n-ph="placeholder_menu_item_name"></label>
+  <label><span data-i18n="label_description">รายละเอียด</span><textarea id="menuItemDesc" placeholder="คำอธิบายสั้น ๆ (ถ้ามี)" data-i18n-ph="placeholder_description"></textarea></label>
+  <label><span data-i18n="label_category">หมวดหมู่</span><select id="menuItemCategory"></select></label>
+  <label><span data-i18n="label_base_price">ราคาพื้นฐาน</span><input id="menuItemPrice" type="number" min="0" step="0.01"></label>
+  <div class="checkbox-row"><input type="checkbox" id="menuItemSoldOut"><label style="margin:0" for="menuItemSoldOut" data-i18n="label_sold_out_temp">หมดชั่วคราว (ของหมด)</label></div>
+  <h3 style="margin-top:20px" data-i18n="label_option_groups_title">ตัวเลือกเพิ่มเติม (เช่น ขนาด, ความเผ็ด)</h3>
   <div id="optionGroupsBox"></div>
-  <button class="add-group-btn" id="addOptGroupBtn" type="button">➕ เพิ่มกลุ่มตัวเลือก</button>
+  <button class="add-group-btn" id="addOptGroupBtn" type="button" data-i18n="btn_add_option_group">➕ เพิ่มกลุ่มตัวเลือก</button>
   <div class="login-error" id="menuItemError"></div>
-  <button class="save" id="menuItemSave">บันทึก</button>
+  <button class="save" id="menuItemSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="userModal"><div class="sheet small"><div class="sheet-head"><h2 id="userModalTitle">เพิ่มผู้ใช้งาน</h2><button data-close>×</button></div>
+<div class="modal" id="userModal"><div class="sheet small"><div class="sheet-head"><h2 id="userModalTitle" data-i18n="modal_add_user_title">เพิ่มผู้ใช้งาน</h2><button data-close>×</button></div>
   <input type="hidden" id="userId">
-  <label><span>ชื่อผู้ใช้ (login)</span><input id="userUsername" autocomplete="off"></label>
-  <label><span>ชื่อที่แสดง</span><input id="userDisplayName"></label>
-  <label><span>สิทธิ์การใช้งาน</span>
-    <select id="userRole"><option value="staff">พนักงาน</option><option value="manager">ผู้จัดการ</option><option value="owner">เจ้าของร้าน</option></select>
+  <label><span data-i18n="label_username_login">ชื่อผู้ใช้ (login)</span><input id="userUsername" autocomplete="off"></label>
+  <label><span data-i18n="label_display_name">ชื่อที่แสดง</span><input id="userDisplayName"></label>
+  <label><span data-i18n="label_role">สิทธิ์การใช้งาน</span>
+    <select id="userRole"><option value="staff" data-i18n="role_staff">พนักงาน</option><option value="manager" data-i18n="role_manager">ผู้จัดการ</option><option value="owner" data-i18n="role_owner">เจ้าของร้าน</option></select>
   </label>
-  <label><span id="userPasswordLbl">รหัสผ่าน</span><input id="userPassword" type="password" autocomplete="new-password"></label>
-  <div class="checkbox-row hidden" id="userActiveRow"><input type="checkbox" id="userActive" checked><label style="margin:0" for="userActive">เปิดใช้งานบัญชีนี้</label></div>
+  <label><span id="userPasswordLbl" data-i18n="label_password">รหัสผ่าน</span><input id="userPassword" type="password" autocomplete="new-password"></label>
+  <div class="checkbox-row hidden" id="userActiveRow"><input type="checkbox" id="userActive" checked><label style="margin:0" for="userActive" data-i18n="label_active_account">เปิดใช้งานบัญชีนี้</label></div>
   <div class="login-error" id="userError"></div>
-  <button class="save" id="userSave">บันทึก</button>
+  <button class="save" id="userSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="tenantModal"><div class="sheet small"><div class="sheet-head"><h2>เพิ่มร้านค้าใหม่</h2><button data-close>×</button></div>
-  <label><span>ชื่อร้าน</span><input id="tenantName"></label>
-  <h3>บัญชีเจ้าของร้าน</h3>
-  <label><span>ชื่อผู้ใช้ (login)</span><input id="tenantOwnerUsername" autocomplete="off"></label>
-  <label><span>ชื่อที่แสดง</span><input id="tenantOwnerDisplay"></label>
-  <label><span>รหัสผ่าน</span><input id="tenantOwnerPassword" type="password" autocomplete="new-password"></label>
+<div class="modal" id="tenantModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_add_tenant_title">เพิ่มร้านค้าใหม่</h2><button data-close>×</button></div>
+  <label><span data-i18n="label_shop_name">ชื่อร้าน</span><input id="tenantName"></label>
+  <h3 data-i18n="label_owner_account_title">บัญชีเจ้าของร้าน</h3>
+  <label><span data-i18n="label_username_login">ชื่อผู้ใช้ (login)</span><input id="tenantOwnerUsername" autocomplete="off"></label>
+  <label><span data-i18n="label_display_name">ชื่อที่แสดง</span><input id="tenantOwnerDisplay"></label>
+  <label><span data-i18n="label_password">รหัสผ่าน</span><input id="tenantOwnerPassword" type="password" autocomplete="new-password"></label>
   <div class="login-error" id="tenantError"></div>
-  <button class="save" id="tenantSave">สร้างร้านค้า</button>
+  <button class="save" id="tenantSave" data-i18n="btn_create_shop">สร้างร้านค้า</button>
 </div></div>
 
 <!-- Staff take-order modal -->
-<div class="modal" id="takeOrderModal"><div class="sheet wide"><div class="sheet-head"><h2>รับออเดอร์ลูกค้า</h2><button data-close>×</button></div>
+<div class="modal" id="takeOrderModal"><div class="sheet wide"><div class="sheet-head"><h2 data-i18n="modal_take_order_title">รับออเดอร์ลูกค้า</h2><button data-close>×</button></div>
   <div class="type" id="takeOrderType">
-    <button data-type="dine_in" class="active">🍽️ ทานที่ร้าน</button>
-    <button data-type="takeaway">🥡 กลับบ้าน</button>
-    <button data-type="delivery">🛵 เดลิเวอรี่</button>
+    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in">🍽️ ทานที่ร้าน</button>
+    <button data-type="takeaway" data-i18n="order_type_takeaway">🥡 กลับบ้าน</button>
+    <button data-type="delivery" data-i18n="order_type_delivery">🛵 เดลิเวอรี่</button>
   </div>
   <div id="takeOrderTableRow">
-    <label><span>โต๊ะ</span><select id="takeOrderTable"></select></label>
+    <label><span data-i18n="label_table">โต๊ะ</span><select id="takeOrderTable"></select></label>
   </div>
-  <label><span>ชื่อลูกค้า</span><input id="takeOrderCustomerName" placeholder="ลูกค้า"></label>
+  <label><span data-i18n="label_customer_name">ชื่อลูกค้า</span><input id="takeOrderCustomerName" placeholder="ลูกค้า" data-i18n-ph="placeholder_customer_name"></label>
   <div id="takeOrderDeliveryFields" class="hidden">
-    <label><span>เบอร์โทร</span><input id="takeOrderPhone" inputmode="numeric"></label>
-    <label><span>ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress"></textarea></label>
+    <label><span data-i18n="label_phone">เบอร์โทร</span><input id="takeOrderPhone" inputmode="numeric"></label>
+    <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress"></textarea></label>
   </div>
-  <h3>เลือกเมนู</h3>
+  <h3 data-i18n="label_choose_menu">เลือกเมนู</h3>
   <div class="cat-scroll" id="takeOrderCatScroll"></div>
   <div class="menu-grid" id="takeOrderMenuGrid"></div>
-  <h3>ตะกร้า</h3>
+  <h3 data-i18n="label_cart">ตะกร้า</h3>
   <div id="takeOrderCart"></div>
-  <div class="cart-total-row"><span>รวมทั้งหมด</span><span id="takeOrderTotal">0</span></div>
+  <div class="cart-total-row"><span data-i18n="label_total">รวมทั้งหมด</span><span id="takeOrderTotal">0</span></div>
   <div class="login-error" id="takeOrderError"></div>
-  <button class="save" id="takeOrderSubmit">✅ ยืนยันออเดอร์</button>
+  <button class="save" id="takeOrderSubmit" data-i18n="btn_confirm_order">✅ ยืนยันออเดอร์</button>
 </div></div>
 
 <!-- Menu item option picker (used from take-order menu grid) -->
-<div class="modal" id="itemOptionModal"><div class="sheet small"><div class="sheet-head"><h2 id="itemOptionTitle">เลือกตัวเลือก</h2><button data-close>×</button></div>
+<div class="modal" id="itemOptionModal"><div class="sheet small"><div class="sheet-head"><h2 id="itemOptionTitle" data-i18n="modal_choose_options_title">เลือกตัวเลือก</h2><button data-close>×</button></div>
   <div id="itemOptionBody"></div>
-  <label><span>หมายเหตุ</span><input id="itemOptionNotes" placeholder="เช่น ไม่ใส่ผัก"></label>
+  <label><span data-i18n="label_notes">หมายเหตุ</span><input id="itemOptionNotes" placeholder="เช่น ไม่ใส่ผัก" data-i18n-ph="placeholder_notes_staff"></label>
   <div class="qty-stepper" style="margin-top:14px;justify-content:center">
     <button type="button" id="itemOptionMinus">−</button><span id="itemOptionQty">1</span><button type="button" id="itemOptionPlus">+</button>
   </div>
   <div class="login-error" id="itemOptionError"></div>
-  <button class="save" id="itemOptionAdd">เพิ่มลงตะกร้า</button>
+  <button class="save" id="itemOptionAdd" data-i18n="btn_add_to_cart">เพิ่มลงตะกร้า</button>
 </div></div>
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<script>const DEFAULT_LANG = 'th';</script>
+<script src="/static/i18n.js"></script>
 <script src="/static/app.js"></script>
 </body></html>

@@ -62,7 +62,7 @@
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text)}
-:root{font-family:"Inter","Prompt",-apple-system,BlinkMacSystemFont,"Noto Sans Thai",sans-serif;-webkit-font-smoothing:antialiased}
+:root{font-family:"Inter","Prompt","Noto Sans Lao","Noto Sans SC",-apple-system,BlinkMacSystemFont,"Noto Sans Thai",sans-serif;-webkit-font-smoothing:antialiased}
 .tabular{font-variant-numeric:tabular-nums}
 button,input,select,textarea{font:inherit;color:inherit}
 button{-webkit-tap-highlight-color:transparent;cursor:pointer}
@@ -222,6 +222,11 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
   .sheet{border-radius:var(--radius-xl);max-height:88vh}
   .sheet::before{display:none}
 }
+
+/* ===== Language switcher (shared across all pages) ===== */
+.lang-select{border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--surface-2);font-size:13px;color:var(--text);cursor:pointer}
+.lang-select-login{position:fixed;top:16px;right:16px;z-index:5;background:var(--surface);box-shadow:var(--shadow-sm)}
+.lang-bar{display:flex;justify-content:flex-end;padding:12px 16px 0}
 
 /* ===== Login ===== */
 .login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:
