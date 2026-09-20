@@ -556,3 +556,31 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .kitchen-ticket li.kt-item-cancelled{opacity:.7;background:rgba(185,28,28,.06);text-decoration-color:#b91c1c}
 
 .ghost-btn.danger{color:#b91c1c;border-color:#fecaca;background:#fff7f7}
+
+
+/* ===== Round 14H — POS Workspace Redesign ===== */
+main{max-width:1180px;padding-top:14px}
+.header-branch{display:flex;align-items:center;gap:5px;min-width:0;border:1px solid var(--border);background:var(--surface-2);border-radius:11px;padding-left:8px}
+.header-branch-icon{font-size:14px}.header-branch select{border:0!important;background:transparent!important;max-width:150px!important;font-weight:700;padding-left:2px!important}
+.pos-nav{position:relative;overflow:visible;display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:8px;max-width:720px;margin:16px 0 12px}
+.pos-nav>button,.pos-nav>.nav-more-wrap>.nav-primary{justify-content:center;min-height:46px}
+.nav-more-wrap{position:relative}.nav-more-wrap>.nav-primary{width:100%}
+.nav-more-menu{position:absolute;z-index:45;top:54px;right:0;width:260px;padding:8px;background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lg);display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.nav-more-menu.hidden{display:none}.nav-more-menu button{width:100%;min-width:0;white-space:normal;justify-content:flex-start;padding:11px;border-radius:11px}
+.eyebrow{display:block;color:var(--primary);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+#tab-orders>.panel{margin-top:0;padding:20px}.board-row{margin-top:8px}.table-board{grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:12px}.board-tile{min-height:128px;border-radius:16px}
+.history-panel{margin-top:0}.history-head{margin-bottom:14px}.history-head h2{margin-bottom:0;font-size:20px}
+#tab-orders .side-panel{border-radius:16px}
+@media (min-width:641px){.pos-nav .nav-primary{font-size:13px}.pos-nav .tab-ic{font-size:17px}}
+@media (max-width:760px){
+  main{padding:10px 12px 86px}
+  .header-branch{order:2;max-width:132px}.header-branch-icon{display:none}.header-branch select{max-width:125px!important;font-size:11px!important}
+  .pos-nav{position:fixed;left:0;right:0;bottom:0;z-index:40;margin:0;max-width:none;display:grid;grid-template-columns:repeat(5,1fr);gap:0;padding:5px 4px calc(5px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -8px 24px -16px rgba(0,0,0,.4)}
+  .pos-nav>button,.pos-nav>.nav-more-wrap>.nav-primary{min-height:52px;padding:5px 2px!important;border:0!important;background:transparent!important;display:flex;flex-direction:column;gap:2px;font-size:10px!important;color:var(--text-faint)}
+  .pos-nav>button.active{color:var(--primary)!important}.pos-nav .tab-ic{font-size:20px!important}
+  .nav-more-menu{position:fixed;left:10px;right:10px;bottom:72px;top:auto;width:auto;grid-template-columns:repeat(2,1fr);padding:10px;border-radius:18px}
+  .nav-more-menu button{display:flex!important;flex-direction:row!important;min-height:48px!important;font-size:12px!important;border:1px solid var(--border)!important;background:var(--surface-2)!important;color:var(--text)!important}
+  #tab-orders>.panel{padding:14px}.table-board{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.board-tile{min-height:110px;padding:12px}
+  .side-panel{display:none}.other-orders-wrap{margin-top:14px}
+  .history-head .head-actions{width:100%}.history-head select{flex:1}
+}

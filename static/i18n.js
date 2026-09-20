@@ -79,6 +79,13 @@ const I18N = {
   role_staff: { th: 'พนักงาน', lo: 'ພະນັກງານ', zh: '员工', en: 'Staff' },
 
   tab_orders: { th: 'ออเดอร์', lo: 'ອໍເດີ', zh: '订单', en: 'Orders' },
+  tab_pos: { th: 'POS', lo: 'POS', zh: '收银', en: 'POS' },
+  tab_history: { th: 'ประวัติ', lo: 'ປະຫວັດ', zh: '历史订单', en: 'History' },
+  tab_kitchen: { th: 'ครัว', lo: 'ຄົວ', zh: '厨房', en: 'Kitchen' },
+  tab_more: { th: 'เพิ่มเติม', lo: 'ເພີ່ມເຕີມ', zh: '更多', en: 'More' },
+  pos_workspace: { th: 'หน้าร้าน', lo: 'ໜ້າຮ້ານ', zh: '前台', en: 'Front of house' },
+  history_eyebrow: { th: 'ค้นหาและตรวจสอบ', lo: 'ຄົ້ນຫາ ແລະ ກວດສອບ', zh: '搜索与核对', en: 'Search & review' },
+  history_title: { th: 'ประวัติออเดอร์', lo: 'ປະຫວັດອໍເດີ', zh: '订单历史', en: 'Order history' },
   tab_tables: { th: 'โต๊ะ & QR', lo: 'ໂຕະ & QR', zh: '桌台与二维码', en: 'Tables & QR' },
   tab_menu: { th: 'เมนู', lo: 'ເມນູ', zh: '菜单', en: 'Menu' },
   tab_branches: { th: 'สาขา', lo: 'ສາຂາ', zh: '分店', en: 'Branches' },

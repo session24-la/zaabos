@@ -239,8 +239,15 @@ function branchItems() { return boot.items.filter(i => i.branch_id === currentBr
 
 $('#mainTabs').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-tab]');
-  if (btn) switchTab(btn.dataset.tab);
+  if (btn) { switchTab(btn.dataset.tab); $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded','false'); }
 });
+$('#moreNavBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu=$('#moreNavMenu'); const open=menu.classList.toggle('hidden');
+  $('#moreNavBtn').setAttribute('aria-expanded', String(!open));
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('.nav-more-wrap')) { $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded','false'); } });
+$('#kitchenNavBtn').addEventListener('click', () => { window.location.href='/kitchen'; });
 
 function switchTab(tab) {
   $$('#mainTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -254,7 +261,8 @@ function activeTab() {
 function refreshCurrentTab(tab) {
   if (!me) return;
   tab = tab || activeTab();
-  if (tab === 'orders') { loadOrders(); loadBoardData(); }
+  if (tab === 'orders') { loadBoardData(); }
+  else if (tab === 'history') loadOrders();
   else if (tab === 'tables') renderTables();
   else if (tab === 'menu') loadBootstrap().then(renderMenu); // re-fetch so stock counts (which change from orders placed elsewhere — staff or customer QR) are current whenever this tab is opened
   else if (tab === 'pricing') loadPricing();
@@ -906,7 +914,8 @@ async function loadOrders() {
   renderOrdersList(r.orders);
 }
 $('#orderStatusFilter').addEventListener('change', loadOrders);
-$('#refreshOrdersBtn').addEventListener('click', () => { loadOrders(); loadBoardData(); });
+$('#refreshOrdersBtn').addEventListener('click', loadOrders);
+$('#refreshPosBtn').addEventListener('click', loadBoardData);
 
 function fmtClock(iso) {
   try { return zaabosTime(iso); }
