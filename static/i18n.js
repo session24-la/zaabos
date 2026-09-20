@@ -87,6 +87,7 @@ const I18N = {
 
   orders_queue_title: { th: 'คิวออเดอร์', lo: 'ຄິວອໍເດີ', zh: '订单队列', en: 'Order queue' },
   btn_take_order: { th: '➕ รับออเดอร์ลูกค้า', lo: '➕ ຮັບອໍເດີລູກຄ້າ', zh: '➕ 帮客人下单', en: '➕ Take customer order' },
+  btn_submitting: { th: 'กำลังบันทึก...', lo: 'ກຳລັງບັນທຶກ...', zh: '保存中...', en: 'Saving...' },
   btn_refresh: { th: '🔄 รีเฟรช', lo: '🔄 ໂຫຼດໃໝ່', zh: '🔄 刷新', en: '🔄 Refresh' },
   empty_orders: { th: 'ยังไม่มีออเดอร์', lo: 'ຍັງບໍ່ມີອໍເດີ', zh: '暂无订单', en: 'No orders yet' },
 

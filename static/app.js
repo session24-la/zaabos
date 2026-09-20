@@ -1307,6 +1307,7 @@ $('#takeOrderCart').addEventListener('click', (e) => {
 $('#takeOrderSubmit').addEventListener('click', async () => {
   $('#takeOrderError').textContent = '';
   if (!cart.length) { $('#takeOrderError').textContent = t('err_cart_empty_min1'); return; }
+  if ($('#takeOrderSubmit').disabled) return; // already submitting — ignore extra clicks/taps
   const payload = {
     branch_id: currentBranchId, order_type: takeOrderType,
     customer_name: $('#takeOrderCustomerName').value.trim() || t('placeholder_customer_name'),
@@ -1316,6 +1317,9 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   if (guestCountRaw) payload.guest_count = parseInt(guestCountRaw, 10);
   if (takeOrderType === 'dine_in') payload.table_id = parseInt($('#takeOrderTable').value, 10);
   if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); }
+  const btn = $('#takeOrderSubmit');
+  const originalLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
   try {
     const r = await apiJson('/api/orders', 'POST', payload);
     closeModals(); toast(t('toast_order_saved', { no: r.order_no }), 'ok'); loadOrders(); loadBoardData();
@@ -1324,6 +1328,7 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
     // it was before this order was placed
     loadBootstrap().then(() => { if (activeTab() === 'menu') renderMenu(); });
   } catch (e) { $('#takeOrderError').textContent = e.message; }
+  finally { btn.disabled = false; btn.textContent = originalLabel; }
 });
 
 // ===================== Misc =====================

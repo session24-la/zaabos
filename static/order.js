@@ -317,6 +317,7 @@ $('#tablePickGrid').addEventListener('click', (e) => {
 $('#checkoutSubmit').addEventListener('click', async () => {
   $('#checkoutError').textContent = '';
   if (!cart.length) { $('#checkoutError').textContent = t('empty_cart_customer'); return; }
+  if ($('#checkoutSubmit').disabled) return; // already submitting — ignore extra taps
   const customerName = $('#custName').value.trim(); // optional — server defaults it when blank
 
   if (orderType === 'dine_in' && !pickedTableId) {
@@ -345,6 +346,9 @@ $('#checkoutSubmit').addEventListener('click', async () => {
     payload.customer_phone = $('#custPhoneOptional').value.trim();
   }
 
+  const btn = $('#checkoutSubmit');
+  const originalLabel = btn.textContent;
+  btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
   try {
     const r = await fetch('/api/public/orders', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const body = await r.json();
@@ -356,6 +360,7 @@ $('#checkoutSubmit').addEventListener('click', async () => {
     $('#successTrackLink').href = '/track?order_no=' + encodeURIComponent(body.order_no) + '&phone=' + encodeURIComponent(trackPhone);
     openModal('#successModal');
   } catch (e) { $('#checkoutError').textContent = t('err_connect_failed'); }
+  finally { btn.disabled = false; btn.textContent = originalLabel; }
 });
 $('#successNewOrderBtn').addEventListener('click', () => { closeModals(); });
 

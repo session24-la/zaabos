@@ -996,8 +996,14 @@ def _decrement_stock(conn, menu_item_id, qty):
     stock tracking. Clamped at 0 rather than blocking the sale — an owner who
     wants a hard stop still has the existing sold_out toggle for that."""
     if not menu_item_id: return
-    conn.execute('''UPDATE menu_items SET stock_qty = MAX(0, COALESCE(stock_qty,0) - ?)
-        WHERE id=? AND track_stock=1''', (qty, menu_item_id))
+    # CASE/WHEN instead of MAX(0, ...) — Postgres only has MAX() as an
+    # aggregate, not a 2-argument scalar like SQLite does, so MAX(0, expr)
+    # blew up in production with "function max(integer, integer) does not
+    # exist" on every order containing a stock-tracked item. CASE/WHEN is
+    # portable ANSI SQL that behaves identically on both.
+    conn.execute('''UPDATE menu_items SET stock_qty =
+        CASE WHEN COALESCE(stock_qty,0) - ? < 0 THEN 0 ELSE COALESCE(stock_qty,0) - ? END
+        WHERE id=? AND track_stock=1''', (qty, qty, menu_item_id))
 
 PHONE_RE_MIN, PHONE_RE_MAX = 8, 12  # digits, covers Lao/Thai mobile numbers
 
