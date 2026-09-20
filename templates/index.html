@@ -195,7 +195,8 @@
     <div class="panel inventory-workspace">
       <div class="panel-head"><div><h2>วัตถุดิบ & สูตร</h2><div class="muted">สต็อกวัตถุดิบจะหักอัตโนมัติตามสูตรเมื่อขายเมนู</div></div><button class="ghost-btn primary" id="addIngredientBtn">+ วัตถุดิบ</button></div>
       <div id="inventorySummary" class="inventory-summary"></div>
-      <div id="ingredientsList"></div>
+      <div class="inventory-toolbar"><button class="ghost-btn" id="manageStationsBtn">👨‍🍳 สถานีครัว</button><button class="ghost-btn" id="inventoryHistoryBtn">📜 ประวัติสต็อก</button></div>
+      <div id="ingredientsList"></div><div id="inventoryHistory" class="hidden"></div>
     </div>
   </section>
 
@@ -350,6 +351,8 @@
     <label><span data-i18n="label_base_price">ราคาขาย</span><input id="menuItemPrice" type="number" min="0" step="0.01"></label>
     <label><span data-i18n="label_cost_price">ต้นทุน</span><input id="menuItemCostPrice" type="number" min="0" step="0.01"></label>
   </div>
+  <label><span>สถานีครัว</span><select id="menuItemKitchenStation"><option value="">ไม่ระบุสถานี</option></select></label>
+  <button type="button" class="ghost-btn" id="menuItemRecipeBtn">🧾 สูตรวัตถุดิบของเมนูนี้</button>
   <div class="checkbox-row"><input type="checkbox" id="menuItemTrackStock"><label style="margin:0" for="menuItemTrackStock" data-i18n="label_track_stock">นับสต็อกเมนูนี้</label></div>
   <div class="two-col" id="menuItemStockFields">
     <label><span data-i18n="label_stock_qty">จำนวนคงเหลือ</span><input id="menuItemStockQty" type="number" min="0" step="1"></label>
@@ -485,6 +488,8 @@
   <div class="bill-manager-tabs"><button data-bm-mode="move" class="active">ย้ายโต๊ะ</button><button data-bm-mode="merge">รวมบิล</button><button data-bm-mode="split">แยกบิล</button></div>
   <div id="billManagerBody"></div><div class="login-error" id="billManagerError"></div>
 </div></div>
+<div class="modal" id="recipeModal"><div class="sheet wide"><div class="sheet-head"><h2>สูตรวัตถุดิบ</h2><button data-close>×</button></div><div class="muted" id="recipeMenuName"></div><div id="recipeRows"></div><button class="ghost-btn" id="recipeAddRow">+ เพิ่มวัตถุดิบ</button><button class="save" id="recipeSave">บันทึกสูตร</button></div></div>
+<div class="modal" id="stationsModal"><div class="sheet small"><div class="sheet-head"><h2>สถานีครัว</h2><button data-close>×</button></div><div id="stationsList"></div><div class="form-grid"><input id="newStationName" placeholder="เช่น ครัวร้อน / เครื่องดื่ม"><button class="save" id="stationAdd">+ เพิ่มสถานี</button></div></div></div>
 <div class="modal" id="ingredientModal"><div class="sheet small"><div class="sheet-head"><h2>เพิ่มวัตถุดิบ</h2><button data-close>×</button></div>
   <label><span>ชื่อ</span><input id="ingName"></label><div class="form-grid"><label><span>หน่วย</span><input id="ingUnit" placeholder="g / ml / ชิ้น"></label><label><span>คงเหลือ</span><input id="ingQty" type="number" min="0" step="0.01"></label></div>
   <div class="form-grid"><label><span>เตือนเมื่อเหลือ</span><input id="ingLow" type="number" min="0" step="0.01"></label><label><span>ต้นทุน/หน่วย</span><input id="ingCost" type="number" min="0" step="0.01"></label></div>
