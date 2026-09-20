@@ -336,9 +336,28 @@ function renderReportCards(s) {
     <div class="report-card"><div class="rc-label">${escapeHtml(t('label_order_count'))}</div><div class="rc-value">${s.order_count}</div></div>
     <div class="report-card"><div class="rc-label">${escapeHtml(t('label_guest_total'))}</div><div class="rc-value">${s.guests}</div></div>
     <div class="report-card"><div class="rc-label">${escapeHtml(t('label_total_expenses'))}</div><div class="rc-value">${fmtMoney(s.expense_total)}</div></div>
+    <div class="report-card"><div class="rc-label">บิลเฉลี่ย</div><div class="rc-value">${fmtMoney(s.average_bill||0)}</div></div>
+    <div class="report-card"><div class="rc-label">บิลค้างชำระ</div><div class="rc-value">${s.open_order_count||0} · ${fmtMoney(s.open_order_total||0)}</div></div>
     <div class="report-card rc-profit ${profit < 0 ? 'rc-loss' : ''}"><div class="rc-label">${escapeHtml(t('label_net_profit'))}</div><div class="rc-value">${fmtMoney(profit)}</div></div>
   `;
+  const labels={cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'};
+  const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
 }
+
+async function loadDailyClosing() {
+  if(!currentBranchId) return;
+  const d=$('#closingDate').value || new Date().toISOString().slice(0,10); $('#closingDate').value=d;
+  try { const r=await api(`/api/daily-closing?branch_id=${currentBranchId}&date=${encodeURIComponent(d)}`); const c=r.closing;
+    $('#openingCash').value=c?c.opening_cash:0; $('#cashOut').value=c?c.cash_out:0; $('#countedCash').value=c?c.counted_cash:0; $('#closingNotes').value=c?c.notes:'';
+    $('#closingPreview').textContent=`ยอดขายเงินสด: ${fmtMoney(r.cash_sales||0)}${c ? ` · เงินสดที่ควรมี ${fmtMoney(c.expected_cash)} · ส่วนต่าง ${fmtMoney(c.difference)}`:''}`;
+  } catch(e){toast(e.message,'err');}
+}
+$('#loadClosingBtn').addEventListener('click',loadDailyClosing);
+$('#saveClosingBtn').addEventListener('click',async()=>{ if(!currentBranchId)return; const btn=$('#saveClosingBtn'); btn.disabled=true;
+  try { const r=await apiJson('/api/daily-closing','POST',{branch_id:currentBranchId,closing_date:$('#closingDate').value,opening_cash:$('#openingCash').value,cash_out:$('#cashOut').value,counted_cash:$('#countedCash').value,notes:$('#closingNotes').value});
+    $('#closingPreview').textContent=`ยอดขายเงินสด: ${fmtMoney(r.cash_sales)} · เงินสดที่ควรมี ${fmtMoney(r.expected_cash)} · นับจริง ${fmtMoney(r.counted_cash)} · ส่วนต่าง ${fmtMoney(r.difference)}`; toast('บันทึกปิดยอดแล้ว','ok');
+  } catch(e){toast(e.message,'err');} finally{btn.disabled=false;}
+});
 
 function renderTopItems(items) {
   const el = $('#reportTopItems');
@@ -869,7 +888,7 @@ function orderCardHtml(o) {
       ? `<span class="oc-kitchen-sent-badge" title="${escapeHtml(t('label_kitchen_sent_at'))} ${fmtClock(it.kitchen_sent_at)}">🔔 ${fmtClock(it.kitchen_sent_at)}</span>` : '';
     const activeQty = Math.max(0, Number(it.quantity || 0) - Number(it.cancelled_quantity || 0));
     const editable = kitchenEligible && o.payment_status === 'unpaid' && o.status !== 'completed';
-    const cb = editable && activeQty > 0
+    const cb = editable && activeQty > 0 && !it.kitchen_sent_at
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
     const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}">+</button><button type="button" class="mini-cancel" data-cancel-item="${o.id}:${it.id}:${activeQty}">ยกเลิกรายการ</button></span>` : '';
     return `<li class="oc-item-row">
@@ -895,13 +914,14 @@ function orderCardHtml(o) {
       <div class="head-actions" style="margin-top:8px">
         ${nextStatus ? `<button class="ghost-btn primary" data-set-status="${o.id}:${nextStatus}">➡️ ${escapeHtml(statusLabel(nextStatus))}</button>` : ''}
         ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">${escapeHtml(t('kt_btn_cancel'))}</button>` : ''}
-        ${o.payment_status === 'unpaid' ? `<button class="ghost-btn" data-set-payment="${o.id}:paid">${escapeHtml(t('btn_mark_paid'))}</button>` : `<button class="ghost-btn" data-set-payment="${o.id}:unpaid">${escapeHtml(t('btn_unmark_paid'))}</button>`}
+
       </div>
-      ${kitchenEligible ? `
+      ${kitchenEligible && o.items.some(it => !it.kitchen_sent_at && (Number(it.quantity||0)-Number(it.cancelled_quantity||0))>0) ? `
       <div class="oc-kitchen-actions">
+        <span class="hint">รายการใหม่ที่ยังไม่เข้าครัว:</span>
         <label class="oc-select-all"><input type="checkbox" data-select-all-kitchen="${o.id}"> ${escapeHtml(t('label_select_all'))}</label>
         <button class="ghost-btn btn-send-kitchen" data-send-kitchen="${o.id}" disabled>🔔 ${escapeHtml(t('btn_send_to_kitchen'))}</button>
-      </div>` : ''}
+      </div>` : `<div class="hint oc-auto-kitchen">🔔 รายการออเดอร์ถูกส่งเข้าครัวอัตโนมัติเมื่อยืนยันแล้ว</div>`}
       <div class="oc-pay-actions">
         ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn primary" data-add-items="${o.id}">➕ เพิ่มอาหาร</button>` : ''}
         ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}">↔️ ย้ายโต๊ะ</button>` : ''}
