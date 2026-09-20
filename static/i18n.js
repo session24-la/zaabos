@@ -288,6 +288,7 @@ const I18N = {
   empty_kitchen_queue: { th: 'ยังไม่มีออเดอร์ในคิว', lo: 'ຍັງບໍ່ມີອໍເດີໃນຄິວ', zh: '队列中暂无订单', en: 'No orders in the queue yet' },
   kt_btn_start: { th: '👨‍🍳 เริ่มทำ', lo: '👨‍🍳 ເລີ່ມເຮັດ', zh: '👨‍🍳 开始制作', en: '👨‍🍳 Start cooking' },
   kt_btn_ready: { th: '✅ พร้อมเสิร์ฟ', lo: '✅ ພ້ອມເສີບ', zh: '✅ 可以上菜', en: '✅ Ready to serve' },
+  kt_cancelled_qty: { th: 'ยกเลิก', lo: 'ຍົກເລີກ', zh: '已取消', en: 'Cancelled' },
   kt_btn_served: { th: '🍽️ เสิร์ฟแล้ว', lo: '🍽️ ເສີບແລ້ວ', zh: '🍽️ 已上菜', en: '🍽️ Served' },
   kt_btn_cancel: { th: '✕ ยกเลิก', lo: '✕ ຍົກເລີກ', zh: '✕ 取消', en: '✕ Cancel' },
 

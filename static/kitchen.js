@@ -80,7 +80,7 @@ async function afterLogin() {
   sel.onchange = () => { currentBranchId = sel.value || null; loadBoard(); };
   loadBoard();
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(loadBoard, 8000);
+  pollTimer = setInterval(loadBoard, 2500);
 }
 
 const STATUS_ACTIONS = {
@@ -93,16 +93,12 @@ function orderTypeLabel(s) { return t('order_type_' + s) || s; }
 async function loadBoard() {
   const qs = new URLSearchParams();
   if (currentBranchId) qs.set('branch_id', currentBranchId);
-  let all = [];
   try {
-    for (const status of ['received', 'preparing', 'ready']) {
-      const q2 = new URLSearchParams(qs); q2.set('status', status);
-      const r = await api('/api/orders?' + q2.toString(), { silent: true });
-      all = all.concat(r.orders);
-    }
+    const r = await api('/api/kitchen/orders?' + qs.toString(), { silent: true });
+    const all = r.orders || [];
+    all.sort((a, b) => a.id - b.id);
+    renderBoard(all);
   } catch (e) { return; }
-  all.sort((a, b) => a.id - b.id);
-  renderBoard(all);
 }
 
 const KITCHEN_HIGHLIGHT_MS = 3 * 60 * 1000; // how long a "sent to kitchen" flag stays pulsing before it fades to a plain timestamp
@@ -112,17 +108,19 @@ function renderBoard(orders) {
   const board = $('#board');
   if (!orders.length) { board.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="es-ic">👨‍🍳</span>${escapeHtml(t('empty_kitchen_queue'))}</div>`; return; }
   board.innerHTML = orders.map(o => {
-    const itemsHtml = o.items.map(it => {
+    const itemsHtml = o.items.filter(it => it.kitchen_sent_at).map(it => {
       let liClass = '', sentBadge = '';
-      if (it.kitchen_sent_at) {
-        const age = Date.now() - new Date(it.kitchen_sent_at).getTime();
-        const clock = new Date(it.kitchen_sent_at).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' });
-        liClass = age >= 0 && age < KITCHEN_HIGHLIGHT_MS ? ' kt-item-highlight' : ' kt-item-sent';
-        sentBadge = `<span class="kt-sent-badge">🔔 ${clock}</span>`;
-      }
-      return `<li class="${liClass}"><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)} ${sentBadge}
+      const cancelled = Number(it.cancelled_quantity || 0);
+      const activeQty = Math.max(0, Number(it.quantity || 0) - cancelled);
+      const age = Date.now() - new Date(it.kitchen_sent_at).getTime();
+      const clock = new Date(it.kitchen_sent_at).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' });
+      liClass = age >= 0 && age < KITCHEN_HIGHLIGHT_MS ? ' kt-item-highlight' : ' kt-item-sent';
+      sentBadge = `<span class="kt-sent-badge">🔔 ${clock}</span>`;
+      const cancelNote = cancelled > 0 ? `<div class="kt-cancelled">❌ ${escapeHtml(t('kt_cancelled_qty') || 'Cancelled')} ${cancelled}${it.cancellation_reason ? ' · ' + escapeHtml(it.cancellation_reason) : ''}</div>` : '';
+      const active = activeQty > 0 ? `<b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}` : `<s>${escapeHtml(it.item_name_snapshot)}</s>`;
+      return `<li class="${liClass}${activeQty === 0 ? ' kt-item-cancelled' : ''}">${active} ${sentBadge}
       ${it.options.length ? `<div class="kt-opts">${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')}</div>` : ''}
-      ${it.notes ? `<div class="kt-notes">📝 ${escapeHtml(it.notes)}</div>` : ''}</li>`;
+      ${it.notes ? `<div class="kt-notes">📝 ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}</li>`;
     }).join('');
     const actions = (STATUS_ACTIONS[o.status] || []).map(a => `<button class="${a.cls}" data-set="${o.id}:${a.to}">${escapeHtml(t(a.labelKey))}</button>`).join('');
     return `<div class="kitchen-ticket ${o.status}">
