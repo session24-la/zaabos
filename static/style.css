@@ -292,7 +292,26 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .menu-card .mc-desc{color:var(--text-muted);font-size:12.5px;line-height:1.5}
 .menu-card .mc-price{font-weight:800;color:var(--primary);font-size:16px;margin-top:auto}
 .menu-card .mc-badge{position:absolute;top:12px;right:12px;background:var(--neg);color:#fff;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:99px}
+.menu-card .mc-badge-stock{position:absolute;top:12px;left:12px;background:var(--amber);color:#1e1712;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:99px}
 .menu-card .mc-photo{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px;margin:-2px 0 2px;background:var(--surface-2)}
+.menu-card .mc-stock-info{font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:6px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+@media (max-width:520px){.two-col{grid-template-columns:1fr}}
+
+/* ===== Reports tab ===== */
+.report-presets{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.report-presets button.active{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}
+.report-date-range{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px}
+.report-date-range label{margin:0}
+.report-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.report-card{background:var(--surface-2);border-radius:var(--radius-sm);padding:14px}
+.report-card .rc-label{font-size:12px;color:var(--text-muted);font-weight:600}
+.report-card .rc-value{font-size:20px;font-weight:800;margin-top:4px}
+.report-card.rc-profit .rc-value{color:var(--pos)}
+.report-card.rc-profit.rc-loss .rc-value{color:var(--neg)}
+.top-item-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid var(--border);font-size:13.5px}
+.top-item-row:first-child{border-top:0}
+.top-item-rank{color:var(--text-muted);font-weight:700;margin-right:8px}
 
 /* ===== Menu item image picker (admin form) ===== */
 .image-picker{display:flex;flex-direction:column;align-items:center;gap:10px;border:1px dashed var(--border);border-radius:14px;padding:16px;background:var(--surface-2)}

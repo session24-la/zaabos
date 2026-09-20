@@ -60,6 +60,7 @@ function toast(msg, type) {
 
 async function api(url, opts) {
   opts = opts || {};
+  const silent = opts.silent; // true for background refreshes — see below
   opts.headers = opts.headers || {};
   opts.credentials = 'same-origin';
   if (opts.method && opts.method !== 'GET') {
@@ -69,8 +70,15 @@ async function api(url, opts) {
   let body = null;
   try { body = await r.json(); } catch (e) { /* no body */ }
   if (r.status === 401) {
-    me = null;
-    showLogin();
+    // A background poll (the 8-second table-board refresh) must NEVER force
+    // everyone back to the login screen on its own — that was silently closing
+    // whatever the staff had open (take-order, edit modals, ...) within a few
+    // seconds, on every page, since the poll runs everywhere. Only an action
+    // the user actually took (clicking save/submit/etc, silent not set) is
+    // allowed to show the login screen — a real expired session is then
+    // caught the moment someone tries to do something, instead of yanked away
+    // mid-task by a request nobody triggered.
+    if (!silent) { me = null; showLogin(); }
     throw new Error((body && body.error) || t('err_please_login'));
   }
   if (!r.ok) throw new Error((body && body.error) || t('err_generic'));
@@ -173,6 +181,7 @@ function applyRoleVisibility() {
   $$('.tabs button[data-tab="branches"], .tabs button[data-tab="users"]').forEach(b => {
     b.classList.toggle('hidden', !isOwner);
   });
+  $$('.tabs button[data-tab="reports"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
   $('#addTableBtn').classList.toggle('hidden', !isManagerPlus);
   $('#bulkAddTablesBtn').classList.toggle('hidden', !isManagerPlus);
   $('#addCategoryBtn').classList.toggle('hidden', !isManagerPlus);
@@ -221,7 +230,8 @@ function refreshCurrentTab(tab) {
   tab = tab || activeTab();
   if (tab === 'orders') { loadOrders(); loadBoardData(); }
   else if (tab === 'tables') renderTables();
-  else if (tab === 'menu') renderMenu();
+  else if (tab === 'menu') loadBootstrap().then(renderMenu); // re-fetch so stock counts (which change from orders placed elsewhere — staff or customer QR) are current whenever this tab is opened
+  else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
   else if (tab === 'users') loadUsers();
   else if (tab === 'tenants') loadTenants();
@@ -261,6 +271,127 @@ $('#usernameSave').addEventListener('click', async () => {
     me.username = r.username; $('#whoName').textContent = me.display_name || me.username;
     closeModals(); toast(t('toast_username_changed'), 'ok');
   } catch (e) { $('#usernameError').textContent = e.message; }
+});
+
+// ===================== Reports (sales summary + income/expense) =====================
+
+let reportFrom = null, reportTo = null;
+let lastReportSummary = null;
+
+function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+function presetRange(preset) {
+  const today = new Date();
+  const y = today.getFullYear(), m = today.getMonth(), dt = today.getDate();
+  if (preset === 'today') return [isoDate(today), isoDate(today)];
+  if (preset === 'yesterday') { const d = new Date(y, m, dt - 1); return [isoDate(d), isoDate(d)]; }
+  if (preset === '7d') { const d = new Date(y, m, dt - 6); return [isoDate(d), isoDate(today)]; }
+  if (preset === 'month') { return [isoDate(new Date(y, m, 1)), isoDate(today)]; }
+  if (preset === 'year') { return [isoDate(new Date(y, 0, 1)), isoDate(today)]; }
+  return [isoDate(today), isoDate(today)];
+}
+
+$('#reportPresets').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-preset]');
+  if (!btn) return;
+  $$('#reportPresets button').forEach(b => b.classList.toggle('active', b === btn));
+  const [f, tt] = presetRange(btn.dataset.preset);
+  reportFrom = f; reportTo = tt;
+  $('#reportFromDate').value = f; $('#reportToDate').value = tt;
+  loadReports();
+});
+$('#reportApplyBtn').addEventListener('click', () => {
+  const f = $('#reportFromDate').value, tt = $('#reportToDate').value;
+  if (!f || !tt) return;
+  $$('#reportPresets button').forEach(b => b.classList.remove('active'));
+  reportFrom = f; reportTo = tt;
+  loadReports();
+});
+
+async function loadReports() {
+  if (!currentBranchId) return;
+  if (!reportFrom || !reportTo) {
+    const [f, tt] = presetRange('today');
+    reportFrom = f; reportTo = tt;
+    $('#reportFromDate').value = f; $('#reportToDate').value = tt;
+    $$('#reportPresets button').forEach(b => b.classList.toggle('active', b.dataset.preset === 'today'));
+  }
+  const qs = new URLSearchParams({ from: reportFrom, to: reportTo, branch_id: currentBranchId });
+  try {
+    const [summary, expenses] = await Promise.all([
+      api('/api/reports/summary?' + qs.toString()),
+      api('/api/expenses?' + qs.toString()),
+    ]);
+    lastReportSummary = summary;
+    renderReportCards(summary);
+    renderTopItems(summary.top_items);
+    renderExpensesList(expenses.expenses);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function renderReportCards(s) {
+  const profit = s.net_profit;
+  $('#reportCards').innerHTML = `
+    <div class="report-card"><div class="rc-label">${escapeHtml(t('label_total_sales'))}</div><div class="rc-value">${fmtMoney(s.total_sales)}</div></div>
+    <div class="report-card"><div class="rc-label">${escapeHtml(t('label_order_count'))}</div><div class="rc-value">${s.order_count}</div></div>
+    <div class="report-card"><div class="rc-label">${escapeHtml(t('label_guest_total'))}</div><div class="rc-value">${s.guests}</div></div>
+    <div class="report-card"><div class="rc-label">${escapeHtml(t('label_total_expenses'))}</div><div class="rc-value">${fmtMoney(s.expense_total)}</div></div>
+    <div class="report-card rc-profit ${profit < 0 ? 'rc-loss' : ''}"><div class="rc-label">${escapeHtml(t('label_net_profit'))}</div><div class="rc-value">${fmtMoney(profit)}</div></div>
+  `;
+}
+
+function renderTopItems(items) {
+  const el = $('#reportTopItems');
+  if (!items || !items.length) { el.innerHTML = emptyState('📊', t('label_no_data')); return; }
+  el.innerHTML = items.map((it, i) => `
+    <div class="top-item-row">
+      <div><span class="top-item-rank">#${i + 1}</span>${escapeHtml(it.name)}</div>
+      <div>${it.qty} ${escapeHtml(t('label_qty_short'))} · ${fmtMoney(it.revenue)}</div>
+    </div>`).join('');
+}
+
+function renderExpensesList(expenses) {
+  const el = $('#expensesList');
+  if (!expenses || !expenses.length) { el.innerHTML = emptyState('🧾', t('label_no_data')); return; }
+  el.innerHTML = expenses.map(ex => `
+    <div class="row">
+      <div>
+        <div style="font-weight:700">${escapeHtml(ex.category)} · ${fmtMoney(ex.amount)}</div>
+        <div class="hint">${escapeHtml(ex.expense_date)}${ex.created_by_name ? ' · ' + escapeHtml(ex.created_by_name) : ''}${ex.note ? ' · ' + escapeHtml(ex.note) : ''}</div>
+      </div>
+      <div class="row-right"><button class="icon-btn danger" data-del-expense="${ex.id}">🗑️</button></div>
+    </div>`).join('');
+}
+$('#expensesList').addEventListener('click', (e) => {
+  const delId = e.target.dataset.delExpense;
+  if (!delId) return;
+  if (!confirm(t('confirm_delete_expense'))) return;
+  apiJson('/api/expenses/' + delId, 'DELETE').then(() => { loadReports(); toast(t('toast_deleted'), 'ok'); }).catch(e2 => toast(e2.message, 'err'));
+});
+
+$('#addExpenseBtn').addEventListener('click', async () => {
+  $('#expenseError').textContent = '';
+  $('#expenseCategory').value = ''; $('#expenseAmount').value = ''; $('#expenseNote').value = '';
+  $('#expenseDate').value = isoDate(new Date());
+  try {
+    const r = await api('/api/expense-categories');
+    $('#expenseCategoryList').innerHTML = r.categories.map(c => `<option value="${escapeHtml(c)}">`).join('');
+  } catch (e) { /* datalist is a nice-to-have, not blocking */ }
+  openModal('#expenseModal');
+});
+$('#expenseSave').addEventListener('click', async () => {
+  $('#expenseError').textContent = '';
+  const category = $('#expenseCategory').value.trim();
+  const amount = parseFloat($('#expenseAmount').value);
+  if (!category) { $('#expenseError').textContent = t('err_expense_category_required'); return; }
+  if (isNaN(amount) || amount <= 0) { $('#expenseError').textContent = t('err_expense_amount_invalid'); return; }
+  try {
+    await apiJson('/api/expenses', 'POST', {
+      category, amount, expense_date: $('#expenseDate').value || isoDate(new Date()),
+      note: $('#expenseNote').value.trim(), branch_id: currentBranchId,
+    });
+    closeModals(); toast(t('toast_saved'), 'ok'); loadReports();
+  } catch (e) { $('#expenseError').textContent = e.message; }
 });
 
 // ===================== Branches =====================
@@ -448,23 +579,28 @@ function renderMenuItemsGrid() {
   const items = branchItems();
   const grid = $('#menuItemsGrid');
   if (!items.length) { grid.innerHTML = emptyState('📋', t('empty_menu_items')); return; }
-  grid.innerHTML = items.map(it => `
+  grid.innerHTML = items.map(it => {
+    const low = it.track_stock && it.stock_qty != null && it.stock_qty <= it.low_stock_threshold;
+    return `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}">
-      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
+      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : (low ? `<span class="mc-badge-stock">${escapeHtml(it.stock_qty <= 0 ? t('badge_out_of_stock') : t('badge_low_stock'))}</span>` : '')}
       ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
       <div class="mc-top"><span class="mc-name">${escapeHtml(it.name)}</span></div>
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
       ${it.option_groups.length ? `<div class="hint">${escapeHtml(t('label_options_prefix'))}: ${it.option_groups.map(g => escapeHtml(g.name)).join(', ')}</div>` : ''}
+      ${it.track_stock ? `<div class="mc-stock-info">📦 ${escapeHtml(t('label_stock_qty'))}: ${it.stock_qty != null ? it.stock_qty : 0}</div>` : ''}
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
       <div class="mc-actions">
         <button class="ghost-btn" data-edit-item="${it.id}">${escapeHtml(t('btn_edit'))}</button>
+        ${it.track_stock ? `<button class="ghost-btn" data-adjust-stock="${it.id}">${escapeHtml(t('btn_adjust_stock'))}</button>` : ''}
         <button class="ghost-btn" data-toggle-soldout="${it.id}">${escapeHtml(it.sold_out ? t('btn_mark_available') : t('btn_mark_sold_out'))}</button>
         <button class="ghost-btn" data-del-item="${it.id}">🗑️</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 $('#menuItemsGrid').addEventListener('click', (e) => {
-  const editId = e.target.dataset.editItem, delId = e.target.dataset.delItem, soId = e.target.dataset.toggleSoldout;
+  const editId = e.target.dataset.editItem, delId = e.target.dataset.delItem, soId = e.target.dataset.toggleSoldout, adjId = e.target.dataset.adjustStock;
   if (editId) openMenuItemModal(parseInt(editId, 10));
   else if (delId) {
     if (!confirm(t('confirm_delete_menu_item'))) return;
@@ -472,6 +608,13 @@ $('#menuItemsGrid').addEventListener('click', (e) => {
   } else if (soId) {
     const it = boot.items.find(x => x.id === parseInt(soId, 10));
     apiJson('/api/menu-items/' + soId + '/sold-out', 'PUT', { sold_out: !it.sold_out }).then(async () => { await loadBootstrap(); renderMenu(); }).catch(e => toast(e.message, 'err'));
+  } else if (adjId) {
+    const it = boot.items.find(x => x.id === parseInt(adjId, 10));
+    const raw = prompt(t('label_stock_adjust_amount') + ` (${it.name}, ${t('label_stock_qty')}: ${it.stock_qty || 0})`, '');
+    if (raw === null) return;
+    const delta = parseInt(raw, 10);
+    if (isNaN(delta) || delta === 0) return;
+    apiJson('/api/menu-items/' + adjId + '/stock-adjust', 'PUT', { delta }).then(async () => { await loadBootstrap(); renderMenu(); toast(t('toast_saved'), 'ok'); }).catch(e => toast(e.message, 'err'));
   }
 });
 
@@ -489,19 +632,30 @@ function openMenuItemModal(id) {
     $('#menuItemCategory').value = it.category_id || '';
     $('#menuItemPrice').value = it.base_price;
     $('#menuItemSoldOut').checked = !!it.sold_out;
+    $('#menuItemCostPrice').value = it.cost_price || 0;
+    $('#menuItemTrackStock').checked = !!it.track_stock;
+    $('#menuItemStockQty').value = it.stock_qty != null ? it.stock_qty : '';
+    $('#menuItemLowStockThreshold').value = it.low_stock_threshold != null ? it.low_stock_threshold : 5;
     optGroupsDraft = JSON.parse(JSON.stringify(it.option_groups || []));
     menuItemImageDraft = it.image_url || null;
   } else {
     $('#menuItemModalTitle').textContent = t('modal_add_menu_item_title');
     $('#menuItemId').value = ''; $('#menuItemName').value = ''; $('#menuItemDesc').value = '';
     $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false;
+    $('#menuItemCostPrice').value = ''; $('#menuItemTrackStock').checked = false;
+    $('#menuItemStockQty').value = ''; $('#menuItemLowStockThreshold').value = 5;
     optGroupsDraft = [];
     menuItemImageDraft = null;
   }
+  updateStockFieldsVisibility();
   renderOptGroupsBox();
   renderMenuItemImagePreview();
   openModal('#menuItemModal');
 }
+function updateStockFieldsVisibility() {
+  $('#menuItemStockFields').classList.toggle('hidden', !$('#menuItemTrackStock').checked);
+}
+$('#menuItemTrackStock').addEventListener('change', updateStockFieldsVisibility);
 
 function renderMenuItemImagePreview() {
   const has = !!menuItemImageDraft;
@@ -567,10 +721,21 @@ $('#menuItemSave').addEventListener('click', async () => {
   const price = parseFloat($('#menuItemPrice').value);
   if (!name) { $('#menuItemError').textContent = t('err_menu_item_name_required'); return; }
   if (isNaN(price) || price < 0) { $('#menuItemError').textContent = t('err_price_invalid'); return; }
+  const costPrice = parseFloat($('#menuItemCostPrice').value);
+  if ($('#menuItemCostPrice').value !== '' && (isNaN(costPrice) || costPrice < 0)) { $('#menuItemError').textContent = t('err_cost_price_invalid'); return; }
+  const trackStock = $('#menuItemTrackStock').checked;
+  let stockQty = null, lowStockThreshold = parseInt($('#menuItemLowStockThreshold').value, 10);
+  if (isNaN(lowStockThreshold) || lowStockThreshold < 0) lowStockThreshold = 5;
+  if (trackStock) {
+    stockQty = parseInt($('#menuItemStockQty').value, 10);
+    if (isNaN(stockQty) || stockQty < 0) { $('#menuItemError').textContent = t('err_stock_invalid'); return; }
+  }
   const payload = {
     name, description: $('#menuItemDesc').value.trim(), category_id: $('#menuItemCategory').value || null,
     base_price: price, sold_out: $('#menuItemSoldOut').checked, option_groups: optGroupsDraft,
     image_url: menuItemImageDraft,
+    cost_price: isNaN(costPrice) ? 0 : costPrice, track_stock: trackStock,
+    stock_qty: stockQty, low_stock_threshold: lowStockThreshold,
   };
   try {
     if (id) await apiJson('/api/menu-items/' + id, 'PUT', payload);
@@ -916,7 +1081,7 @@ async function loadBoardData() {
   if (!currentBranchId) { activeOrders = []; renderTableBoard(); renderOtherOrders(); renderSidePanel(); return; }
   try {
     const qs = new URLSearchParams({ branch_id: currentBranchId });
-    const r = await api('/api/orders?' + qs.toString());
+    const r = await api('/api/orders?' + qs.toString(), { silent: true });
     lastOrdersFlat = r.orders;
     activeOrders = r.orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled');
   } catch (e) { return; }
@@ -1154,6 +1319,10 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   try {
     const r = await apiJson('/api/orders', 'POST', payload);
     closeModals(); toast(t('toast_order_saved', { no: r.order_no }), 'ok'); loadOrders(); loadBoardData();
+    // items with stock tracking just got decremented server-side — refresh the
+    // cached menu (boot.items) so the Menu tab shows the real count, not what
+    // it was before this order was placed
+    loadBootstrap().then(() => { if (activeTab() === 'menu') renderMenu(); });
   } catch (e) { $('#takeOrderError').textContent = e.message; }
 });
 

@@ -50,6 +50,7 @@
     <button data-tab="orders" class="active"><span class="tab-ic">🧾</span><span class="tab-lb" data-i18n="tab_orders">ออเดอร์</span></button>
     <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
     <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
     <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
     <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
     <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
@@ -127,6 +128,37 @@
         <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item">➕ เพิ่มเมนู</button>
       </div>
       <div class="menu-grid" id="menuItemsGrid"></div>
+    </div>
+  </section>
+
+  <!-- ===== Reports tab (owner/manager) ===== -->
+  <section id="tab-reports" class="tab-panel hidden">
+    <div class="panel">
+      <div class="panel-head">
+        <h2 data-i18n="reports_title">สรุปยอดขาย &amp; รายรับ-รายจ่าย</h2>
+      </div>
+      <div class="report-presets" id="reportPresets">
+        <button type="button" class="ghost-btn" data-preset="today" data-i18n="preset_today">วันนี้</button>
+        <button type="button" class="ghost-btn" data-preset="yesterday" data-i18n="preset_yesterday">เมื่อวาน</button>
+        <button type="button" class="ghost-btn" data-preset="7d" data-i18n="preset_last_7_days">7 วันที่ผ่านมา</button>
+        <button type="button" class="ghost-btn" data-preset="month" data-i18n="preset_this_month">เดือนนี้</button>
+        <button type="button" class="ghost-btn" data-preset="year" data-i18n="preset_this_year">ปีนี้</button>
+      </div>
+      <div class="report-date-range">
+        <label style="margin:0"><span data-i18n="label_from_date">จากวันที่</span><input type="date" id="reportFromDate"></label>
+        <label style="margin:0"><span data-i18n="label_to_date">ถึงวันที่</span><input type="date" id="reportToDate"></label>
+        <button class="ghost-btn primary" id="reportApplyBtn" data-i18n="btn_apply_filter">ดูรายงาน</button>
+      </div>
+      <div class="report-cards" id="reportCards"></div>
+      <h3 data-i18n="label_top_items_title">สินค้าขายดี</h3>
+      <div id="reportTopItems"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2 data-i18n="section_expenses_title">รายจ่าย</h2>
+        <button class="ghost-btn primary" id="addExpenseBtn" data-i18n="btn_add_expense">➕ เพิ่มรายจ่าย</button>
+      </div>
+      <div id="expensesList"></div>
     </div>
   </section>
 
@@ -221,7 +253,15 @@
   <label><span data-i18n="label_menu_item_name">ชื่อเมนู</span><input id="menuItemName" placeholder="เช่น ผัดไทย" data-i18n-ph="placeholder_menu_item_name"></label>
   <label><span data-i18n="label_description">รายละเอียด</span><textarea id="menuItemDesc" placeholder="คำอธิบายสั้น ๆ (ถ้ามี)" data-i18n-ph="placeholder_description"></textarea></label>
   <label><span data-i18n="label_category">หมวดหมู่</span><select id="menuItemCategory"></select></label>
-  <label><span data-i18n="label_base_price">ราคาพื้นฐาน</span><input id="menuItemPrice" type="number" min="0" step="0.01"></label>
+  <div class="two-col">
+    <label><span data-i18n="label_base_price">ราคาขาย</span><input id="menuItemPrice" type="number" min="0" step="0.01"></label>
+    <label><span data-i18n="label_cost_price">ต้นทุน</span><input id="menuItemCostPrice" type="number" min="0" step="0.01"></label>
+  </div>
+  <div class="checkbox-row"><input type="checkbox" id="menuItemTrackStock"><label style="margin:0" for="menuItemTrackStock" data-i18n="label_track_stock">นับสต็อกเมนูนี้</label></div>
+  <div class="two-col" id="menuItemStockFields">
+    <label><span data-i18n="label_stock_qty">จำนวนคงเหลือ</span><input id="menuItemStockQty" type="number" min="0" step="1"></label>
+    <label><span data-i18n="label_low_stock_threshold">แจ้งเตือนเมื่อเหลือน้อยกว่า</span><input id="menuItemLowStockThreshold" type="number" min="0" step="1"></label>
+  </div>
   <label><span data-i18n="label_item_image">รูปภาพเมนู</span>
     <div class="image-picker" id="menuItemImagePicker">
       <div class="image-picker-preview hidden" id="menuItemImagePreviewWrap"><img id="menuItemImagePreview" alt=""></div>
@@ -239,6 +279,18 @@
   <button class="add-group-btn" id="addOptGroupBtn" type="button" data-i18n="btn_add_option_group">➕ เพิ่มกลุ่มตัวเลือก</button>
   <div class="login-error" id="menuItemError"></div>
   <button class="save" id="menuItemSave" data-i18n="btn_save">บันทึก</button>
+</div></div>
+
+<div class="modal" id="expenseModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="btn_add_expense">➕ เพิ่มรายจ่าย</h2><button data-close>×</button></div>
+  <label><span data-i18n="label_expense_category">หมวดรายจ่าย</span>
+    <input id="expenseCategory" list="expenseCategoryList" data-i18n-ph="placeholder_expense_category" placeholder="เช่น ค่าวัตถุดิบ">
+    <datalist id="expenseCategoryList"></datalist>
+  </label>
+  <label><span data-i18n="label_expense_amount">จำนวนเงิน</span><input id="expenseAmount" type="number" min="0" step="0.01"></label>
+  <label><span data-i18n="label_expense_date">วันที่</span><input id="expenseDate" type="date"></label>
+  <label><span data-i18n="label_notes">หมายเหตุ</span><textarea id="expenseNote"></textarea></label>
+  <div class="login-error" id="expenseError"></div>
+  <button class="save" id="expenseSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
 <div class="modal" id="userModal"><div class="sheet small"><div class="sheet-head"><h2 id="userModalTitle" data-i18n="modal_add_user_title">เพิ่มผู้ใช้งาน</h2><button data-close>×</button></div>

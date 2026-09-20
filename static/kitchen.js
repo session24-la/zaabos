@@ -22,13 +22,19 @@ function toast(msg, type) {
 
 async function api(url, opts) {
   opts = opts || {};
+  const silent = opts.silent; // true for the background board refresh — see loadBoard()
   opts.headers = opts.headers || {};
   opts.credentials = 'same-origin';
   if (opts.method && opts.method !== 'GET') opts.headers['X-CSRF-Token'] = (me && me.csrf_token) || '';
   const r = await fetch(url, opts);
   let body = null;
   try { body = await r.json(); } catch (e) {}
-  if (r.status === 401) { me = null; showLogin(); throw new Error((body && body.error) || t('err_please_login')); }
+  if (r.status === 401) {
+    // Same fix as the admin app: the 8-second poll must not force this screen
+    // back to login on its own — only an actual user action should.
+    if (!silent) { me = null; showLogin(); }
+    throw new Error((body && body.error) || t('err_please_login'));
+  }
   if (!r.ok) throw new Error((body && body.error) || t('err_generic'));
   return body;
 }
@@ -91,7 +97,7 @@ async function loadBoard() {
   try {
     for (const status of ['received', 'preparing', 'ready']) {
       const q2 = new URLSearchParams(qs); q2.set('status', status);
-      const r = await api('/api/orders?' + q2.toString());
+      const r = await api('/api/orders?' + q2.toString(), { silent: true });
       all = all.concat(r.orders);
     }
   } catch (e) { return; }

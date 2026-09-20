@@ -73,6 +73,10 @@ CREATE TABLE IF NOT EXISTS menu_items (
  sold_out INTEGER NOT NULL DEFAULT 0,
  sort_order INTEGER NOT NULL DEFAULT 0,
  active INTEGER NOT NULL DEFAULT 1,
+ cost_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+ track_stock INTEGER NOT NULL DEFAULT 0,
+ stock_qty INTEGER,
+ low_stock_threshold INTEGER NOT NULL DEFAULT 5,
  created_at TEXT NOT NULL,
  FOREIGN KEY(tenant_id) REFERENCES tenants(id),
  FOREIGN KEY(branch_id) REFERENCES branches(id),
@@ -155,4 +159,21 @@ CREATE TABLE IF NOT EXISTS audit_logs (
  action TEXT NOT NULL,
  detail TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL
+);
+
+-- Manual expense entries (รายจ่าย) for the income/expense report. "Income" side
+-- of that report is derived from orders directly — no separate table needed.
+CREATE TABLE IF NOT EXISTS expenses (
+ id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ tenant_id INTEGER NOT NULL,
+ branch_id INTEGER,
+ category TEXT NOT NULL,
+ amount DOUBLE PRECISION NOT NULL,
+ note TEXT NOT NULL DEFAULT '',
+ expense_date TEXT NOT NULL,
+ created_by_user_id INTEGER,
+ created_at TEXT NOT NULL,
+ FOREIGN KEY(tenant_id) REFERENCES tenants(id),
+ FOREIGN KEY(branch_id) REFERENCES branches(id),
+ FOREIGN KEY(created_by_user_id) REFERENCES users(id)
 );
