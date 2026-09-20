@@ -206,3 +206,11 @@ CREATE TABLE IF NOT EXISTS daily_closings (
  notes TEXT NOT NULL DEFAULT '', closed_by_user_id INTEGER, closed_at TEXT NOT NULL,
  UNIQUE(tenant_id,branch_id,closing_date)
 );
+
+
+CREATE TABLE IF NOT EXISTS refunds (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, order_id INTEGER NOT NULL, payment_id INTEGER,
+    amount DOUBLE PRECISION NOT NULL, reason TEXT NOT NULL DEFAULT '', refunded_by_user_id INTEGER, refunded_at TEXT NOT NULL,
+    FOREIGN KEY(order_id) REFERENCES orders(id)
+);

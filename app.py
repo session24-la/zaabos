@@ -226,6 +226,10 @@ def ensure_schema_migrations(conn):
             expected_cash DOUBLE PRECISION NOT NULL DEFAULT 0, counted_cash DOUBLE PRECISION NOT NULL DEFAULT 0,
             difference DOUBLE PRECISION NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', closed_by_user_id INTEGER,
             closed_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id,closing_date))''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS refunds (
+            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL, payment_id INTEGER, amount DOUBLE PRECISION NOT NULL, reason TEXT NOT NULL DEFAULT '',
+            refunded_by_user_id INTEGER, refunded_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
         conn.commit()
     else:
         oi_cols = [r[1] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()]
@@ -263,6 +267,10 @@ def ensure_schema_migrations(conn):
             expected_cash REAL NOT NULL DEFAULT 0, counted_cash REAL NOT NULL DEFAULT 0, difference REAL NOT NULL DEFAULT 0,
             notes TEXT NOT NULL DEFAULT '', closed_by_user_id INTEGER, closed_at TEXT NOT NULL,
             UNIQUE(tenant_id,branch_id,closing_date))''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS refunds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL, payment_id INTEGER, amount REAL NOT NULL, reason TEXT NOT NULL DEFAULT '',
+            refunded_by_user_id INTEGER, refunded_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
         conn.commit()
 
 def init_db():
@@ -1481,6 +1489,51 @@ def move_order_table(oid):
     conn.execute('UPDATE orders SET table_id=?,table_name_snapshot=?,updated_at=? WHERE id=?',(table_id,tb['name'],now(),oid))
     log_action('move_order_table',detail=f'{oid}: {order["table_id"]} -> {table_id}'); conn.commit(); return jsonify(ok=True)
 
+# ---------- production completion: refund/void + merge bills ----------
+
+@app.post('/api/orders/<int:oid>/refund')
+@login_required
+@role_required('owner','manager')
+def refund_order(oid):
+    """Record a full refund exactly once. The original payment is preserved for audit."""
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    if order['payment_status']!='paid': return jsonify(error='คืนเงินได้เฉพาะออเดอร์ที่ชำระแล้ว'),409
+    old=conn.execute('SELECT id FROM refunds WHERE order_id=? AND tenant_id=? LIMIT 1',(oid,g.tenant_id)).fetchone()
+    if old: return jsonify(error='ออเดอร์นี้ถูกคืนเงินแล้ว'),409
+    payment=conn.execute('SELECT * FROM payments WHERE order_id=? AND tenant_id=? ORDER BY id DESC LIMIT 1',(oid,g.tenant_id)).fetchone()
+    if not payment: return jsonify(error='ไม่พบข้อมูลการชำระเงินเดิม'),409
+    d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
+    if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการคืนเงิน'),400
+    amount=float(payment['amount'] or 0); ts=now()
+    conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at) VALUES(?,?,?,?,?,?,?,?)',
+                 (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts))
+    log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}')
+    conn.commit(); return jsonify(ok=True,amount=amount,refunded_at=ts)
+
+@app.post('/api/orders/<int:source_id>/merge')
+@login_required
+@role_required('owner','manager','staff')
+def merge_orders(source_id):
+    """Merge one open unpaid order into another order in the same tenant/branch."""
+    conn=db(); d=request.get_json() or {}
+    try: target_id=int(d.get('target_order_id'))
+    except: return jsonify(error='กรุณาเลือกบิลปลายทาง'),400
+    if target_id==source_id: return jsonify(error='ไม่สามารถรวมบิลเดียวกันได้'),400
+    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(source_id,g.tenant_id)).fetchone()
+    target=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(target_id,g.tenant_id)).fetchone()
+    if not source or not target: return jsonify(error='ไม่พบบิลต้นทางหรือปลายทาง'),404
+    if source['branch_id']!=target['branch_id']: return jsonify(error='รวมบิลข้ามสาขาไม่ได้'),409
+    for o in (source,target):
+        if o['payment_status']!='unpaid' or o['status'] in ('completed','cancelled'):
+            return jsonify(error='รวมได้เฉพาะบิลที่ยังเปิดและยังไม่ชำระ'),409
+    conn.execute('UPDATE order_items SET order_id=? WHERE order_id=?',(target_id,source_id))
+    total=_recalculate_order_total(conn,target_id)
+    conn.execute("UPDATE orders SET status='cancelled',notes=CASE WHEN notes='' THEN ? ELSE notes || ? END,updated_at=? WHERE id=?",
+                 (f'รวมเข้าบิล #{target["order_no"]}',f' | รวมเข้าบิล #{target["order_no"]}',now(),source_id))
+    log_action('merge_orders',detail=f'{source_id} -> {target_id}')
+    conn.commit(); return jsonify(ok=True,target_order_id=target_id,total_amount=total)
+
 # =====================================================================
 # Users management (same pattern as CASHFLOW 24)
 # =====================================================================
@@ -1607,6 +1660,10 @@ def reports_summary():
     if branch_id: pay_q += ' AND branch_id=?'; pay_args.append(branch_id)
     pay_q += ' GROUP BY payment_method ORDER BY total DESC'
     payment_breakdown=[dict(r) for r in conn.execute(pay_q,pay_args).fetchall()]
+    refund_q="SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS count FROM refunds WHERE tenant_id=? AND substr(refunded_at,1,10) BETWEEN ? AND ?"
+    refund_args=[g.tenant_id,frm,to]
+    if branch_id: refund_q += ' AND branch_id=?'; refund_args.append(branch_id)
+    refund_row=conn.execute(refund_q,refund_args).fetchone(); refund_total=float(refund_row['total'] or 0)
     open_q="SELECT COUNT(*) AS c, COALESCE(SUM(total_amount+tax_amount),0) AS total FROM orders WHERE tenant_id=? AND payment_status='unpaid' AND status!='cancelled'"
     open_args=[g.tenant_id]
     if branch_id: open_q+=' AND branch_id=?'; open_args.append(branch_id)
@@ -1617,7 +1674,8 @@ def reports_summary():
         order_count=order_count, subtotal=subtotal, tax=tax, guests=guests, total_sales=total_sales,
         top_items=top_items,
         expense_total=expense_total, expense_by_category=expense_by_category,
-        net_profit=total_sales - expense_total, payment_breakdown=payment_breakdown,
+        net_profit=total_sales - refund_total - expense_total, payment_breakdown=payment_breakdown,
+        refund_total=refund_total, refund_count=refund_row['count'] or 0, net_sales=total_sales-refund_total,
         open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
         average_bill=(total_sales / order_count) if order_count else 0,
     )
