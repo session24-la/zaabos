@@ -394,6 +394,20 @@ def insert_order_row(conn, tenant_id, insert_sql, build_params):
 # Static pages
 # =====================================================================
 
+@app.get('/favicon.ico')
+def favicon_root():
+    resp = send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/x-icon')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
+
+@app.get('/apple-touch-icon.png')
+def apple_touch_icon_root():
+    resp = send_from_directory(app.static_folder, 'zaabos-icon-192.png', mimetype='image/png')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
+
 @app.get('/')
 def index():
     return render_template('index.html')
@@ -1173,23 +1187,28 @@ def public_create_order():
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    order_no, cur = insert_order_row(conn, tenant_id,
-        '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
-        customer_name,customer_phone,customer_address,total_amount,notes,placed_by,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-        lambda order_no: (tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
-         customer_address, total, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
-    order_id = cur.lastrowid
-    for it in prepared_items:
-        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
-            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
-        oi_id = oi_cur.lastrowid
-        for opt in it['options']:
-            conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
-                (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
-        _decrement_stock(conn, it['menu_item_id'], it['quantity'])
-    conn.commit()
-    return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+    try:
+        order_no, cur = insert_order_row(conn, tenant_id,
+            '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
+            customer_name,customer_phone,customer_address,total_amount,notes,placed_by,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            lambda order_no: (tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
+             customer_address, total, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
+        order_id = cur.lastrowid
+        for it in prepared_items:
+            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
+                VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
+            oi_id = oi_cur.lastrowid
+            for opt in it['options']:
+                conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
+                    (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
+            _decrement_stock(conn, it['menu_item_id'], it['quantity'])
+        conn.commit()
+        return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+    except Exception:
+        conn.rollback()
+        app.logger.exception('public_create_order failed')
+        return jsonify(error='บันทึกออเดอร์ไม่สำเร็จ กรุณาลองอีกครั้ง หากยังเกิดปัญหาให้แจ้งพนักงาน'), 500
 
 @app.get('/api/public/orders/track')
 def public_track_order():
@@ -1403,6 +1422,10 @@ def update_order_payment(oid):
     ts=now()
     conn.execute('UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,cash_received=?,paid_at=?,updated_at=? WHERE id=?',
                  ('paid',method,tax,cash,ts,ts,oid))
+    # Auto-close a paid bill. Staff should not have to manually click
+    # Preparing/Ready/Served/Completed after the money is already settled.
+    if payment_status == 'paid' and order['status'] not in ('cancelled', 'completed'):
+        conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', ('completed', ts, oid))
     conn.execute('INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at) VALUES(?,?,?,?,?,?,?,?,?)',
                  (g.tenant_id,order['branch_id'],oid,due,method,cash,(d.get('reference') or '')[:120],g.user['id'],ts))
     log_action('payment_completed', detail=f'{oid}: {method} {due}')
