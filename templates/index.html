@@ -29,6 +29,7 @@
   <div class="head-right">
     <select id="langSelect" class="lang-select"></select>
     <select id="tenantSwitcher" class="hidden"></select>
+    <div class="header-branch" id="branchScopeBar"><span class="header-branch-icon">🏠</span><select id="branchSelect" aria-label="Branch"></select></div>
     <div class="who-wrap">
       <button class="who" id="whoBtn" type="button">
         <span class="avatar" id="whoAvatar">?</span>
@@ -45,32 +46,33 @@
 </header>
 
 <main>
-  <div class="biz-scope-bar" id="branchScopeBar">
-    <span class="biz-scope-lbl" data-i18n="scope_branch_label">สาขา</span>
-    <select id="branchSelect"></select>
-    <button class="ghost-btn" id="qrOverviewBtn" type="button" data-i18n="btn_qr_all_tables">📱 QR โต๊ะทั้งหมด</button>
-  </div>
+  <nav class="tabs pos-nav" id="mainTabs" aria-label="Main navigation">
+    <button data-tab="orders" class="active nav-primary"><span class="tab-ic">⌂</span><span class="tab-lb" data-i18n="tab_pos">POS</span></button>
+    <button data-tab="history" class="nav-primary"><span class="tab-ic">🕘</span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
+    <button id="kitchenNavBtn" class="nav-primary" type="button"><span class="tab-ic">👨‍🍳</span><span class="tab-lb" data-i18n="tab_kitchen">ครัว</span></button>
+    <button data-tab="menu" class="nav-primary"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <div class="nav-more-wrap">
+      <button id="moreNavBtn" class="nav-primary nav-more-btn" type="button" aria-expanded="false"><span class="tab-ic">☰</span><span class="tab-lb" data-i18n="tab_more">เพิ่มเติม</span></button>
+      <div class="nav-more-menu hidden" id="moreNavMenu">
+        <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
+        <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
+        <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
+        <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
+        <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
+        <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
+        <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
+      </div>
+    </div>
+  </nav>
 
-  <div class="tabs" id="mainTabs">
-    <button data-tab="orders" class="active"><span class="tab-ic">🧾</span><span class="tab-lb" data-i18n="tab_orders">ออเดอร์</span></button>
-    <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
-    <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
-    <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
-    <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
-    <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
-    <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
-    <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
-    <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
-  </div>
-
-  <!-- ===== Orders tab ===== -->
+  <!-- ===== POS tab ===== -->
   <section id="tab-orders" class="tab-panel">
     <div class="panel">
       <div class="panel-head">
-        <h2 data-i18n="board_title">ผังโต๊ะ</h2>
+        <div><span class="eyebrow" data-i18n="pos_workspace">หน้าร้าน</span><h2 data-i18n="board_title">ผังโต๊ะ</h2></div>
         <div class="head-actions">
           <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order">➕ รับออเดอร์ลูกค้า</button>
-          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
+          <button class="ghost-btn" id="refreshPosBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
         </div>
       </div>
       <div class="board-row">
@@ -87,9 +89,13 @@
         </aside>
       </div>
     </div>
-    <div class="panel">
-      <div class="panel-head">
-        <h2 data-i18n="orders_queue_title">คิวออเดอร์</h2>
+  </section>
+
+  <!-- ===== Order history tab ===== -->
+  <section id="tab-history" class="tab-panel hidden">
+    <div class="panel history-panel">
+      <div class="panel-head history-head">
+        <div><span class="eyebrow" data-i18n="history_eyebrow">ค้นหาและตรวจสอบ</span><h2 data-i18n="history_title">ประวัติออเดอร์</h2></div>
         <div class="head-actions">
           <select id="orderStatusFilter">
             <option value="" data-i18n="status_all">ทุกสถานะ</option>
@@ -100,6 +106,7 @@
             <option value="completed" data-i18n="status_completed">เสร็จสิ้น</option>
             <option value="cancelled" data-i18n="status_cancelled">ยกเลิก</option>
           </select>
+          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
         </div>
       </div>
       <div id="ordersList"></div>
@@ -112,6 +119,7 @@
       <div class="panel-head">
         <h2 data-i18n="tables_title">โต๊ะในสาขานี้</h2>
         <div class="head-actions">
+          <button class="ghost-btn" id="qrOverviewBtn" type="button" data-i18n="btn_qr_all_tables">📱 QR โต๊ะทั้งหมด</button>
           <button class="ghost-btn" id="bulkAddTablesBtn" data-i18n="btn_bulk_add_tables">🔢 สร้างหลายโต๊ะ</button>
           <button class="ghost-btn primary" id="addTableBtn" data-i18n="btn_add_table">➕ เพิ่มโต๊ะ</button>
         </div>
