@@ -662,3 +662,58 @@ main{max-width:1180px;padding-top:14px}
   #tab-reports .report-date-range{display:grid;grid-template-columns:1fr 1fr;align-items:end}
   #tab-reports .report-date-range button{grid-column:1/-1}
 }
+
+
+/* ===== Round 14I.3 — reporting / shift / pricing redesign ===== */
+.report-dashboard{padding:22px}
+.report-title-row{margin-bottom:8px}
+.report-custom-range{margin:10px 0 16px;border:1px solid var(--border);border-radius:12px;padding:0 12px}
+.report-custom-range summary,.cash-tools summary,.promo-create summary,.audit-details summary{cursor:pointer;padding:12px 0;font-weight:700}
+.report-summary-cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+.report-two-col{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(280px,.75fr);gap:14px;margin-top:16px}
+.report-section{border:1px solid var(--border);border-radius:16px;padding:16px;background:var(--surface-2)}
+.report-section h3{margin:2px 0 14px}
+.section-kicker{font-size:12px;color:var(--muted)}
+.payment-cards{grid-template-columns:1fr 1fr}
+.top-items-chart{display:grid;gap:13px}
+.top-bar-row{display:grid;gap:7px}
+.top-bar-head{display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px}
+.top-item-rank{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:8px;background:var(--surface);margin-right:8px;font-weight:800}
+.top-bar-track{height:9px;background:var(--surface);border-radius:999px;overflow:hidden}
+.top-bar-fill{height:100%;background:var(--primary);border-radius:999px}
+
+.shift-workspace{padding:22px}
+.shift-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.shift-state-card{min-height:82px;border:1px solid var(--border);background:var(--surface-2);border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:6px;justify-content:center}
+.shift-state-card small{color:var(--muted)}
+.shift-state-card b{font-size:16px}
+.shift-state-card.is-open{flex-direction:row;align-items:center;justify-content:flex-start}
+.shift-dot{width:10px;height:10px;border-radius:50%;background:#41c67a;box-shadow:0 0 0 5px rgba(65,198,122,.12)}
+.shift-action-area{margin-top:14px}
+.shift-open-box,.shift-close-box{border:1px solid var(--border);border-radius:16px;padding:16px;display:grid;grid-template-columns:minmax(180px,.75fr) minmax(360px,1.25fr);gap:18px;align-items:end;background:var(--surface-2)}
+.shift-open-controls,.shift-close-controls{display:grid;grid-template-columns:1fr 1fr auto;gap:9px}
+.shift-open-controls input,.shift-close-controls input{margin:0}
+.cash-tools,.audit-details{margin-top:14px;border:1px solid var(--border);border-radius:14px;padding:0 14px}
+.compact-form{margin-top:4px}
+.section-divider{height:1px;background:var(--border);margin:18px 0}
+
+.pricing-layout{max-width:980px;margin:auto;display:grid;grid-template-columns:minmax(280px,.75fr) minmax(0,1.25fr);gap:14px;align-items:start}
+.pricing-card{margin:0!important;padding:20px 22px}
+.compact-save{width:auto;min-width:160px;padding-inline:20px}
+.promo-list{display:grid;gap:8px;margin:10px 0}
+.promo-create{margin-top:12px;border-top:1px solid var(--border)}
+.promo-create .compact-form{grid-template-columns:1fr 1fr}
+
+@media(max-width:900px){
+  .report-summary-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .report-two-col,.pricing-layout{grid-template-columns:1fr}
+  .shift-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shift-open-box,.shift-close-box{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  .report-dashboard,.shift-workspace,.pricing-card{padding:14px}
+  .report-summary-cards,.payment-cards,.shift-summary-grid{grid-template-columns:1fr 1fr}
+  .top-bar-head{align-items:flex-start}
+  .shift-open-controls,.shift-close-controls{grid-template-columns:1fr}
+  .promo-create .compact-form{grid-template-columns:1fr}
+}

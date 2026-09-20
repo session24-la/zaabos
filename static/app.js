@@ -382,29 +382,17 @@ function renderReportCards(s) {
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
 }
 
-async function loadDailyClosing() {
-  if(!currentBranchId) return;
-  const d=$('#closingDate').value || new Date().toISOString().slice(0,10); $('#closingDate').value=d;
-  try { const r=await api(`/api/daily-closing?branch_id=${currentBranchId}&date=${encodeURIComponent(d)}`); const c=r.closing;
-    $('#openingCash').value=c?c.opening_cash:0; $('#cashOut').value=c?c.cash_out:0; $('#countedCash').value=c?c.counted_cash:0; $('#closingNotes').value=c?c.notes:'';
-    $('#closingPreview').textContent=`ยอดขายเงินสด: ${fmtMoney(r.cash_sales||0)}${c ? ` · เงินสดที่ควรมี ${fmtMoney(c.expected_cash)} · ส่วนต่าง ${fmtMoney(c.difference)}`:''}`;
-  } catch(e){toast(e.message,'err');}
-}
-$('#loadClosingBtn').addEventListener('click',loadDailyClosing);
-$('#saveClosingBtn').addEventListener('click',async()=>{ if(!currentBranchId)return; const btn=$('#saveClosingBtn'); btn.disabled=true;
-  try { const r=await apiJson('/api/daily-closing','POST',{branch_id:currentBranchId,closing_date:$('#closingDate').value,opening_cash:$('#openingCash').value,cash_out:$('#cashOut').value,counted_cash:$('#countedCash').value,notes:$('#closingNotes').value});
-    $('#closingPreview').textContent=`ยอดขายเงินสด: ${fmtMoney(r.cash_sales)} · เงินสดที่ควรมี ${fmtMoney(r.expected_cash)} · นับจริง ${fmtMoney(r.counted_cash)} · ส่วนต่าง ${fmtMoney(r.difference)}`; toast('บันทึกปิดยอดแล้ว','ok');
-  } catch(e){toast(e.message,'err');} finally{btn.disabled=false;}
-});
-
 function renderTopItems(items) {
   const el = $('#reportTopItems');
   if (!items || !items.length) { el.innerHTML = emptyState('📊', t('label_no_data')); return; }
-  el.innerHTML = items.map((it, i) => `
-    <div class="top-item-row">
-      <div><span class="top-item-rank">#${i + 1}</span>${escapeHtml(it.name)}</div>
-      <div>${it.qty} ${escapeHtml(t('label_qty_short'))} · ${fmtMoney(it.revenue)}</div>
-    </div>`).join('');
+  const maxQty = Math.max(...items.map(x => Number(x.qty||0)), 1);
+  el.innerHTML = `<div class="top-items-chart">${items.map((it,i)=>{
+    const pct=Math.max(4,Math.round((Number(it.qty||0)/maxQty)*100));
+    return `<div class="top-bar-row">
+      <div class="top-bar-head"><div><span class="top-item-rank">${i+1}</span><b>${escapeHtml(it.name)}</b></div><div><b>${Number(it.qty||0)}</b> รายการ · ${fmtMoney(it.revenue)}</div></div>
+      <div class="top-bar-track"><div class="top-bar-fill" style="width:${pct}%"></div></div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 function renderExpensesList(expenses) {
@@ -1574,26 +1562,33 @@ function emptyState(icon, text) { return `<div class="empty-state"><span class="
 
 
 // ===================== Round 14A Operations =====================
-async function loadOperations() {
-  if (!currentBranchId) return;
-  try {
-    const data = await api('/api/operations/shift?branch_id=' + currentBranchId);
-    const sh = data.shift;
-    $('#shiftStatus').innerHTML = sh ? `<div class="report-card"><div class="rc-label">สถานะกะ</div><div class="rc-value">เปิดอยู่</div></div><div class="report-card"><div class="rc-label">เงินเปิดกะ</div><div class="rc-value">${fmtMoney(sh.opening_cash)}</div></div><div class="report-card"><div class="rc-label">เปิดโดย</div><div class="rc-value">${escapeHtml(sh.opened_by_name||'')}</div></div>` : `<div class="report-card"><div class="rc-label">สถานะกะ</div><div class="rc-value">ยังไม่ได้เปิดกะ</div></div>`;
-    $('#cashMovementList').innerHTML = data.movements.length ? data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(m.created_at)}</div></div><strong>${fmtMoney(m.amount)}</strong></div>`).join('') : emptyState('💵','ยังไม่มีรายการเงินสด');
-    if ($('#criticalOpsList') && me && ['owner','manager','super_admin'].includes(me.role)) {
-      const ops=await api('/api/operations/critical');
-      $('#criticalOpsList').innerHTML=ops.length?ops.map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason_text||'')} · ทำโดย ${escapeHtml(x.performed_by_name||'')} ${x.approved_by_name?'· อนุมัติโดย '+escapeHtml(x.approved_by_name):''}</div></div><span class="muted">${escapeHtml(x.created_at)}</span></div>`).join(''):emptyState('🛡️','ยังไม่มี Critical Operation');
+async function loadOperations(){
+  if(!currentBranchId)return;
+  try{
+    const data=await api('/api/operations/shift?branch_id='+currentBranchId), sh=data.shift;
+    const status=$('#shiftStatus'), actions=$('#shiftActionArea');
+    if(sh){
+      const opened=formatDateTime(sh.opened_at);
+      status.innerHTML=`
+        <div class="shift-state-card is-open"><span class="shift-dot"></span><div><small>สถานะ</small><b>กะเปิดอยู่</b></div></div>
+        <div class="shift-state-card"><small>เปิดกะ</small><b>${escapeHtml(opened)}</b></div>
+        <div class="shift-state-card"><small>เงินทอนตั้งต้น</small><b>${fmtMoney(sh.opening_cash)}</b></div>
+        <div class="shift-state-card"><small>พนักงาน</small><b>${escapeHtml(sh.opened_by_name||'')}</b></div>`;
+      actions.innerHTML=`<div class="shift-close-box"><div><b>ปิดกะ</b><div class="muted">ให้นับเงินจริงในลิ้นชักเพียงครั้งเดียว ระบบจะเทียบกับยอดที่ควรมีอัตโนมัติ</div></div><div class="shift-close-controls"><input id="shiftCountedCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินสดนับจริง"><input id="shiftCloseNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="danger-btn" id="closeShiftBtn" type="button">ปิดกะ &amp; ตรวจยอด</button></div></div>`;
+      $('#closeShiftBtn').onclick=()=>opsPost('/api/operations/shift/close',{branch_id:currentBranchId,counted_cash:Number($('#shiftCountedCash').value||0),notes:$('#shiftCloseNote').value});
+    }else{
+      status.innerHTML=`<div class="shift-state-card"><small>สถานะ</small><b>ยังไม่ได้เปิดกะ</b></div>`;
+      actions.innerHTML=`<div class="shift-open-box"><div><b>เริ่มกะใหม่</b><div class="muted">กรอกเฉพาะเงินทอนที่มีอยู่จริงก่อนเริ่มขาย</div></div><div class="shift-open-controls"><input id="shiftOpeningCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินทอนตั้งต้น"><input id="shiftOpenNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="save" id="openShiftBtn" type="button">เปิดกะ</button></div></div>`;
+      $('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:currentBranchId,opening_cash:Number($('#shiftOpeningCash').value||0),notes:$('#shiftOpenNote').value});
     }
-  } catch(e) { toast(e.message,'err'); }
+    $('#cashMovementList').innerHTML=data.movements.length?data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(formatDateTime(m.created_at))}</div></div><strong>${m.movement_type==='cash_in'?'+':'−'}${fmtMoney(m.amount)}</strong></div>`).join(''):emptyState('💵','ยังไม่มีรายการเงินสดในกะนี้');
+    if(currentUser && ['owner','manager'].includes(currentUser.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('🛡️','ยังไม่มีรายการอนุมัติ');}
+  }catch(e){toast(e.message,'err')}
 }
-async function opsPost(url, body) { try { await apiJson(url,'POST',body); toast('บันทึกแล้ว','ok'); $('#opsAmount').value=''; $('#opsReason').value=''; loadOperations(); } catch(e){ toast(e.message,'err'); } }
-$('#refreshOpsBtn').onclick=()=>loadOperations();
-$('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:currentBranchId,opening_cash:Number($('#opsAmount').value||0),notes:$('#opsReason').value});
+async function opsPost(url,payload){try{const r=await apiJson(url,'POST',payload);if(r.expected_cash!=null)toast(`ปิดกะแล้ว · ควรมี ${fmtMoney(r.expected_cash)} · ต่าง ${fmtMoney(r.difference)}`,'ok');else toast('บันทึกแล้ว','ok');$('#opsAmount').value='';$('#opsReason').value='';loadOperations();}catch(e){toast(e.message,'err')}}
+$('#refreshOpsBtn').onclick=loadOperations;
 $('#cashInBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_in',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
 $('#cashOutBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_out',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
-$('#closeShiftBtn').onclick=()=>opsPost('/api/operations/shift/close',{branch_id:currentBranchId,counted_cash:Number($('#opsAmount').value||0),notes:$('#opsReason').value});
-
 
 // Round 14D pricing / promotions
 async function loadPricing(){
