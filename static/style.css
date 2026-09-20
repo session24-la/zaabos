@@ -541,3 +541,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
   .head-right select{max-width:88px;font-size:12px;padding:7px 20px 7px 8px;background-position:right 7px center;background-size:8px}
   .brand{font-size:14px}
 }
+
+/* ZaabOS V2 Round 2 — fast POS/table controls */
+.oc-edit-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}.mini-step,.cart-steps button{min-width:34px;min-height:34px;border:1px solid var(--border);background:var(--card);border-radius:9px;font-weight:800;font-size:17px}.mini-step:disabled{opacity:.35}.mini-cancel{border:0;background:#fff1f2;color:#be123c;border-radius:9px;padding:8px 10px;font-weight:700}.cancelled-note{color:#be123c}.cart-steps{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:7px}.board-tile{min-height:116px}.menu-card{touch-action:manipulation}.oc-pay-actions{display:flex;gap:8px;flex-wrap:wrap}
+@media(max-width:760px){.oc-item-row{align-items:flex-start;gap:8px}.oc-edit-controls{width:100%;margin:7px 0 0 28px}.sheet.wide{width:min(100%,100vw);max-height:94vh}.menu-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.board-row{display:block}.side-panel{margin-top:14px}}

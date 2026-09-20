@@ -867,10 +867,13 @@ function orderCardHtml(o) {
     const optsHtml = it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : '';
     const sentBadge = it.kitchen_sent_at
       ? `<span class="oc-kitchen-sent-badge" title="${escapeHtml(t('label_kitchen_sent_at'))} ${fmtClock(it.kitchen_sent_at)}">🔔 ${fmtClock(it.kitchen_sent_at)}</span>` : '';
-    const cb = kitchenEligible
+    const activeQty = Math.max(0, Number(it.quantity || 0) - Number(it.cancelled_quantity || 0));
+    const editable = kitchenEligible && o.payment_status === 'unpaid' && o.status !== 'completed';
+    const cb = editable && activeQty > 0
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
+    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}">+</button><button type="button" class="mini-cancel" data-cancel-item="${o.id}:${it.id}:${activeQty}">ยกเลิกรายการ</button></span>` : '';
     return `<li class="oc-item-row">
-      <label class="oc-item-label">${cb}<span><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}</span></label>
+      <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
       ${sentBadge}
     </li>`;
   }).join('');
@@ -900,6 +903,8 @@ function orderCardHtml(o) {
         <button class="ghost-btn btn-send-kitchen" data-send-kitchen="${o.id}" disabled>🔔 ${escapeHtml(t('btn_send_to_kitchen'))}</button>
       </div>` : ''}
       <div class="oc-pay-actions">
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn primary" data-add-items="${o.id}">➕ เพิ่มอาหาร</button>` : ''}
+        ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}">↔️ ย้ายโต๊ะ</button>` : ''}
         ${o.payment_status === 'unpaid' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
       </div>
@@ -937,8 +942,13 @@ function wireOrderActionClicks(container) {
   container.addEventListener('click', (e) => {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
-    const sk = e.target.dataset.sendKitchen;
-    if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
+    const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
+    const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
+    if (iq) { const [oid,iid,qty]=iq.split(':'); apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:Number(qty)}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    else if (ci) { const [oid,iid,qty]=ci.split(':'); if(confirm('ยืนยันยกเลิกรายการนี้?')) apiJson(`/api/orders/${oid}/items/${iid}/cancel`,'PUT',{quantity:Number(qty),reason:'ยกเลิกโดยพนักงาน'}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    else if (ai) { openAddItemsToOrder(parseInt(ai,10)); }
+    else if (mv) { openMoveTable(parseInt(mv,10)); }
+    else if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (cp) { openConfirmPaymentModal(parseInt(cp, 10)); }
     else if (pr) { printReceipt(parseInt(pr, 10)); }
@@ -1133,7 +1143,7 @@ $('#tableBoard').addEventListener('click', (e) => {
   const tableId = parseInt(btn.dataset.boardTable, 10);
   const tb = boot.tables.find(x => x.id === tableId);
   const orders = tableActiveOrders(tableId);
-  if (!orders.length) { toast(t('board_table_empty'), ''); return; }
+  if (!orders.length) { openTakeOrderForTable(tableId); return; }
   openOrderDetail(orders, tb ? tb.name : '');
 });
 
@@ -1187,9 +1197,10 @@ function openOrderDetail(orders, titleSuffix) {
 // ===================== Staff take-order =====================
 
 let takeOrderType = 'dine_in';
+let addItemsOrderId = null;
 
-$('#takeOrderBtn').addEventListener('click', () => {
-  cart = []; takeOrderType = 'dine_in';
+function openTakeOrderForTable(tableId=null) {
+  addItemsOrderId = null; cart = []; takeOrderType = 'dine_in';
   $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b.dataset.type === 'dine_in'));
   $('#takeOrderTableRow').classList.remove('hidden'); $('#takeOrderDeliveryFields').classList.add('hidden');
   $('#takeOrderCustomerName').value = ''; $('#takeOrderPhone').value = ''; $('#takeOrderAddress').value = '';
@@ -1201,7 +1212,9 @@ $('#takeOrderBtn').addEventListener('click', () => {
   renderTakeOrderMenu();
   renderCart();
   openModal('#takeOrderModal');
-});
+  if (tableId) $('#takeOrderTable').value = String(tableId);
+}
+$('#takeOrderBtn').addEventListener('click', () => openTakeOrderForTable());
 $('#takeOrderType').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-type]');
   if (!btn) return;
@@ -1243,6 +1256,11 @@ $('#takeOrderMenuGrid').addEventListener('click', (e) => {
   if (!id) return;
   const item = boot.items.find(x => x.id === parseInt(id.dataset.pickItem, 10));
   if (item.sold_out) return;
+  if (!item.option_groups || !item.option_groups.length) {
+    const found=cart.find(c=>c.menu_item_id===item.id && !c.optionLabels.length && !c.notes);
+    if(found) found.qty += 1; else cart.push({menu_item_id:item.id,name:item.name,unit_price:item.base_price,qty:1,selected_options:{},optionLabels:[],notes:''});
+    renderCart(); return;
+  }
   openItemOptionPicker(item);
 });
 
@@ -1298,14 +1316,17 @@ function renderCart() {
     const lineTotal = c.unit_price * c.qty; total += lineTotal;
     return `<div class="cart-line">
       <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
-      <div style="text-align:right"><div class="cl-price">${fmtMoney(lineTotal)}</div><button class="icon-btn danger" data-cart-remove="${idx}">✕</button></div>
+      <div style="text-align:right"><div class="cl-price">${fmtMoney(lineTotal)}</div><div class="cart-steps"><button data-cart-minus="${idx}">−</button><b>${c.qty}</b><button data-cart-plus="${idx}">+</button><button class="icon-btn danger" data-cart-remove="${idx}">✕</button></div></div>
     </div>`;
   }).join('');
   $('#takeOrderTotal').textContent = fmtMoney(total);
 }
 $('#takeOrderCart').addEventListener('click', (e) => {
   const idx = e.target.dataset.cartRemove;
-  if (idx !== undefined) { cart.splice(idx, 1); renderCart(); }
+  if (idx !== undefined) { cart.splice(idx, 1); renderCart(); return; }
+  const mi=e.target.dataset.cartMinus, pl=e.target.dataset.cartPlus;
+  if(mi!==undefined){ cart[Number(mi)].qty=Math.max(1,cart[Number(mi)].qty-1); renderCart(); }
+  if(pl!==undefined){ cart[Number(pl)].qty=Math.min(99,cart[Number(pl)].qty+1); renderCart(); }
 });
 
 $('#takeOrderSubmit').addEventListener('click', async () => {
@@ -1325,8 +1346,11 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   const originalLabel = btn.textContent;
   btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
   try {
-    const r = await apiJson('/api/orders', 'POST', payload);
-    closeModals(); toast(t('toast_order_saved', { no: r.order_no }), 'ok'); loadOrders(); loadBoardData();
+    const endpoint = addItemsOrderId ? `/api/orders/${addItemsOrderId}/items` : '/api/orders';
+    const sendPayload = addItemsOrderId ? {items: payload.cart} : payload;
+    const r = await apiJson(endpoint, 'POST', sendPayload);
+    closeModals(); toast(addItemsOrderId ? 'เพิ่มรายการแล้ว' : t('toast_order_saved', { no: r.order_no }), 'ok');
+    addItemsOrderId = null; loadOrders(); loadBoardData();
     // items with stock tracking just got decremented server-side — refresh the
     // cached menu (boot.items) so the Menu tab shows the real count, not what
     // it was before this order was placed
@@ -1334,6 +1358,25 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   } catch (e) { $('#takeOrderError').textContent = e.message; }
   finally { btn.disabled = false; btn.textContent = originalLabel; }
 });
+
+
+function openAddItemsToOrder(orderId) {
+  const ord=findOrderById(orderId); if(!ord) return;
+  addItemsOrderId=orderId; cart=[]; takeOrderType=ord.order_type;
+  $('#takeOrderTableRow').classList.toggle('hidden', ord.order_type!=='dine_in');
+  $('#takeOrderDeliveryFields').classList.add('hidden');
+  $('#takeOrderCustomerName').value=ord.customer_name||''; $('#takeOrderGuestCount').value=ord.guest_count||'';
+  const tsel=$('#takeOrderTable'); tsel.innerHTML=branchTables().map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join(''); if(ord.table_id) tsel.value=String(ord.table_id);
+  renderTakeOrderCategories(); renderTakeOrderMenu(); renderCart(); closeModals(); openModal('#takeOrderModal');
+}
+async function openMoveTable(orderId) {
+  const ord=findOrderById(orderId); if(!ord) return;
+  const choices=branchTables().filter(tb=>tb.id!==ord.table_id && tableActiveOrders(tb.id).length===0);
+  if(!choices.length){ toast('ไม่มีโต๊ะว่างสำหรับย้าย','err'); return; }
+  const msg='เลือกหมายเลขโต๊ะปลายทาง:\n'+choices.map((tb,i)=>`${i+1}. ${tb.name}`).join('\n');
+  const raw=prompt(msg,'1'); if(raw===null) return; const idx=Number(raw)-1; if(!choices[idx]){toast('เลือกโต๊ะไม่ถูกต้อง','err');return;}
+  try{await apiJson(`/api/orders/${orderId}/move-table`,'PUT',{table_id:choices[idx].id}); closeModals(); toast(`ย้ายไป ${choices[idx].name} แล้ว`,'ok'); onOrderActionDone();}catch(e){toast(e.message,'err');}
+}
 
 // ===================== Misc =====================
 
