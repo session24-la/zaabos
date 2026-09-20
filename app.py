@@ -202,6 +202,11 @@ def ensure_schema_migrations(conn):
     executescript's CREATE TABLE IF NOT EXISTS only helps on a fresh DB, so any
     new column on an existing table needs to be added here instead."""
     if IS_POSTGRES:
+        # Multi-tenant order numbers: legacy schema made order_no globally
+        # unique, which caused Tenant B's ...0001 to collide with Tenant A's.
+        # Keep numbering independent per tenant while preserving all rows.
+        conn.execute('ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_order_no_key')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_tenant_order_no ON orders(tenant_id, order_no)')
         conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS kitchen_sent_at TIMESTAMP')
         conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_amount DOUBLE PRECISION NOT NULL DEFAULT 0')
         conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_received DOUBLE PRECISION')
@@ -367,10 +372,24 @@ def gen_qr_token():
     return secrets.token_urlsafe(12)
 
 def gen_order_no(conn, tenant_id):
+    """Return the next daily order number inside one tenant.
+
+    Do not use COUNT(): if an older order was removed, COUNT can point at an
+    already-used suffix. Reading the highest fixed-width number also makes the
+    retry path advance correctly after a concurrent insert commits.
+    """
     today = datetime.now().strftime('%Y%m%d')
     prefix = f'Z-{today}-'
-    row = conn.execute("SELECT COUNT(*) AS c FROM orders WHERE tenant_id=? AND order_no LIKE ?", (tenant_id, prefix + '%')).fetchone()
-    seq = (row['c'] if row else 0) + 1
+    row = conn.execute(
+        "SELECT order_no FROM orders WHERE tenant_id=? AND order_no LIKE ? ORDER BY order_no DESC LIMIT 1",
+        (tenant_id, prefix + '%')
+    ).fetchone()
+    seq = 1
+    if row and row['order_no']:
+        try:
+            seq = int(str(row['order_no']).rsplit('-', 1)[1]) + 1
+        except (ValueError, IndexError):
+            seq = 1
     return f'{prefix}{seq:04d}'
 
 MAX_ORDER_NO_RETRIES = 5
@@ -1221,10 +1240,17 @@ def public_track_order():
     if not order_no or not phone:
         return jsonify(error='กรุณากรอกเลขที่ออเดอร์และเบอร์โทร'), 400
     conn = db()
-    order = conn.execute('SELECT * FROM orders WHERE order_no=? AND customer_phone=?', (order_no, phone)).fetchone()
-    if not order:
+    matches = conn.execute(
+        'SELECT * FROM orders WHERE order_no=? AND customer_phone=? ORDER BY id DESC LIMIT 2',
+        (order_no, phone)
+    ).fetchall()
+    if not matches:
         return jsonify(error='ไม่พบออเดอร์ กรุณาตรวจสอบเลขที่ออเดอร์และเบอร์โทรอีกครั้ง'), 404
-    return jsonify(order=_order_with_items(conn, order))
+    if len(matches) > 1:
+        # Same order number is valid in different tenants. Never guess and leak
+        # another shop's order data through the public tracker.
+        return jsonify(error='พบเลขออเดอร์ซ้ำในหลายร้าน กรุณาเปิดหน้าติดตามจากลิงก์ของร้านที่สั่ง'), 409
+    return jsonify(order=_order_with_items(conn, matches[0]))
 
 # ---------- staff-side order management ----------
 

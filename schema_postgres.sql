@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS orders (
  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
  tenant_id INTEGER NOT NULL,
  branch_id INTEGER NOT NULL,
- order_no TEXT UNIQUE NOT NULL,
+ order_no TEXT NOT NULL,
  order_type TEXT NOT NULL DEFAULT 'dine_in' CHECK(order_type IN ('dine_in','takeaway','delivery')),
  table_id INTEGER,
  table_name_snapshot TEXT,
@@ -128,7 +128,8 @@ CREATE TABLE IF NOT EXISTS orders (
  FOREIGN KEY(tenant_id) REFERENCES tenants(id),
  FOREIGN KEY(branch_id) REFERENCES branches(id),
  FOREIGN KEY(table_id) REFERENCES dining_tables(id),
- FOREIGN KEY(created_by_user_id) REFERENCES users(id)
+ FOREIGN KEY(created_by_user_id) REFERENCES users(id),
+ UNIQUE(tenant_id, order_no)
 );
 
 CREATE TABLE IF NOT EXISTS order_items (
