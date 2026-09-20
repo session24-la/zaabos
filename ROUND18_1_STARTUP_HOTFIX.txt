@@ -1,0 +1,14 @@
+ZaabOS Round 18.1 — Railway Startup Hotfix
+
+Root cause:
+Railway/PostgreSQL executes schema_postgres.sql before ensure_schema_migrations().
+Round 18's bootstrap schema tried to create idx_tenants_subscription, but the
+PostgreSQL tenants table definition was missing the new subscription columns.
+PostgreSQL therefore stopped startup before Migration 26 could add them.
+
+Fix:
+schema_postgres.sql now defines the Round 18 tenant columns before the index.
+SQLite schema already had these columns and does not need a change.
+
+No database reset and no data deletion.
+Replace only schema_postgres.sql and redeploy.

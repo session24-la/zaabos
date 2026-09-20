@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS tenants (
  icon TEXT NOT NULL DEFAULT '🍽️',
  currency TEXT NOT NULL DEFAULT 'LAK',
  active INTEGER NOT NULL DEFAULT 1,
+ plan_code TEXT NOT NULL DEFAULT 'starter',
+ subscription_status TEXT NOT NULL DEFAULT 'trialing',
+ trial_ends_at TEXT,
+ current_period_end TEXT,
+ max_branches INTEGER NOT NULL DEFAULT 1,
+ max_users INTEGER NOT NULL DEFAULT 5,
+ subscription_note TEXT NOT NULL DEFAULT '',
  created_at TEXT NOT NULL
 );
 
