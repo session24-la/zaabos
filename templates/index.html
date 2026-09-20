@@ -56,6 +56,8 @@
     <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
     <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
     <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
+    <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
+    <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
     <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
     <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
     <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
@@ -181,6 +183,49 @@
   </section>
 
   <!-- ===== Branches tab ===== -->
+
+  <!-- ===== Operations tab (Round 14A/14C) ===== -->
+  <section id="tab-operations" class="tab-panel hidden">
+    <div class="panel">
+      <div class="panel-head"><h2>กะ &amp; เงินสด</h2><button class="ghost-btn" id="refreshOpsBtn" type="button">รีเฟรช</button></div>
+      <div id="shiftStatus" class="report-grid"></div>
+      <div class="form-grid" style="margin-top:14px">
+        <label><span>จำนวนเงิน</span><input id="opsAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+        <label><span>เหตุผล / หมายเหตุ</span><input id="opsReason" maxlength="300" placeholder="ระบุเหตุผล"></label>
+      </div>
+      <div class="head-actions" style="margin:12px 0;flex-wrap:wrap">
+        <button class="save" id="openShiftBtn" type="button">เปิดกะ</button>
+        <button class="ghost-btn" id="cashInBtn" type="button">เงินเข้า</button>
+        <button class="ghost-btn" id="cashOutBtn" type="button">เงินออก</button>
+        <button class="danger-btn" id="closeShiftBtn" type="button">ปิดกะ</button>
+      </div>
+      <h3>รายการเงินสด</h3><div id="cashMovementList"></div>
+      <h3 style="margin-top:18px">Critical Operations</h3><div id="criticalOpsList"></div>
+    </div>
+  </section>
+
+  <!-- ===== Pricing tab (Round 14D) ===== -->
+  <section id="tab-pricing" class="tab-panel hidden">
+    <div class="panel">
+      <div class="panel-head"><h2>ราคา &amp; โปรโมชั่น</h2></div>
+      <div class="form-grid">
+        <label><span>Tax (%)</span><input id="pricingTax" type="number" min="0" max="100" step="0.01" value="0"></label>
+        <label><span>Service Charge (%)</span><input id="pricingService" type="number" min="0" max="100" step="0.01" value="0"></label>
+      </div>
+      <button class="save" id="savePricingBtn" type="button" style="margin-top:10px">บันทึกอัตรา</button>
+      <h3 style="margin-top:20px">โปรโมชั่น</h3>
+      <div class="form-grid">
+        <label><span>Code</span><input id="promoCode" maxlength="40" placeholder="เช่น LUNCH10"></label>
+        <label><span>ชื่อโปรโมชั่น</span><input id="promoName" maxlength="120"></label>
+        <label><span>ประเภท</span><select id="promoType"><option value="percent">เปอร์เซ็นต์ (%)</option><option value="fixed">จำนวนเงิน</option></select></label>
+        <label><span>มูลค่าส่วนลด</span><input id="promoValue" type="number" min="0" step="0.01"></label>
+        <label><span>ยอดขั้นต่ำ</span><input id="promoMin" type="number" min="0" step="0.01" value="0"></label>
+      </div>
+      <button class="save" id="addPromoBtn" type="button" style="margin-top:10px">สร้างโปรโมชั่น</button>
+      <div id="promotionsList" style="margin-top:14px"></div>
+    </div>
+  </section>
+
   <section id="tab-branches" class="tab-panel hidden">
     <div class="panel">
       <div class="panel-head">
@@ -376,6 +421,13 @@
 <!-- Confirm payment: optional tax + cash received, computes change before printing the receipt -->
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
   <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
+  <label><span>Promotion Code (ถ้ามี)</span><input id="cpPromo" maxlength="40" placeholder="เช่น LUNCH10"></label>
+  <label><span>ส่วนลดพิเศษ (ถ้ามี)</span><input id="cpDiscount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+  <label><span>เหตุผลส่วนลด</span><input id="cpDiscountReason" maxlength="300" placeholder="ระบุเมื่อให้ส่วนลดพิเศษ"></label>
+  <div class="form-grid">
+    <label><span>Manager / Owner username</span><input id="cpApprovalUser" autocomplete="off"></label>
+    <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
+  </div>
   <label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label>
   <label><span data-i18n="label_tax_amount">ภาษี (ถ้ามี)</span><input id="cpTax" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <label><span data-i18n="label_cash_received">รับเงินมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
