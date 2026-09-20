@@ -57,6 +57,7 @@
         <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
         <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
         <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
+          <button data-tab="inventory" class="more-item"><span>📦</span><span>วัตถุดิบ & สูตร</span></button>
         <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
         <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
         <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
@@ -187,6 +188,14 @@
         <button class="ghost-btn primary" id="addExpenseBtn">➕ เพิ่มรายจ่าย</button>
       </div>
       <div id="expensesList"></div>
+    </div>
+  </section>
+
+  <section id="tab-inventory" class="tab-panel hidden">
+    <div class="panel inventory-workspace">
+      <div class="panel-head"><div><h2>วัตถุดิบ & สูตร</h2><div class="muted">สต็อกวัตถุดิบจะหักอัตโนมัติตามสูตรเมื่อขายเมนู</div></div><button class="ghost-btn primary" id="addIngredientBtn">+ วัตถุดิบ</button></div>
+      <div id="inventorySummary" class="inventory-summary"></div>
+      <div id="ingredientsList"></div>
     </div>
   </section>
 
@@ -461,6 +470,8 @@
   <label><span data-i18n="label_tax_amount">ภาษี (ถ้ามี)</span><input id="cpTax" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <label><span data-i18n="label_cash_received">รับเงินมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <div class="row" style="margin-top:6px"><span data-i18n="label_change">เงินทอน</span><b id="cpChange">0</b></div>
+  <div class="split-pay-head"><b>แบ่งชำระ</b><button type="button" class="ghost-btn" id="cpAddPayment">+ เพิ่มช่องทาง</button></div>
+  <div id="cpPaymentParts"></div>
   <div class="login-error" id="cpError"></div>
   <button class="save btn-confirm-pay" id="cpSubmit" data-i18n="btn_confirm_payment_done">✅ ยืนยันชำระเงินแล้ว</button>
 </div></div>
@@ -468,6 +479,16 @@
 <!-- Table / order detail (opened from board tiles + side panel) -->
 <div class="modal" id="orderDetailModal"><div class="sheet wide"><div class="sheet-head"><h2 id="orderDetailTitle" data-i18n="order_detail_title">รายละเอียดออเดอร์</h2><button data-close>×</button></div>
   <div id="orderDetailBody"></div>
+</div></div>
+
+<div class="modal" id="billManagerModal"><div class="sheet wide"><div class="sheet-head"><h2>จัดการบิล</h2><button data-close>×</button></div>
+  <div class="bill-manager-tabs"><button data-bm-mode="move" class="active">ย้ายโต๊ะ</button><button data-bm-mode="merge">รวมบิล</button><button data-bm-mode="split">แยกบิล</button></div>
+  <div id="billManagerBody"></div><div class="login-error" id="billManagerError"></div>
+</div></div>
+<div class="modal" id="ingredientModal"><div class="sheet small"><div class="sheet-head"><h2>เพิ่มวัตถุดิบ</h2><button data-close>×</button></div>
+  <label><span>ชื่อ</span><input id="ingName"></label><div class="form-grid"><label><span>หน่วย</span><input id="ingUnit" placeholder="g / ml / ชิ้น"></label><label><span>คงเหลือ</span><input id="ingQty" type="number" min="0" step="0.01"></label></div>
+  <div class="form-grid"><label><span>เตือนเมื่อเหลือ</span><input id="ingLow" type="number" min="0" step="0.01"></label><label><span>ต้นทุน/หน่วย</span><input id="ingCost" type="number" min="0" step="0.01"></label></div>
+  <button class="save" id="ingSave">บันทึกวัตถุดิบ</button>
 </div></div>
 
 <div id="receiptPrintArea" class="receipt-print"></div>

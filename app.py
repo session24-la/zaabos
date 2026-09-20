@@ -503,6 +503,39 @@ def ensure_schema_migrations(conn):
     conn.commit()
     record_migration(conn, 21, 'pos_workspace_payment_reversal')
 
+    # Round 15 — Restaurant Core Complete
+    # Split payments intentionally allow multiple active payment rows per order.
+    conn.execute('DROP INDEX IF EXISTS uq_payments_tenant_order_active')
+    money15 = 'DOUBLE PRECISION' if IS_POSTGRES else 'REAL'
+    id15 = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS kitchen_stations (
+        id {id15}, tenant_id INTEGER NOT NULL, branch_id INTEGER, name TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)""")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_kitchen_stations_tenant_branch ON kitchen_stations(tenant_id,branch_id,active)')
+    if IS_POSTGRES:
+        conn.execute('ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS kitchen_station_id INTEGER')
+    else:
+        c15=[r[1] for r in conn.execute('PRAGMA table_info(menu_items)').fetchall()]
+        if 'kitchen_station_id' not in c15: conn.execute('ALTER TABLE menu_items ADD COLUMN kitchen_station_id INTEGER')
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS ingredients (
+        id {id15}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, name TEXT NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'unit', stock_qty {money15} NOT NULL DEFAULT 0,
+        low_stock_threshold {money15} NOT NULL DEFAULT 0, cost_per_unit {money15} NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_ingredients_tenant_branch ON ingredients(tenant_id,branch_id,active)')
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS recipes (
+        id {id15}, tenant_id INTEGER NOT NULL, menu_item_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL,
+        quantity {money15} NOT NULL, created_at TEXT NOT NULL)""")
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_menu_ingredient ON recipes(tenant_id,menu_item_id,ingredient_id)')
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS inventory_movements (
+        id {id15}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL,
+        movement_type TEXT NOT NULL, quantity {money15} NOT NULL, reason TEXT NOT NULL DEFAULT '',
+        order_id INTEGER, created_by_user_id INTEGER, created_at TEXT NOT NULL)""")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_movements_tenant_branch ON inventory_movements(tenant_id,branch_id,created_at)')
+    conn.commit()
+    record_migration(conn, 22, 'restaurant_core_complete')
+
+
 def init_db():
     if IS_POSTGRES:
         conn = PGConn(os.getenv('DATABASE_URL'))
@@ -1372,6 +1405,22 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
         })
     return prepared, total
 
+
+def _apply_recipe_inventory(conn, menu_item_id, qty, movement_type, order_id=None, user_id=None):
+    """Apply recipe ingredient movement. Negative qty consumes; positive restores."""
+    rows=conn.execute("""SELECT r.ingredient_id,r.quantity,i.branch_id
+        FROM recipes r JOIN ingredients i ON i.id=r.ingredient_id
+        WHERE r.tenant_id=? AND r.menu_item_id=? AND i.active=1""",(g.tenant_id,menu_item_id)).fetchall()
+    ts=now()
+    for r in rows:
+        delta=float(r['quantity'] or 0)*float(qty)
+        conn.execute('UPDATE ingredients SET stock_qty=stock_qty+?,updated_at=? WHERE id=? AND tenant_id=?',
+                     (delta,ts,r['ingredient_id'],g.tenant_id))
+        conn.execute("""INSERT INTO inventory_movements(tenant_id,branch_id,ingredient_id,movement_type,quantity,reason,order_id,created_by_user_id,created_at)
+                        VALUES(?,?,?,?,?,?,?,?,?)""",
+                     (g.tenant_id,r['branch_id'],r['ingredient_id'],movement_type,delta,
+                      'อัตโนมัติจากออเดอร์' if order_id else 'ปรับสต็อก',order_id,user_id,ts))
+
 def _decrement_stock(conn, menu_item_id, qty):
     """Deducts stock when an order is placed, for menu items that opted into
     stock tracking. Clamped at 0 rather than blocking the sale — an owner who
@@ -1385,10 +1434,12 @@ def _decrement_stock(conn, menu_item_id, qty):
     conn.execute('''UPDATE menu_items SET stock_qty =
         CASE WHEN COALESCE(stock_qty,0) - ? < 0 THEN 0 ELSE COALESCE(stock_qty,0) - ? END
         WHERE id=? AND track_stock=1''', (qty, qty, menu_item_id))
+    _apply_recipe_inventory(conn, menu_item_id, -float(qty), 'sale', user_id=getattr(g,'user',{}).get('id') if getattr(g,'user',None) else None)
 
 def _restore_stock(conn, menu_item_id, qty):
     if not menu_item_id or qty <= 0: return
     conn.execute('UPDATE menu_items SET stock_qty=COALESCE(stock_qty,0)+? WHERE id=? AND track_stock=1', (qty, menu_item_id))
+    _apply_recipe_inventory(conn, menu_item_id, float(qty), 'restore', user_id=getattr(g,'user',{}).get('id') if getattr(g,'user',None) else None)
 
 def _recalculate_order_total(conn, oid):
     row = conn.execute('SELECT COALESCE(SUM((quantity-COALESCE(cancelled_quantity,0))*unit_price),0) AS total FROM order_items WHERE order_id=?', (oid,)).fetchone()
@@ -1841,69 +1892,71 @@ def update_order_fulfillment(oid):
 
 @app.put('/api/orders/<int:oid>/payment')
 @login_required
-@role_required('owner', 'manager', 'staff')
+@role_required('owner','manager','staff')
 def update_order_payment(oid):
-    conn = db()
-    order = conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid, g.tenant_id)).fetchone()
-    if not order: return jsonify(error='ไม่พบออเดอร์'), 404
-    d = request.get_json() or {}
-    payment_status = d.get('payment_status')
-    if payment_status not in ('unpaid', 'paid'): return jsonify(error='สถานะการชำระเงินไม่ถูกต้อง'), 400
-    if order['status'] == 'cancelled': return jsonify(error='ออเดอร์ที่ยกเลิกแล้วไม่สามารถชำระเงินได้'), 409
-    if order['payment_status'] == 'paid' and payment_status == 'paid': return jsonify(error='ออเดอร์นี้ชำระเงินแล้ว'), 409
-    if payment_status == 'unpaid' and order['payment_status'] == 'paid':
-        return jsonify(error='ไม่สามารถย้อนการชำระเงินโดยตรง กรุณาใช้ขั้นตอนคืนเงิน/void'), 409
-    method = (d.get('payment_method') or '').strip()
-    if payment_status == 'paid' and method not in PAYMENT_METHODS:
-        return jsonify(error='กรุณาเลือกวิธีชำระเงิน'), 400
-    def money(key, default=None):
-        v=d.get(key, default)
-        if v in (None,''): return None
-        try: v=float(v)
-        except: raise ValueError(f'{key} ไม่ถูกต้อง')
-        if v < 0 or v > 1000000000: raise ValueError(f'{key} ไม่ถูกต้อง')
-        return v
+    """Payment 2.0: one atomic checkout may contain one or many payment methods."""
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    d=request.get_json() or {}
+    if d.get('payment_status')!='paid': return jsonify(error='ใช้ขั้นตอนคืนเงิน/เปิดบิลกลับสำหรับการย้อนการชำระ'),400
+    if order['status']=='cancelled' or order['payment_status']=='paid': return jsonify(error='บิลนี้ไม่สามารถชำระซ้ำได้'),409
+    def money(v, default=0):
+        if v in (None,''): return float(default)
+        x=float(v)
+        if x<0 or x>1000000000: raise ValueError('จำนวนเงินไม่ถูกต้อง')
+        return x
     try:
-        cash=money('cash_received')
-        subtotal=float(order['total_amount'] or 0); delivery_fee=float(order['delivery_fee'] or 0); settings=_pricing_settings(conn,order['branch_id'])
-        discount=0.0; discount_label=''; promotion_id=None
-        promo_code=(d.get('promotion_code') or '').strip()
-        if promo_code:
-            promo=_active_promotion(conn,promo_code,order['branch_id'],subtotal); promotion_id=promo['id']; discount_label=promo['name']
-            discount=(subtotal*float(promo['discount_value'])/100.0) if promo['discount_type']=='percent' else float(promo['discount_value'])
+        subtotal=float(order['total_amount'] or 0); delivery=float(order['delivery_fee'] or 0)
+        settings=_pricing_settings(conn,order['branch_id']); discount=0.0; label=''; promotion_id=None
+        code=(d.get('promotion_code') or '').strip()
+        if code:
+            promo=_active_promotion(conn,code,order['branch_id'],subtotal); promotion_id=promo['id']; label=promo['name']
+            discount=(subtotal*float(promo['discount_value'])/100) if promo['discount_type']=='percent' else float(promo['discount_value'])
             if promo['max_discount'] is not None: discount=min(discount,float(promo['max_discount']))
-        manual=money('discount_amount',0) or 0
+        manual=money(d.get('discount_amount'),0)
         if manual>0:
-            approved_by, approval_err=_critical_approval(conn,d)
-            if approval_err: return approval_err
-            discount += manual; discount_label=(d.get('discount_reason') or 'ส่วนลดพิเศษ')[:120]
-            _record_critical(conn,'discount',order['branch_id'],'order',oid,discount_label,approved_by,f'manual_discount={manual}')
-        discount=min(discount,subtotal); after_discount=max(0,subtotal-discount)
-        service=after_discount*float(settings.get('service_charge_rate') or 0)/100.0
-        tax=(after_discount+service)*float(settings.get('tax_rate') or 0)/100.0
-        due=after_discount+service+tax+delivery_fee
-    except ValueError as e: return jsonify(error=str(e)),400
-    if method == 'cash' and (cash is None or cash < due):
-        return jsonify(error='จำนวนเงินสดที่รับมาต้องไม่น้อยกว่ายอดชำระ'), 400
-    if method != 'cash': cash=None
+            approved_by,err=_critical_approval(conn,d)
+            if err:return err
+            discount+=manual; label=(d.get('discount_reason') or 'ส่วนลดพิเศษ')[:120]
+            _record_critical(conn,'discount',order['branch_id'],'order',oid,label,approved_by,f'manual_discount={manual}')
+        discount=min(discount,subtotal); base=max(0,subtotal-discount)
+        service=base*float(settings.get('service_charge_rate') or 0)/100
+        tax=(base+service)*float(settings.get('tax_rate') or 0)/100
+        due=round(base+service+tax+delivery,2)
+        parts=d.get('payments')
+        if not parts:
+            parts=[{'method':d.get('payment_method'),'amount':due,'cash_received':d.get('cash_received'),'reference':d.get('reference')}]
+        if not isinstance(parts,list) or not parts: raise ValueError('กรุณาระบุการชำระเงิน')
+        normalized=[]; total=0.0; cash_received_total=0.0
+        # If the first part omits amount, it means "remaining balance".
+        explicit_total=sum(round(money(p.get('amount')),2) for p in parts[1:]) if len(parts)>1 else 0.0
+        for idx,p in enumerate(parts):
+            method=(p.get('method') or '').strip()
+            if method not in PAYMENT_METHODS: raise ValueError('วิธีชำระเงินไม่ถูกต้อง')
+            raw=p.get('amount')
+            amount=round(max(0,due-explicit_total),2) if idx==0 and len(parts)>1 and raw in (None,'',0,0.0) else round(money(raw),2)
+            if amount<=0: raise ValueError('ยอดแต่ละช่องทางต้องมากกว่า 0')
+            cr=money(p.get('cash_received'),amount) if method=='cash' else None
+            if method=='cash' and cr<amount: raise ValueError('เงินสดที่รับมาต้องไม่น้อยกว่ายอดเงินสด')
+            normalized.append((method,amount,cr,(p.get('reference') or '')[:120]))
+            total=round(total+amount,2)
+            if cr: cash_received_total+=cr
+        if abs(total-due)>0.01: raise ValueError(f'ยอดชำระรวมต้องเท่ากับ {due:.2f}')
+    except (ValueError,TypeError) as e:return jsonify(error=str(e)),400
     ts=now()
-    claimed = conn.execute('''UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,service_charge_amount=?,discount_amount=?,discount_label=?,promotion_id=?,cash_received=?,paid_at=?,updated_at=?
-        WHERE id=? AND tenant_id=? AND payment_status='unpaid' AND status<>'cancelled' ''',
-        ('paid',method,tax,service,discount,discount_label,promotion_id,cash,ts,ts,oid,g.tenant_id))
-    if claimed.rowcount != 1:
-        conn.rollback()
-        return jsonify(error='ออเดอร์นี้ถูกชำระหรือเปลี่ยนสถานะจากอุปกรณ์อื่นแล้ว กรุณารีเฟรช'),409
-    if order['status'] not in ('cancelled', 'completed'):
-        conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=? AND tenant_id=?', ('completed', ts, oid, g.tenant_id))
+    claimed=conn.execute("""UPDATE orders SET payment_status='paid',payment_method=?,tax_amount=?,service_charge_amount=?,discount_amount=?,discount_label=?,promotion_id=?,cash_received=?,paid_at=?,updated_at=?,status='completed'
+        WHERE id=? AND tenant_id=? AND payment_status='unpaid' AND status<>'cancelled'""",
+        ('split' if len(normalized)>1 else normalized[0][0],tax,service,discount,label,promotion_id,cash_received_total or None,ts,ts,oid,g.tenant_id))
+    if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='บิลถูกเปลี่ยนจากอุปกรณ์อื่น กรุณารีเฟรช'),409
     try:
-        conn.execute('INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at) VALUES(?,?,?,?,?,?,?,?,?)',
-                     (g.tenant_id,order['branch_id'],oid,due,method,cash,(d.get('reference') or '')[:120],g.user['id'],ts))
-        log_action('payment_completed', detail=f'{oid}: {method} {due}')
-        conn.commit()
-    except INTEGRITY_ERRORS:
-        conn.rollback()
-        return jsonify(error='ออเดอร์นี้มีรายการชำระเงินแล้ว กรุณารีเฟรช'),409
-    return jsonify(ok=True, amount=due, payment_method=method, change=max(0,(cash or 0)-due) if method=='cash' else 0)
+        for method,amount,cr,ref in normalized:
+            conn.execute("""INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at)
+                            VALUES(?,?,?,?,?,?,?,?,?)""",(g.tenant_id,order['branch_id'],oid,amount,method,cr,ref,g.user['id'],ts))
+        log_action('payment_completed',detail=f'{oid}: split={len(normalized)} due={due}'); conn.commit()
+    except Exception:
+        conn.rollback(); app.logger.exception('payment 2.0 failed'); return jsonify(error='บันทึกการชำระเงินไม่สำเร็จ'),500
+    change=sum(max(0,(cr or 0)-amount) for method,amount,cr,_ in normalized if method=='cash')
+    return jsonify(ok=True,amount=due,payments=[{'method':x[0],'amount':x[1]} for x in normalized],change=change)
 
 @app.post('/api/orders/<int:oid>/reopen')
 @login_required
@@ -1915,25 +1968,25 @@ def reopen_paid_order(oid):
     if order['payment_status']!='paid': return jsonify(error='เปิดบิลใหม่ได้เฉพาะออเดอร์ที่ชำระแล้ว'),409
     refunded=conn.execute('SELECT id FROM refunds WHERE tenant_id=? AND order_id=? LIMIT 1',(g.tenant_id,oid)).fetchone()
     if refunded: return jsonify(error='บิลนี้มีการคืนเงินแล้ว ไม่สามารถเปิดบิลเดิมกลับมาแก้ไขได้'),409
-    payment=conn.execute('SELECT * FROM payments WHERE tenant_id=? AND order_id=? AND reversed_at IS NULL ORDER BY id DESC LIMIT 1',(g.tenant_id,oid)).fetchone()
-    if not payment: return jsonify(error='ไม่พบรายการชำระเงินที่ใช้งานอยู่'),409
+    payments=conn.execute('SELECT * FROM payments WHERE tenant_id=? AND order_id=? AND reversed_at IS NULL ORDER BY id',(g.tenant_id,oid)).fetchall()
+    if not payments: return jsonify(error='ไม่พบรายการชำระเงินที่ใช้งานอยู่'),409
     d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
     if len(reason)<2: return jsonify(error='กรุณาเลือกเหตุผลการเปิดบิลกลับมาแก้ไข'),400
     approved_by, approval_err=_critical_approval(conn,d)
     if approval_err: return approval_err
     shift_id=None
-    if payment['payment_method']=='cash':
+    if any(p['payment_method']=='cash' for p in payments):
         sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
         if not sh: return jsonify(error='กรุณาเปิดกะก่อนเปิดบิลเงินสดกลับมาแก้ไข เพื่อให้ยอดเงินในลิ้นชักตรง'),409
         shift_id=sh['id']
     ts=now()
-    claimed=conn.execute("UPDATE payments SET reversed_at=?,reversed_by_user_id=?,reversal_reason=?,reversed_shift_id=? WHERE id=? AND tenant_id=? AND reversed_at IS NULL",(ts,g.user['id'],reason,shift_id,payment['id'],g.tenant_id))
-    if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='รายการชำระนี้ถูกเปลี่ยนจากอุปกรณ์อื่นแล้ว กรุณารีเฟรช'),409
+    claimed=conn.execute("UPDATE payments SET reversed_at=?,reversed_by_user_id=?,reversal_reason=?,reversed_shift_id=? WHERE tenant_id=? AND order_id=? AND reversed_at IS NULL",(ts,g.user['id'],reason,shift_id,g.tenant_id,oid))
+    if getattr(claimed,'rowcount',len(payments))<1: conn.rollback(); return jsonify(error='รายการชำระถูกเปลี่ยนจากอุปกรณ์อื่นแล้ว กรุณารีเฟรช'),409
     conn.execute("""UPDATE orders SET payment_status='unpaid',payment_method=NULL,cash_received=NULL,paid_at=NULL,
                  tax_amount=0,service_charge_amount=0,discount_amount=0,discount_label='',promotion_id=NULL,status='served',updated_at=?
                  WHERE id=? AND tenant_id=?""",(ts,oid,g.tenant_id))
-    _record_critical(conn,'reopen_paid_order',order['branch_id'],'order',oid,reason,approved_by,f'payment={payment["id"]} amount={payment["amount"]}')
-    log_action('reopen_paid_order',detail=f'{oid}: payment={payment["id"]} reason={reason}')
+    _record_critical(conn,'reopen_paid_order',order['branch_id'],'order',oid,reason,approved_by,f'payments={len(payments)} amount={sum(float(p["amount"]) for p in payments)}')
+    log_action('reopen_paid_order',detail=f'{oid}: payments={len(payments)} reason={reason}')
     conn.commit(); return jsonify(ok=True,order_id=oid,table_id=order['table_id'])
 
 @app.post('/api/orders/<int:oid>/items')
@@ -2075,37 +2128,39 @@ def create_operation_reason():
 @login_required
 @role_required('owner','manager')
 def refund_order(oid):
-    """Record a full refund exactly once. The original payment is preserved for audit."""
+    """Partial refund across active payment rows; preserves every payment/refund for audit."""
     conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
-    if not order: return jsonify(error='ไม่พบออเดอร์'),404
-    if order['payment_status']!='paid': return jsonify(error='คืนเงินได้เฉพาะออเดอร์ที่ชำระแล้ว'),409
-    old=conn.execute('SELECT id FROM refunds WHERE order_id=? AND tenant_id=? LIMIT 1',(oid,g.tenant_id)).fetchone()
-    if old: return jsonify(error='ออเดอร์นี้ถูกคืนเงินแล้ว'),409
-    payment=conn.execute('SELECT * FROM payments WHERE order_id=? AND tenant_id=? AND reversed_at IS NULL ORDER BY id DESC LIMIT 1',(oid,g.tenant_id)).fetchone()
-    if not payment: return jsonify(error='ไม่พบข้อมูลการชำระเงินเดิม'),409
+    if not order or order['payment_status']!='paid': return jsonify(error='คืนเงินได้เฉพาะบิลที่ชำระแล้ว'),409
+    payments=conn.execute('SELECT * FROM payments WHERE order_id=? AND tenant_id=? AND reversed_at IS NULL ORDER BY id',(oid,g.tenant_id)).fetchall()
+    if not payments:return jsonify(error='ไม่พบข้อมูลการชำระเงิน'),409
+    paid=sum(float(p['amount']) for p in payments)
+    refunded=float(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE order_id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()['t'] or 0)
     d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
-    if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการคืนเงิน'),400
-    approved_by, approval_err = _critical_approval(conn,d)
-    if approval_err: return approval_err
-    amount=float(payment['amount'] or 0); ts=now()
-    active_shift = conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
-                                (g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
-    # Cash physically leaves the drawer now, so it must belong to the operator's
-    # currently open shift. Non-cash refunds keep the same audit attribution but
-    # do not require a cash drawer.
-    if payment['payment_method']=='cash' and not active_shift:
-        return jsonify(error='กรุณาเปิดกะก่อนคืนเงินสด เพื่อให้ยอดเงินตรงกับกะปัจจุบัน'),409
-    refund_shift_id = active_shift['id'] if active_shift else None
+    try: amount=float(d.get('amount') or (paid-refunded))
+    except:return jsonify(error='ยอดคืนเงินไม่ถูกต้อง'),400
+    if len(reason)<2 or amount<=0 or amount>paid-refunded+0.01:return jsonify(error='เหตุผลหรือยอดคืนเงินไม่ถูกต้อง'),400
+    approved_by,err=_critical_approval(conn,d)
+    if err:return err
+    cash_active=any(p['payment_method']=='cash' for p in payments)
+    sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
+    if cash_active and not sh:return jsonify(error='กรุณาเปิดกะก่อนคืนเงินจากบิลที่มีเงินสด'),409
+    # Attribute refund to payment rows in order until requested amount is covered.
+    left=amount; ts=now()
     try:
-        conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at,shift_id) VALUES(?,?,?,?,?,?,?,?,?)',
-                     (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts,refund_shift_id))
-        _record_critical(conn,'refund',order['branch_id'],'order',oid,reason,approved_by,f'amount={amount} payment={payment["id"]}')
-        log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}')
-        conn.commit()
-    except INTEGRITY_ERRORS:
-        conn.rollback()
-        return jsonify(error='ออเดอร์นี้ถูกคืนเงินแล้วจากอุปกรณ์อื่น กรุณารีเฟรช'),409
-    return jsonify(ok=True,amount=amount,refunded_at=ts)
+        for p in payments:
+            if left<=0.005: break
+            already=float(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE tenant_id=? AND payment_id=?',(g.tenant_id,p['id'])).fetchone()['t'] or 0)
+            available=max(0,float(p['amount'])-already)
+            part=min(left,available)
+            if part<=0: continue
+            conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at,shift_id) VALUES(?,?,?,?,?,?,?,?,?)',
+                         (g.tenant_id,order['branch_id'],oid,p['id'],part,reason,g.user['id'],ts,sh['id'] if sh and p['payment_method']=='cash' else None))
+            left-=part
+        _record_critical(conn,'refund',order['branch_id'],'order',oid,reason,approved_by,f'amount={amount}')
+        log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}'); conn.commit()
+    except Exception:
+        conn.rollback(); app.logger.exception('partial refund failed'); return jsonify(error='คืนเงินไม่สำเร็จ'),500
+    return jsonify(ok=True,amount=amount,total_refunded=refunded+amount,remaining_refundable=max(0,paid-refunded-amount))
 
 @app.post('/api/orders/<int:source_id>/merge')
 @login_required
@@ -2179,6 +2234,92 @@ def split_order(source_id):
         return jsonify(ok=True,new_order_id=new_id,new_order_no=no,source_total=a,new_total=b)
     except Exception:
         conn.rollback(); app.logger.exception('split_order failed'); return jsonify(error='ไม่สามารถแยกบิลได้'),500
+
+
+# ---------- Round 15: kitchen stations + ingredient inventory ----------
+@app.get('/api/kitchen/stations')
+@login_required
+@role_required('owner','manager','staff')
+def kitchen_stations_list():
+    bid=request.args.get('branch_id',type=int)
+    q='SELECT * FROM kitchen_stations WHERE tenant_id=? AND active=1'; args=[g.tenant_id]
+    if bid:q+=' AND (branch_id IS NULL OR branch_id=?)';args.append(bid)
+    q+=' ORDER BY sort_order,id'
+    return jsonify([dict(x) for x in db().execute(q,args).fetchall()])
+
+@app.post('/api/kitchen/stations')
+@login_required
+@role_required('owner','manager')
+def kitchen_station_create():
+    d=request.get_json() or {}; name=(d.get('name') or '').strip()[:80]; bid=d.get('branch_id')
+    if not name:return jsonify(error='กรุณาระบุชื่อสถานี'),400
+    conn=db(); cur=conn.execute('INSERT INTO kitchen_stations(tenant_id,branch_id,name,active,sort_order,created_at) VALUES(?,?,?,?,?,?)',
+        (g.tenant_id,int(bid) if bid else None,name,1,int(d.get('sort_order') or 0),now())); conn.commit()
+    return jsonify(ok=True,id=cur.lastrowid)
+
+@app.get('/api/inventory/ingredients')
+@login_required
+@role_required('owner','manager','staff')
+def ingredients_list():
+    bid=request.args.get('branch_id',type=int)
+    if not bid:return jsonify(error='กรุณาเลือกสาขา'),400
+    rows=db().execute('SELECT * FROM ingredients WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY name',(g.tenant_id,bid)).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.post('/api/inventory/ingredients')
+@login_required
+@role_required('owner','manager')
+def ingredient_create():
+    d=request.get_json() or {}; name=(d.get('name') or '').strip()[:120]
+    try: bid=int(d.get('branch_id')); qty=float(d.get('stock_qty') or 0); low=float(d.get('low_stock_threshold') or 0); cost=float(d.get('cost_per_unit') or 0)
+    except:return jsonify(error='ข้อมูลวัตถุดิบไม่ถูกต้อง'),400
+    if not name or qty<0 or low<0 or cost<0:return jsonify(error='ข้อมูลวัตถุดิบไม่ถูกต้อง'),400
+    conn=db(); ts=now(); cur=conn.execute('INSERT INTO ingredients(tenant_id,branch_id,name,unit,stock_qty,low_stock_threshold,cost_per_unit,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        (g.tenant_id,bid,name,(d.get('unit') or 'unit')[:30],qty,low,cost,1,ts,ts)); conn.commit()
+    return jsonify(ok=True,id=cur.lastrowid)
+
+@app.post('/api/inventory/ingredients/<int:iid>/adjust')
+@login_required
+@role_required('owner','manager')
+def ingredient_adjust(iid):
+    d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
+    try: delta=float(d.get('quantity') or 0)
+    except:return jsonify(error='จำนวนไม่ถูกต้อง'),400
+    if not delta or not reason:return jsonify(error='กรุณาระบุจำนวนและเหตุผล'),400
+    conn=db(); ing=conn.execute('SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone()
+    if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
+    new=max(0,float(ing['stock_qty'])+delta); ts=now()
+    conn.execute('UPDATE ingredients SET stock_qty=?,updated_at=? WHERE id=?',(new,ts,iid))
+    conn.execute('INSERT INTO inventory_movements(tenant_id,branch_id,ingredient_id,movement_type,quantity,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        (g.tenant_id,ing['branch_id'],iid,'adjustment',delta,reason,g.user['id'],ts)); conn.commit()
+    return jsonify(ok=True,stock_qty=new)
+
+@app.get('/api/inventory/recipes/<int:mid>')
+@login_required
+@role_required('owner','manager')
+def recipe_get(mid):
+    rows=db().execute("""SELECT r.*,i.name ingredient_name,i.unit FROM recipes r JOIN ingredients i ON i.id=r.ingredient_id
+        WHERE r.tenant_id=? AND r.menu_item_id=? ORDER BY i.name""",(g.tenant_id,mid)).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.put('/api/inventory/recipes/<int:mid>')
+@login_required
+@role_required('owner','manager')
+def recipe_put(mid):
+    d=request.get_json() or {}; items=d.get('items') or []; conn=db()
+    menu=conn.execute('SELECT id FROM menu_items WHERE id=? AND tenant_id=?',(mid,g.tenant_id)).fetchone()
+    if not menu:return jsonify(error='ไม่พบเมนู'),404
+    try:
+        conn.execute('DELETE FROM recipes WHERE tenant_id=? AND menu_item_id=?',(g.tenant_id,mid))
+        for x in items:
+            iid=int(x['ingredient_id']); qty=float(x['quantity'])
+            if qty<=0:raise ValueError()
+            if not conn.execute('SELECT id FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone():raise ValueError()
+            conn.execute('INSERT INTO recipes(tenant_id,menu_item_id,ingredient_id,quantity,created_at) VALUES(?,?,?,?,?)',(g.tenant_id,mid,iid,qty,now()))
+        conn.commit()
+    except Exception:
+        conn.rollback();return jsonify(error='สูตรวัตถุดิบไม่ถูกต้อง'),400
+    return jsonify(ok=True)
 
 # =====================================================================
 # Users management (same pattern as CASHFLOW 24)

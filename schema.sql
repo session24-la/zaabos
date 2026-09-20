@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
     track_stock INTEGER NOT NULL DEFAULT 0,
     stock_qty INTEGER,
     low_stock_threshold INTEGER NOT NULL DEFAULT 5,
+ kitchen_station_id INTEGER,
     created_at TEXT NOT NULL,
     FOREIGN KEY(tenant_id) REFERENCES tenants(id),
     FOREIGN KEY(branch_id) REFERENCES branches(id),
@@ -193,8 +194,6 @@ CREATE TABLE IF NOT EXISTS payments (
  FOREIGN KEY(order_id) REFERENCES orders(id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_tenant_order_active
-ON payments(tenant_id, order_id) WHERE reversed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_payments_reversed_shift
 ON payments(tenant_id, reversed_shift_id);
 
@@ -258,3 +257,9 @@ CREATE TABLE IF NOT EXISTS critical_operations (id INTEGER PRIMARY KEY AUTOINCRE
 CREATE TABLE IF NOT EXISTS pricing_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, tax_rate REAL NOT NULL DEFAULT 0, service_charge_rate REAL NOT NULL DEFAULT 0, updated_by_user_id INTEGER, updated_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id));
 CREATE TABLE IF NOT EXISTS promotions (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER, code TEXT NOT NULL, name TEXT NOT NULL, discount_type TEXT NOT NULL DEFAULT 'percent', discount_value REAL NOT NULL DEFAULT 0, min_spend REAL NOT NULL DEFAULT 0, max_discount REAL, starts_at TEXT, ends_at TEXT, active INTEGER NOT NULL DEFAULT 1, created_by_user_id INTEGER, created_at TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_promotions_tenant_code ON promotions(tenant_id,code);
+
+CREATE TABLE IF NOT EXISTS kitchen_stations (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, name TEXT NOT NULL, unit TEXT NOT NULL DEFAULT 'unit', stock_qty REAL NOT NULL DEFAULT 0, low_stock_threshold REAL NOT NULL DEFAULT 0, cost_per_unit REAL NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recipes (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, menu_item_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL, quantity REAL NOT NULL, created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_menu_ingredient ON recipes(tenant_id,menu_item_id,ingredient_id);
+CREATE TABLE IF NOT EXISTS inventory_movements (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL, movement_type TEXT NOT NULL, quantity REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', order_id INTEGER, created_by_user_id INTEGER, created_at TEXT NOT NULL);
