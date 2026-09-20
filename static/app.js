@@ -968,9 +968,10 @@ function orderCardHtml(o) {
       <div class="oc-pay-actions">
         ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn primary" data-add-items="${o.id}">➕ เพิ่มอาหาร</button>` : ''}
         ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}">↔️ ย้ายโต๊ะ</button>` : ''}
-        ${o.payment_status === 'unpaid' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
         ${o.payment_status === 'paid' && (me.role === 'owner' || me.role === 'manager' || me.role === 'super_admin') ? `<button class="ghost-btn danger" data-refund-order="${o.id}">↩️ คืนเงิน</button>` : ''}
+        ${o.payment_status === 'paid' ? `<button class="ghost-btn" data-reopen-order="${o.id}">↩️ เปิดบิลกลับมาแก้ไข</button>` : ''}
         ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-merge-order="${o.id}">🔗 รวมบิล</button>` : ''}
       </div>
     </div>`;
@@ -1004,10 +1005,21 @@ async function sendSelectedToKitchen(orderId, card) {
 }
 
 
+const DEFAULT_OPERATION_REASONS = ['กดรายการผิด','สินค้าหมด / หมดสต็อก','ลูกค้ารอนานเกินไป','ลูกค้าเปลี่ยนใจ / ไม่รับรายการ','ราคา / จำนวนไม่ถูกต้อง'];
+let reasonResolve = null, selectedReason = '';
+function chooseOperationReason(actionLabel){
+  return new Promise(resolve=>{
+    reasonResolve=resolve; selectedReason=''; $('#reasonModalTitle').textContent=`เลือกเหตุผล${actionLabel}`; $('#reasonCustom').value=''; $('#reasonError').textContent='';
+    $('#reasonChoices').innerHTML=DEFAULT_OPERATION_REASONS.map((x,i)=>`<button type="button" class="reason-choice" data-reason-index="${i}">${escapeHtml(x)}</button>`).join('');
+    openModal('#reasonModal');
+  });
+}
+$('#reasonChoices').addEventListener('click',e=>{const b=e.target.closest('[data-reason-index]');if(!b)return; selectedReason=DEFAULT_OPERATION_REASONS[Number(b.dataset.reasonIndex)]; $$('.reason-choice',$('#reasonChoices')).forEach(x=>x.classList.toggle('active',x===b));});
+$('#reasonConfirmBtn').addEventListener('click',()=>{const reason=($('#reasonCustom').value.trim()||selectedReason).trim();if(!reason){$('#reasonError').textContent='กรุณาเลือกเหตุผล';return;} const r=reasonResolve;reasonResolve=null;closeModals();if(r)r(reason);});
+
 async function criticalActionPayload(actionLabel) {
-  const reason=prompt(`เหตุผล${actionLabel}:`);
-  if(reason===null) return null;
-  if(!reason.trim()){ toast('กรุณาระบุเหตุผล','err'); return null; }
+  const reason=await chooseOperationReason(actionLabel);
+  if(!reason) return null;
   const payload={reason:reason.trim()};
   if(me && me.role==='staff'){
     const username=prompt('รายการนี้ต้องได้รับอนุมัติจาก Owner/Manager\nชื่อผู้ใช้ผู้อนุมัติ:');
@@ -1030,7 +1042,7 @@ async function setOrderStatusCritical(id,status){
     const c=await criticalActionPayload('การยกเลิกออเดอร์'); if(!c) return;
     payload={...payload,...c}; if(!confirm('ยืนยันยกเลิกออเดอร์นี้?')) return;
   }
-  try{ await apiJson('/api/orders/'+id+'/status','PUT',payload); onOrderActionDone(); }catch(e){ toast(e.message,'err'); }
+  try{ await apiJson('/api/orders/'+id+'/status','PUT',payload); if(status==='cancelled'){ closeModals(); toast('ยกเลิกออเดอร์แล้ว โต๊ะกลับเป็นว่าง','ok'); } onOrderActionDone(); }catch(e){ toast(e.message,'err'); }
 }
 
 function wireOrderActionClicks(container) {
@@ -1038,7 +1050,7 @@ function wireOrderActionClicks(container) {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
     const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
-    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, ff=e.target.dataset.fulfillment;
+    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, ff=e.target.dataset.fulfillment, ro=e.target.dataset.reopenOrder;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
     if (ff) { const [oid,status]=ff.split(':'); apiJson(`/api/orders/${oid}/fulfillment`,'PUT',{fulfillment_status:status}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
     else if (iq) {
@@ -1059,6 +1071,7 @@ function wireOrderActionClicks(container) {
     else if (cp) { openConfirmPaymentModal(parseInt(cp, 10)); }
     else if (pr) { printReceipt(parseInt(pr, 10)); }
     else if (rf) { refundOrder(parseInt(rf,10)); }
+    else if (ro) { reopenPaidOrder(parseInt(ro,10)); }
     else if (mg) { mergeOrder(parseInt(mg,10)); }
     else if (sk) { const card = e.target.closest('.order-card'); if (card) sendSelectedToKitchen(parseInt(sk, 10), card); }
   });
@@ -1075,6 +1088,12 @@ function wireOrderActionClicks(container) {
 }
 wireOrderActionClicks($('#ordersList'));
 wireOrderActionClicks($('#orderDetailBody'));
+
+async function reopenPaidOrder(orderId){
+  const payload=await criticalActionPayload('การเปิดบิลที่ชำระแล้วกลับมาแก้ไข'); if(!payload) return;
+  if(!confirm('ยืนยันเปิดบิลนี้กลับมาแก้ไข? การชำระเดิมจะถูกเก็บเป็นประวัติและทำเครื่องหมายย้อนรายการ')) return;
+  try{await apiJson(`/api/orders/${orderId}/reopen`,'POST',payload); closeModals(); toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok'); onOrderActionDone(); setTimeout(()=>showTab('orders'),100);}catch(e){toast(e.message,'err');}
+}
 
 async function refundOrder(orderId) {
   const reason=prompt('เหตุผลการคืนเงิน:'); if(reason===null) return;
