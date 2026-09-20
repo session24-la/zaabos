@@ -32,6 +32,46 @@ let pendingCartItem = null; // item being configured in the option picker
 let activeOrders = []; // live, non-terminal orders for the current branch (feeds the table board + side panel)
 let ordersPollTimer = null;
 
+let zaabosOfflineMode=false, zaabosSyncRunning=false;
+const ZAABOS_OFFLINE_DB='ZaabOSOfflineV1', ZAABOS_OFFLINE_MAX_AGE=24*60*60*1000;
+function offlineDb(){return new Promise((resolve,reject)=>{const q=indexedDB.open(ZAABOS_OFFLINE_DB,1);q.onupgradeneeded=()=>{const d=q.result;if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');if(!d.objectStoreNames.contains('outbox')){const s=d.createObjectStore('outbox',{keyPath:'client_request_id'});s.createIndex('created_at','created_at');}};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
+async function offlinePut(store,key,value){const d=await offlineDb();return new Promise((res,rej)=>{const tx=d.transaction(store,'readwrite');const st=tx.objectStore(store);key===undefined?st.put(value):st.put(value,key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}
+async function offlineGet(store,key){const d=await offlineDb();return new Promise((res,rej)=>{const q=d.transaction(store).objectStore(store).get(key);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error);});}
+async function offlineAll(store){const d=await offlineDb();return new Promise((res,rej)=>{const q=d.transaction(store).objectStore(store).getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>rej(q.error);});}
+async function offlineDelete(store,key){const d=await offlineDb();return new Promise((res,rej)=>{const tx=d.transaction(store,'readwrite');tx.objectStore(store).delete(key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}
+function deviceId(){let id=localStorage.getItem('zaabos_device_id');if(!id){id=(crypto.randomUUID?crypto.randomUUID():'dev-'+Date.now()+'-'+Math.random().toString(16).slice(2));localStorage.setItem('zaabos_device_id',id);}return id;}
+function requestId(){return crypto.randomUUID?crypto.randomUUID():'req-'+Date.now()+'-'+Math.random().toString(16).slice(2);}
+async function cacheOfflineSession(){if(!me||me.role==='super_admin')return;await offlinePut('kv','session',{me,boot,cached_at:Date.now()});}
+async function restoreOfflineSession(){const c=await offlineGet('kv','session');if(!c||!c.me||!c.boot||Date.now()-Number(c.cached_at||0)>ZAABOS_OFFLINE_MAX_AGE)return false;me=c.me;boot=c.boot;zaabosOfflineMode=true;if(!currentBranchId||!boot.branches.some(b=>b.id===currentBranchId))currentBranchId=boot.branches[0]?.id||null;return true;}
+async function queueOfflineOrder(payload){
+  const rec={client_request_id:payload.client_request_id||requestId(),client_device_id:deviceId(),offline_created_at:new Date().toISOString(),created_at:Date.now(),status:'pending',last_error:'',payload:{...payload}};
+  rec.payload.client_request_id=rec.client_request_id;rec.payload.client_device_id=rec.client_device_id;rec.payload.offline_created_at=rec.offline_created_at;
+  await offlinePut('outbox',undefined,rec);await renderOfflineQueue();return rec;
+}
+async function renderOfflineQueue(){
+  const box=$('#offlineQueuePanel');if(!box)return;const rows=(await offlineAll('outbox')).sort((a,b)=>a.created_at-b.created_at);
+  box.classList.toggle('hidden',!rows.length);$('#offlineQueueSummary').textContent=`${rows.length} รายการ`;
+  $('#offlineQueueList').innerHTML=rows.map(x=>`<div class="offline-queue-row"><span>${x.payload.order_type==='dine_in'?'โต๊ะ '+escapeHtml((boot.tables.find(t=>t.id===x.payload.table_id)||{}).name||''):escapeHtml(orderTypeLabel(x.payload.order_type))}</span><b>${x.status==='conflict'?'ต้องตรวจสอบ':'รอส่ง'}</b>${x.last_error?`<small>${escapeHtml(x.last_error)}</small>`:''}</div>`).join('');
+}
+async function syncOfflineOrders(){
+  if(zaabosSyncRunning||!navigator.onLine||!me)return;zaabosSyncRunning=true;
+  try{
+    const rows=(await offlineAll('outbox')).sort((a,b)=>a.created_at-b.created_at);
+    for(const rec of rows){
+      if(rec.status==='conflict')continue;
+      try{
+        await apiJson('/api/orders','POST',rec.payload);
+        await offlineDelete('outbox',rec.client_request_id);
+      }catch(e){
+        // A reachable server rejected the queued order: stop retrying it forever and surface it for manager review.
+        if(navigator.onLine){rec.status='conflict';rec.last_error=e.message;await offlinePut('outbox',undefined,rec);}
+        else break;
+      }
+    }
+  }finally{zaabosSyncRunning=false;await renderOfflineQueue();if(navigator.onLine&&!zaabosOfflineMode){loadOrders();loadBoardData();}}
+}
+
+
 // Resize/compress an <input type=file> image client-side into a small JPEG
 // data: URI, so it can ride along in the existing image_url text column with
 // no file storage/volume needed. Keeps typical photos well under ~150KB.
@@ -163,6 +203,7 @@ $('#loginForm').addEventListener('submit', async (e) => {
 
 $('#logoutBtn').addEventListener('click', async () => {
   try { await apiJson('/api/logout', 'POST'); } catch (e) {}
+  try { await offlinePut('kv','session',null); } catch(e) {}
   me = null; location.reload();
 });
 
@@ -218,9 +259,11 @@ function applyRoleVisibility() {
 
 async function loadBootstrap() {
   boot = await api('/api/bootstrap');
+  zaabosOfflineMode = false;
   if (!currentBranchId || !boot.branches.some(b => b.id === currentBranchId)) {
     currentBranchId = boot.branches.length ? boot.branches[0].id : null;
   }
+  await cacheOfflineSession();
 }
 
 function renderBranchSelect() {
@@ -1566,8 +1609,18 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
   try {
     const endpoint = addItemsOrderId ? `/api/orders/${addItemsOrderId}/items` : '/api/orders';
-    const sendPayload = addItemsOrderId ? {items: payload.cart} : payload;
-    const r = await apiJson(endpoint, 'POST', sendPayload);
+    const sendPayload = addItemsOrderId ? {items: payload.cart} : {...payload,client_request_id:requestId(),client_device_id:deviceId()};
+    let r;
+    if (!addItemsOrderId && (!navigator.onLine || zaabosOfflineMode)) {
+      const q=await queueOfflineOrder(sendPayload); closeModals(); toast('บันทึกออเดอร์ไว้ในเครื่องแล้ว · รอ Sync','ok'); addItemsOrderId=null; cart=[]; renderOfflineQueue(); return;
+    }
+    try { r = await apiJson(endpoint, 'POST', sendPayload); }
+    catch (netErr) {
+      if (!addItemsOrderId && (!navigator.onLine || /เชื่อมต่อเซิร์ฟเวอร์|ระบบบันทึกข้อมูลขัดข้อง/.test(netErr.message))) {
+        await queueOfflineOrder(sendPayload); closeModals(); toast('Server ไม่พร้อม · เก็บออเดอร์ไว้ในเครื่องเพื่อ Sync แล้ว','ok'); addItemsOrderId=null; cart=[]; return;
+      }
+      throw netErr;
+    }
     closeModals(); toast(addItemsOrderId ? 'เพิ่มรายการแล้ว — กรุณากดส่งเข้าครัว' : (t('toast_order_saved', { no: r.order_no }) + ' — กรุณากดส่งเข้าครัว'), 'ok');
     addItemsOrderId = null; loadOrders(); loadBoardData();
     // items with stock tracking just got decremented server-side — refresh the
@@ -1607,8 +1660,18 @@ function emptyState(icon, text) { return `<div class="empty-state"><span class="
   try {
     me = await api('/api/me');
     await afterLogin();
+    await renderOfflineQueue(); syncOfflineOrders();
   } catch (e) {
-    showLogin();
+    try {
+      if (await restoreOfflineSession()) {
+        showApp();
+        $('#whoAvatar').textContent=(me.display_name||me.username||'?').slice(0,1).toUpperCase();
+        $('#whoName').textContent=(me.display_name||me.username)+' · OFFLINE';
+        $('#whoRole').textContent=t('role_'+me.role)||me.role;
+        applyRoleVisibility(); renderBranchSelect(); switchTab('orders'); renderTableBoard(); renderOtherOrders(); renderSidePanel(); await renderOfflineQueue();
+        toast('เปิดโหมดออฟไลน์ — รับออเดอร์ใหม่ได้ และจะ Sync อัตโนมัติเมื่อระบบกลับมา','ok');
+      } else showLogin();
+    } catch (_) { showLogin(); }
   }
 })();
 
@@ -1688,3 +1751,9 @@ $('#inventoryHistoryBtn').addEventListener('click',async()=>{const box=$('#inven
 const _r17LoadInventory=loadInventory;
 loadInventory=async function(){await _r17LoadInventory();const rows=await api('/api/inventory/ingredients?branch_id='+currentBranchId);$('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><div class="ingredient-actions"><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button><button class="ghost-btn" data-ing-waste="${x.id}">ของเสีย</button><button class="ghost-btn" data-ing-count="${x.id}">ตรวจนับ</button></div></div>`).join(''):emptyState('📦','ยังไม่มีวัตถุดิบ');};
 $('#ingredientsList').addEventListener('click',async e=>{const w=e.target.closest('[data-ing-waste]');if(w){const q=prompt('จำนวนวัตถุดิบที่เสีย/ทิ้ง');if(q===null)return;const reason=prompt('สาเหตุของเสีย');if(!reason)return;try{await apiJson(`/api/inventory/ingredients/${w.dataset.ingWaste}/waste`,'POST',{quantity:Number(q),reason});toast('บันทึกของเสียแล้ว','ok');loadInventory()}catch(err){toast(err.message,'err')}return;}const c=e.target.closest('[data-ing-count]');if(c){const q=prompt('จำนวนที่ตรวจนับได้จริง');if(q===null)return;const note=prompt('หมายเหตุการตรวจนับ (ถ้ามี)')||'';try{const r=await apiJson(`/api/inventory/ingredients/${c.dataset.ingCount}/count`,'POST',{counted_qty:Number(q),note});toast(`ตรวจนับแล้ว · ต่าง ${Number(r.difference).toLocaleString()}`,'ok');loadInventory()}catch(err){toast(err.message,'err')}}});
+
+// Round 20 sync lifecycle
+window.addEventListener('online',async()=>{zaabosOfflineMode=false;try{me=await api('/api/me',{silent:true});await loadBootstrap();renderBranchSelect();await syncOfflineOrders();toast('เชื่อมต่อแล้ว · Sync ออเดอร์เรียบร้อย','ok');}catch(e){}});
+window.addEventListener('offline',()=>{zaabosOfflineMode=true;renderOfflineQueue();});
+setInterval(()=>{if(navigator.onLine)syncOfflineOrders();},10000);
+const offlineSyncBtn=$('#offlineSyncBtn');if(offlineSyncBtn)offlineSyncBtn.addEventListener('click',syncOfflineOrders);
