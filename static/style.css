@@ -225,6 +225,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 
 /* ===== Language switcher (shared across all pages) — pill button, not a bare dropdown line ===== */
 .lang-select{
+  display:inline-block;width:auto;max-width:max-content;margin-top:0;
   appearance:none;-webkit-appearance:none;-moz-appearance:none;
   border:1px solid var(--border);border-radius:var(--radius-sm);
   padding:9px 30px 9px 14px;background:var(--surface);color:var(--text);
@@ -236,7 +237,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .lang-select:hover{box-shadow:var(--shadow-md);border-color:var(--primary)}
 .lang-select:active{transform:scale(.98)}
 .lang-select:focus{outline:none;box-shadow:var(--shadow-md);border-color:var(--primary)}
-.lang-select-login{position:fixed;top:16px;right:16px;z-index:5;box-shadow:var(--shadow-md)}
+.lang-select-login{position:fixed;top:16px;right:16px;z-index:5;width:auto;box-shadow:var(--shadow-md)}
 .lang-bar{display:flex;justify-content:flex-end;padding:12px 16px 0}
 
 /* ===== Login ===== */
