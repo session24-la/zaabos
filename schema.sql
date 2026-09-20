@@ -7,6 +7,13 @@ CREATE TABLE IF NOT EXISTS tenants (
     icon TEXT NOT NULL DEFAULT '🍽️',
     currency TEXT NOT NULL DEFAULT 'LAK',
     active INTEGER NOT NULL DEFAULT 1,
+    plan_code TEXT NOT NULL DEFAULT 'starter',
+    subscription_status TEXT NOT NULL DEFAULT 'trialing',
+    trial_ends_at TEXT,
+    current_period_end TEXT,
+    max_branches INTEGER NOT NULL DEFAULT 1,
+    max_users INTEGER NOT NULL DEFAULT 5,
+    subscription_note TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -270,3 +277,6 @@ CREATE TABLE IF NOT EXISTS inventory_counts (id INTEGER PRIMARY KEY AUTOINCREMEN
 CREATE INDEX IF NOT EXISTS idx_inventory_counts_tenant_branch ON inventory_counts(tenant_id,branch_id,counted_at);
 CREATE TABLE IF NOT EXISTS kitchen_print_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, order_id INTEGER NOT NULL, station_id INTEGER, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, printed_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_kitchen_print_jobs_queue ON kitchen_print_jobs(tenant_id,branch_id,status,created_at);
+
+CREATE TABLE IF NOT EXISTS saas_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, max_branches INTEGER NOT NULL, max_users INTEGER NOT NULL, monthly_price DOUBLE PRECISION NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_tenants_subscription ON tenants(active,subscription_status,trial_ends_at,current_period_end);

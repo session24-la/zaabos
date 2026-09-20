@@ -285,7 +285,7 @@
         <h2 data-i18n="tenants_title">ร้านค้าทั้งหมด (ผู้ดูแลระบบ)</h2>
         <button class="ghost-btn primary" id="addTenantBtn" data-i18n="btn_add_tenant">➕ เพิ่มร้านค้าใหม่</button>
       </div>
-      <div id="tenantsList"></div>
+      <div id="saasSummary" class="saas-summary"></div><div class="saas-filters"><select id="tenantStatusFilter"><option value="">ทุกสถานะ</option><option value="trialing">Trial</option><option value="active">Active</option><option value="attention">ต้องตรวจสอบ</option></select><input id="tenantSearch" placeholder="ค้นหาร้าน..."></div><div id="tenantsList"></div>
     </div>
   </section>
 </main>
@@ -402,12 +402,12 @@
   <button class="save" id="userSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="tenantModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_add_tenant_title">เพิ่มร้านค้าใหม่</h2><button data-close>×</button></div>
+<div class="modal" id="subscriptionModal"><div class="sheet small"><div class="sheet-head"><h2>จัดการแพ็กเกจร้าน</h2><button data-close>×</button></div><input type="hidden" id="subTenantId"><div class="hint" id="subTenantName"></div><label><span>แพ็กเกจ</span><select id="subPlan"><option value="starter">Starter</option><option value="growth">Growth</option><option value="pro">Pro</option></select></label><label><span>สถานะ</span><select id="subStatus"><option value="trialing">Trial</option><option value="active">Active</option><option value="past_due">Past due</option><option value="suspended">Suspended</option><option value="canceled">Canceled</option><option value="expired">Expired</option></select></label><div class="form-grid"><label><span>จำกัดสาขา</span><input id="subMaxBranches" type="number" min="1"></label><label><span>จำกัดผู้ใช้</span><input id="subMaxUsers" type="number" min="1"></label></div><label><span>Trial สิ้นสุด</span><input id="subTrialEnd" type="datetime-local"></label><label><span>รอบใช้งานสิ้นสุด</span><input id="subPeriodEnd" type="datetime-local"></label><label><span>หมายเหตุ</span><textarea id="subNote" rows="2"></textarea></label><button class="save" id="subSave">บันทึกแพ็กเกจ</button></div></div><div class="modal" id="tenantModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_add_tenant_title">เพิ่มร้านค้าใหม่</h2><button data-close>×</button></div>
   <label><span data-i18n="label_shop_name">ชื่อร้าน</span><input id="tenantName"></label>
   <h3 data-i18n="label_owner_account_title">บัญชีเจ้าของร้าน</h3>
   <label><span data-i18n="label_username_login">ชื่อผู้ใช้ (login)</span><input id="tenantOwnerUsername" autocomplete="off"></label>
   <label><span data-i18n="label_display_name">ชื่อที่แสดง</span><input id="tenantOwnerDisplay"></label>
-  <label><span data-i18n="label_password">รหัสผ่าน</span><input id="tenantOwnerPassword" type="password" autocomplete="new-password"></label>
+  <label><span data-i18n="label_password">รหัสผ่าน</span><input id="tenantOwnerPassword" type="password" autocomplete="new-password"></label><label><span>แพ็กเกจ</span><select id="tenantPlan"><option value="starter">Starter</option><option value="growth">Growth</option><option value="pro">Pro</option></select></label><label><span>ทดลองใช้ฟรี (วัน)</span><input id="tenantTrialDays" type="number" min="0" max="90" value="14"></label>
   <div class="login-error" id="tenantError"></div>
   <button class="save" id="tenantSave" data-i18n="btn_create_shop">สร้างร้านค้า</button>
 </div></div>

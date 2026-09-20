@@ -576,6 +576,27 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_kitchen_print_jobs_queue ON kitchen_print_jobs(tenant_id,branch_id,status,created_at)')
     conn.commit()
     record_migration(conn, 25, 'restaurant_operations_complete')
+    # Round 18 — SaaS Commercial Layer
+    tenant_cols = {'plan_code': "TEXT NOT NULL DEFAULT 'starter'", 'subscription_status': "TEXT NOT NULL DEFAULT 'trialing'",
+        'trial_ends_at':'TEXT','current_period_end':'TEXT','max_branches':'INTEGER NOT NULL DEFAULT 1',
+        'max_users':'INTEGER NOT NULL DEFAULT 5','subscription_note':"TEXT NOT NULL DEFAULT ''"}
+    for col, ddl in tenant_cols.items():
+        try: conn.execute(f'ALTER TABLE tenants ADD COLUMN {col} {ddl}')
+        except Exception:
+            if IS_POSTGRES: conn.rollback()
+    id18 = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS saas_plans (
+        id {id18}, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, max_branches INTEGER NOT NULL,
+        max_users INTEGER NOT NULL, monthly_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+        active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)""")
+    for code,name,branches,users,price in (('starter','Starter',1,5,0),('growth','Growth',3,15,0),('pro','Pro',10,50,0)):
+        try: conn.execute('INSERT INTO saas_plans(code,name,max_branches,max_users,monthly_price,created_at) VALUES(?,?,?,?,?,?)',(code,name,branches,users,price,now()))
+        except INTEGRITY_ERRORS:
+            if IS_POSTGRES: conn.rollback()
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_tenants_subscription ON tenants(active,subscription_status,trial_ends_at,current_period_end)')
+    conn.commit()
+    record_migration(conn, 26, 'saas_commercial_layer')
+
 
 
 
@@ -611,8 +632,18 @@ def get_current_user(conn):
 
 def tenant_active(conn, tenant_id):
     if tenant_id is None: return True
-    row = conn.execute('SELECT active FROM tenants WHERE id=?', (tenant_id,)).fetchone()
-    return bool(row and row['active'])
+    row=conn.execute('SELECT * FROM tenants WHERE id=?',(tenant_id,)).fetchone()
+    if not row or not row['active']: return False
+    status=(row['subscription_status'] or 'active') if 'subscription_status' in row.keys() else 'active'
+    if status in ('suspended','canceled','expired','past_due'): return False
+    cutoff=row['trial_ends_at'] if status=='trialing' else row['current_period_end']
+    if cutoff:
+        try:
+            end=datetime.fromisoformat(str(cutoff).replace('Z','+00:00'))
+            if end.tzinfo is None:end=end.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc)>end:return False
+        except Exception: pass
+    return True
 
 def effective_tenant_id(conn, user):
     if user['role'] == 'super_admin':
@@ -897,7 +928,10 @@ def change_username():
 @super_admin_required
 def list_tenants():
     conn = db()
-    rows = conn.execute('SELECT * FROM tenants ORDER BY name').fetchall()
+    rows=conn.execute("""SELECT t.*,
+      (SELECT COUNT(*) FROM branches b WHERE b.tenant_id=t.id AND b.active=1) branch_count,
+      (SELECT COUNT(*) FROM users u WHERE u.tenant_id=t.id AND u.active=1) user_count
+      FROM tenants t ORDER BY t.name""").fetchall()
     return jsonify(tenants=[dict(x) for x in rows])
 
 @app.post('/api/tenants')
@@ -912,9 +946,16 @@ def add_tenant():
     if not name or not owner_username or not owner_display or not owner_password:
         return jsonify(error='กรุณากรอกข้อมูลให้ครบ'), 400
     if len(owner_password) < 6: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
-    conn = db()
-    cur = conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', (name, '🍽️', now()))
-    tenant_id = cur.lastrowid
+    conn=db(); plan_code=(d.get('plan_code') or 'starter').strip()
+    plan=conn.execute('SELECT * FROM saas_plans WHERE code=? AND active=1',(plan_code,)).fetchone()
+    if not plan:return jsonify(error='แพ็กเกจไม่ถูกต้อง'),400
+    try: trial_days=max(0,min(90,int(d.get('trial_days',14))))
+    except: trial_days=14
+    trial_end=(datetime.now(timezone.utc)+timedelta(days=trial_days)).isoformat(timespec='seconds') if trial_days else None
+    status='trialing' if trial_days else 'active'
+    cur=conn.execute('INSERT INTO tenants(name,icon,plan_code,subscription_status,trial_ends_at,max_branches,max_users,created_at) VALUES(?,?,?,?,?,?,?,?)',
+        (name,'🍽️',plan_code,status,trial_end,plan['max_branches'],plan['max_users'],now()))
+    tenant_id=cur.lastrowid
     try:
         conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(?,?,?,?,?,?,?)',
             (tenant_id, owner_username, hash_password(owner_password), owner_display, 'owner', 1, now()))
@@ -926,6 +967,52 @@ def add_tenant():
     log_action('add_tenant', detail=name, tenant_id=tenant_id)
     conn.commit()
     return jsonify(ok=True, id=tenant_id)
+
+
+@app.get('/api/saas/plans')
+@login_required
+@super_admin_required
+def saas_plans():
+    return jsonify(plans=[dict(x) for x in db().execute('SELECT * FROM saas_plans WHERE active=1 ORDER BY max_branches,max_users').fetchall()])
+
+@app.put('/api/tenants/<int:tid>/subscription')
+@login_required
+@super_admin_required
+def update_tenant_subscription(tid):
+    d=request.get_json() or {}; conn=db(); tenant=conn.execute('SELECT * FROM tenants WHERE id=?',(tid,)).fetchone()
+    if not tenant:return jsonify(error='ไม่พบร้าน'),404
+    plan_code=(d.get('plan_code') or tenant['plan_code'] or 'starter').strip()
+    plan=conn.execute('SELECT * FROM saas_plans WHERE code=? AND active=1',(plan_code,)).fetchone()
+    if not plan:return jsonify(error='แพ็กเกจไม่ถูกต้อง'),400
+    status=d.get('subscription_status') or tenant['subscription_status'] or 'active'
+    if status not in ('trialing','active','past_due','suspended','canceled','expired'):return jsonify(error='สถานะ subscription ไม่ถูกต้อง'),400
+    trial_ends=d.get('trial_ends_at') if 'trial_ends_at' in d else tenant['trial_ends_at']
+    period_end=d.get('current_period_end') if 'current_period_end' in d else tenant['current_period_end']
+    max_branches=int(d.get('max_branches') or plan['max_branches']); max_users=int(d.get('max_users') or plan['max_users'])
+    if max_branches<1 or max_users<1:return jsonify(error='Limit ต้องมากกว่า 0'),400
+    note=(d.get('subscription_note') if 'subscription_note' in d else tenant['subscription_note']) or ''
+    conn.execute('UPDATE tenants SET plan_code=?,subscription_status=?,trial_ends_at=?,current_period_end=?,max_branches=?,max_users=?,subscription_note=? WHERE id=?',
+      (plan_code,status,trial_ends or None,period_end or None,max_branches,max_users,note[:500],tid))
+    log_action('update_subscription',detail=f'tenant={tid} plan={plan_code} status={status}',tenant_id=tid);conn.commit();return jsonify(ok=True)
+
+@app.post('/api/tenants/<int:tid>/reactivate')
+@login_required
+@super_admin_required
+def reactivate_tenant(tid):
+    conn=db()
+    if not conn.execute('SELECT 1 FROM tenants WHERE id=?',(tid,)).fetchone():return jsonify(error='ไม่พบร้าน'),404
+    conn.execute("UPDATE tenants SET active=1,subscription_status=CASE WHEN subscription_status='suspended' THEN 'active' ELSE subscription_status END WHERE id=?",(tid,))
+    log_action('reactivate_tenant',detail=str(tid),tenant_id=tid);conn.commit();return jsonify(ok=True)
+
+@app.get('/api/admin/saas-summary')
+@login_required
+@super_admin_required
+def saas_summary():
+    r=db().execute("""SELECT COUNT(*) total,SUM(CASE WHEN active=1 THEN 1 ELSE 0 END) enabled,
+      SUM(CASE WHEN subscription_status='trialing' THEN 1 ELSE 0 END) trialing,
+      SUM(CASE WHEN subscription_status='active' THEN 1 ELSE 0 END) subscribed,
+      SUM(CASE WHEN subscription_status IN ('past_due','suspended','expired','canceled') OR active=0 THEN 1 ELSE 0 END) attention FROM tenants""").fetchone()
+    return jsonify(dict(r))
 
 @app.delete('/api/tenants/<int:tid>')
 @login_required
@@ -974,7 +1061,9 @@ def add_branch():
     d = request.get_json() or {}
     name = (d.get('name') or '').strip()
     if not name: return jsonify(error='กรุณาใส่ชื่อสาขา'), 400
-    conn = db()
+    conn=db(); tenant=conn.execute('SELECT max_branches FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
+    used=conn.execute('SELECT COUNT(*) c FROM branches WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
+    if tenant and used>=int(tenant['max_branches'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_branches']} สาขา กรุณาอัปเกรดแพ็กเกจ"),409
     cur = conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',
         (g.tenant_id, name, d.get('icon') or '🏠', now()))
     log_action('add_branch', detail=name)
@@ -2507,7 +2596,9 @@ def add_user():
     if not username or not display_name or not password: return jsonify(error='กรุณาใส่ชื่อผู้ใช้ ชื่อที่แสดง และรหัสผ่าน'), 400
     if role not in ('owner', 'manager', 'staff'): return jsonify(error='สิทธิ์ไม่ถูกต้อง'), 400
     if len(password) < 10: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 10 ตัวอักษร'), 400
-    conn = db()
+    conn=db(); tenant=conn.execute('SELECT max_users FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
+    used=conn.execute('SELECT COUNT(*) c FROM users WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
+    if tenant and used>=int(tenant['max_users'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_users']} ผู้ใช้ กรุณาอัปเกรดแพ็กเกจ"),409
     try:
         cur = conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(?,?,?,?,?,?,?)',
             (g.tenant_id, username, hash_password(password), display_name, role, 1, now()))
