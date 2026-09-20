@@ -4,9 +4,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 <meta name="theme-color" content="#ea580c">
-<link rel="icon" href="/static/favicon-64.png" type="image/png">
-<link rel="apple-touch-icon" href="/static/zaabos-icon-192.png">
-<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="icon" href="/static/favicon-64.png?v=4" type="image/png">
+<link rel="shortcut icon" href="/static/favicon.ico?v=4">
+<link rel="apple-touch-icon" href="/static/zaabos-icon-192.png?v=4">
+<link rel="manifest" href="/static/manifest.webmanifest?v=4">
 </head><body>
 
 <section id="loginView" class="login-screen hidden">
@@ -153,8 +154,21 @@
         <button class="ghost-btn primary" id="reportApplyBtn" data-i18n="btn_apply_filter">ดูรายงาน</button>
       </div>
       <div class="report-cards" id="reportCards"></div>
+      <h3>ช่องทางรับเงิน</h3><div class="report-cards" id="paymentBreakdown"></div>
       <h3 data-i18n="label_top_items_title">สินค้าขายดี</h3>
       <div id="reportTopItems"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>ปิดยอดเงินสดประจำวัน</h2><button class="ghost-btn" id="loadClosingBtn">โหลดวันนี้</button></div>
+      <div class="report-date-range">
+        <label><span>วันที่</span><input type="date" id="closingDate"></label>
+        <label><span>เงินสดตั้งต้น</span><input type="number" id="openingCash" min="0" step="1" value="0"></label>
+        <label><span>เงินสดนำออก/จ่ายออก</span><input type="number" id="cashOut" min="0" step="1" value="0"></label>
+        <label><span>เงินสดนับจริง</span><input type="number" id="countedCash" min="0" step="1" value="0"></label>
+      </div>
+      <label><span>หมายเหตุ</span><input id="closingNotes" maxlength="500"></label>
+      <div class="hint" id="closingPreview">ยอดขายเงินสดวันนี้: —</div>
+      <button class="save" id="saveClosingBtn">ปิดยอด / บันทึก</button>
     </div>
     <div class="panel">
       <div class="panel-head">
