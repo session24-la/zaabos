@@ -177,15 +177,32 @@ def ensure_default_tenant(conn):
         conn.commit()
 
 def ensure_super_admin(conn):
-    if not conn.execute("SELECT 1 FROM users WHERE role='super_admin'").fetchone():
-        try:
-            conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(NULL,?,?,?,?,1,?)',
-                ('admin', hash_password('changeme123'), 'ผู้ดูแลระบบ', 'super_admin', now()))
-            conn.commit()
-        except INTEGRITY_ERRORS:
-            conn.rollback()
-    else:
+    """Bootstrap the first platform admin without a shared default password.
+
+    Existing installations are left untouched. Fresh production installs must set
+    ZAABOS_ADMIN_USERNAME and ZAABOS_ADMIN_PASSWORD. Local SQLite development gets
+    a one-time random password printed to the terminal instead of a known secret.
+    """
+    if conn.execute("SELECT 1 FROM users WHERE role='super_admin'").fetchone():
+        conn.commit(); return
+    username = (os.getenv('ZAABOS_ADMIN_USERNAME') or 'admin').strip()
+    password = os.getenv('ZAABOS_ADMIN_PASSWORD')
+    if not password:
+        if IS_POSTGRES:
+            app.logger.warning('No super admin exists. Set ZAABOS_ADMIN_USERNAME and ZAABOS_ADMIN_PASSWORD, then redeploy once to bootstrap it.')
+            conn.commit(); return
+        password = secrets.token_urlsafe(18)
+        print(f'[ZaabOS local bootstrap] username={username} temporary_password={password}')
+    if len(password) < 12:
+        if IS_POSTGRES:
+            app.logger.error('ZAABOS_ADMIN_PASSWORD must be at least 12 characters; super admin was not created.')
+            conn.commit(); return
+    try:
+        conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(NULL,?,?,?,?,1,?)',
+            (username, hash_password(password), 'ผู้ดูแลระบบ', 'super_admin', now()))
         conn.commit()
+    except INTEGRITY_ERRORS:
+        conn.rollback()
 
 def create_tenant_indexes(conn):
     for stmt in (
@@ -194,13 +211,33 @@ def create_tenant_indexes(conn):
         'CREATE INDEX IF NOT EXISTS idx_menu_items_tenant ON menu_items(tenant_id)',
         'CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id)',
         'CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)',
+        'CREATE INDEX IF NOT EXISTS idx_orders_tenant_branch ON orders(tenant_id,branch_id)',
+        'CREATE INDEX IF NOT EXISTS idx_menu_items_tenant_branch ON menu_items(tenant_id,branch_id)',
+        'CREATE INDEX IF NOT EXISTS idx_tables_tenant_branch ON dining_tables(tenant_id,branch_id)',
+        'CREATE INDEX IF NOT EXISTS idx_payments_tenant_branch ON payments(tenant_id,branch_id)',
+        'CREATE INDEX IF NOT EXISTS idx_refunds_tenant_branch ON refunds(tenant_id,branch_id)',
     ):
         conn.execute(stmt)
+
+def ensure_migration_ledger(conn):
+    if IS_POSTGRES:
+        conn.execute('''CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)''')
+    else:
+        conn.execute('''CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)''')
+    conn.commit()
+
+
+def record_migration(conn, version, name):
+    row = conn.execute('SELECT 1 FROM schema_migrations WHERE version=?', (version,)).fetchone()
+    if not row:
+        conn.execute('INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)', (version,name,now()))
+        conn.commit()
 
 def ensure_schema_migrations(conn):
     """Additive, idempotent column adds for installs that already have data —
     executescript's CREATE TABLE IF NOT EXISTS only helps on a fresh DB, so any
     new column on an existing table needs to be added here instead."""
+    ensure_migration_ledger(conn)
     if IS_POSTGRES:
         # Multi-tenant order numbers: legacy schema made order_no globally
         # unique, which caused Tenant B's ...0001 to collide with Tenant A's.
@@ -277,6 +314,7 @@ def ensure_schema_migrations(conn):
             order_id INTEGER NOT NULL, payment_id INTEGER, amount REAL NOT NULL, reason TEXT NOT NULL DEFAULT '',
             refunded_by_user_id INTEGER, refunded_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
         conn.commit()
+    record_migration(conn, 10, 'production_safety_foundation')
 
 def init_db():
     if IS_POSTGRES:
@@ -285,6 +323,8 @@ def init_db():
         ensure_default_tenant(conn)
         ensure_super_admin(conn)
         ensure_schema_migrations(conn)
+        create_tenant_indexes(conn)
+        conn.commit()
         conn.close()
         return
     conn = sqlite3.connect(DB)
@@ -446,6 +486,22 @@ def track_page():
 @app.get('/kitchen')
 def kitchen_page():
     return render_template('kitchen.html')
+
+# Production health probes. They expose no tenant/business data.
+@app.get('/healthz')
+def healthz():
+    return jsonify(ok=True, service='zaabos')
+
+@app.get('/readyz')
+def readyz():
+    try:
+        conn = db()
+        conn.execute('SELECT 1 AS ok').fetchone()
+        row = conn.execute('SELECT MAX(version) AS version FROM schema_migrations').fetchone()
+        return jsonify(ok=True, database='ok', schema_version=(row['version'] if row else None))
+    except Exception:
+        app.logger.exception('readiness check failed')
+        return jsonify(ok=False, database='error'), 503
 
 # =====================================================================
 # Auth routes

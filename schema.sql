@@ -217,3 +217,9 @@ CREATE TABLE IF NOT EXISTS refunds (
     amount REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', refunded_by_user_id INTEGER, refunded_at TEXT NOT NULL,
     FOREIGN KEY(order_id) REFERENCES orders(id)
 );
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+ version INTEGER PRIMARY KEY,
+ name TEXT NOT NULL,
+ applied_at TEXT NOT NULL
+);
