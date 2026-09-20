@@ -83,6 +83,22 @@ BASE = Path(__file__).resolve().parent
 DB = BASE / 'zaabos.db'
 SECRET_FILE = BASE / '.secret_key'
 app = Flask(__name__)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('FLASK_ENV') == 'production' or bool(os.environ.get('RAILWAY_ENVIRONMENT')),
+)
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    if request.is_secure:
+        response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    return response
+
 app.config['JSON_AS_ASCII'] = False
 app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # 8MB — menu item photos are sent as data: URIs in the JSON body
 
@@ -330,6 +346,7 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_closing_tenant_branch_date ON daily_closings(tenant_id,branch_id,closing_date)')
     conn.commit()
     record_migration(conn, 11, 'concurrency_and_recovery_hardening')
+    record_migration(conn, 12, 'production_acceptance_security')
 
 def init_db():
     if IS_POSTGRES:
