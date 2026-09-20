@@ -580,10 +580,18 @@ def ensure_schema_migrations(conn):
     tenant_cols = {'plan_code': "TEXT NOT NULL DEFAULT 'starter'", 'subscription_status': "TEXT NOT NULL DEFAULT 'trialing'",
         'trial_ends_at':'TEXT','current_period_end':'TEXT','max_branches':'INTEGER NOT NULL DEFAULT 1',
         'max_users':'INTEGER NOT NULL DEFAULT 5','subscription_note':"TEXT NOT NULL DEFAULT ''"}
+    # Bootstrap runs before migrations, so Migration 26 owns these ALTERs.
+    # Check column existence first instead of relying on duplicate-column errors;
+    # this is safe for both normal upgrades and partially-upgraded databases.
+    if IS_POSTGRES:
+        existing_tenant_cols = {r['column_name'] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='tenants'"
+        ).fetchall()}
+    else:
+        existing_tenant_cols = {r['name'] for r in conn.execute('PRAGMA table_info(tenants)').fetchall()}
     for col, ddl in tenant_cols.items():
-        try: conn.execute(f'ALTER TABLE tenants ADD COLUMN {col} {ddl}')
-        except Exception:
-            if IS_POSTGRES: conn.rollback()
+        if col not in existing_tenant_cols:
+            conn.execute(f'ALTER TABLE tenants ADD COLUMN {col} {ddl}')
     id18 = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     conn.execute(f"""CREATE TABLE IF NOT EXISTS saas_plans (
         id {id18}, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, max_branches INTEGER NOT NULL,

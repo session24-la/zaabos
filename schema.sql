@@ -279,4 +279,3 @@ CREATE TABLE IF NOT EXISTS kitchen_print_jobs (id INTEGER PRIMARY KEY AUTOINCREM
 CREATE INDEX IF NOT EXISTS idx_kitchen_print_jobs_queue ON kitchen_print_jobs(tenant_id,branch_id,status,created_at);
 
 CREATE TABLE IF NOT EXISTS saas_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, max_branches INTEGER NOT NULL, max_users INTEGER NOT NULL, monthly_price DOUBLE PRECISION NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_tenants_subscription ON tenants(active,subscription_status,trial_ends_at,current_period_end);

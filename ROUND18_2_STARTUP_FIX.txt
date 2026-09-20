@@ -1,0 +1,21 @@
+ZaabOS Round 18.2 — Existing Database Startup Fix
+
+Root cause confirmed from the latest full project and Railway log:
+- init_db() executes schema_postgres.sql BEFORE ensure_schema_migrations().
+- Railway already has an existing tenants table from older rounds.
+- CREATE TABLE IF NOT EXISTS tenants (...) does NOT add Round 18 columns to an existing table.
+- The bootstrap schema then tried to create idx_tenants_subscription immediately.
+- PostgreSQL therefore raised:
+  UndefinedColumn: column "subscription_status" does not exist
+- Migration 26 never got a chance to run.
+
+Fix:
+1. Remove idx_tenants_subscription from bootstrap schema.sql/schema_postgres.sql.
+2. Migration 26 adds the tenant columns first, then creates the index.
+3. Migration 26 now checks actual existing columns first, making partial upgrades safe.
+
+No database reset. No data deletion.
+Replace:
+- app.py
+- schema_postgres.sql
+- schema.sql
