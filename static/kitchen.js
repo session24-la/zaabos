@@ -108,7 +108,7 @@ async function loadKitchenStations(){
     if(rows.some(x=>String(x.id)===cur))sel.value=cur;
   }catch(e){}
 }
-$('#kitchenStationFilter').addEventListener('change',loadBoard);
+const kitchenStationFilter=$('#kitchenStationFilter'); if(kitchenStationFilter) kitchenStationFilter.addEventListener('change',loadBoard);
 
 const STATUS_ACTIONS = {
   received: [{ to: 'preparing', labelKey: 'kt_btn_start', cls: 'btn-preparing' }, { to: 'cancelled', labelKey: 'kt_btn_cancel', cls: 'btn-cancel' }],

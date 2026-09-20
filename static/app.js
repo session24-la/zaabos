@@ -146,7 +146,7 @@ async function api(url, opts) {
     // caught the moment someone tries to do something, instead of yanked away
     // mid-task by a request nobody triggered.
     if (!silent) { me = null; showLogin(); }
-    throw new Error((body && body.error) || t('err_please_login'));
+    const err=new Error((body && body.error) || t('err_please_login')); err.status=401; err.transient=false; throw err;
   }
   if (!r.ok) {
     const fallback = r.status >= 500 ? 'ระบบบันทึกข้อมูลขัดข้อง กรุณาลองอีกครั้ง' : t('err_generic');
@@ -1171,10 +1171,10 @@ $$('#billManagerModal [data-bm-mode]').forEach(b=>b.addEventListener('click',()=
 function renderBillManager(){
   const o=billManagerSource, body=$('#billManagerBody'); if(!o)return;
   if(billManagerMode==='move'){
-    const tables=(boardTables||[]).filter(t=>String(t.id)!==String(o.table_id));
+    const tables=branchTables().filter(t=>String(t.id)!==String(o.table_id));
     body.innerHTML=`<p class="muted">ย้ายบิล #${escapeHtml(o.order_no)} ไปโต๊ะใหม่</p><div class="bm-grid">${tables.map(t=>`<button class="bm-choice" data-bm-table="${t.id}">${escapeHtml(t.name||('โต๊ะ '+t.id))}</button>`).join('')||'<div class="muted">ไม่มีโต๊ะอื่น</div>'}</div>`;
   }else if(billManagerMode==='merge'){
-    const targets=(allOrders||[]).filter(x=>x.id!==o.id&&x.branch_id===o.branch_id&&x.payment_status==='unpaid'&&!['cancelled','completed'].includes(x.status));
+    const targets=(activeOrders||[]).filter(x=>x.id!==o.id&&x.branch_id===o.branch_id&&x.payment_status==='unpaid'&&!['cancelled','completed'].includes(x.status));
     body.innerHTML=`<p class="muted">รวมบิลนี้เข้ากับบิลปลายทาง</p><div class="bm-grid">${targets.map(x=>`<button class="bm-choice" data-bm-target="${x.id}">#${escapeHtml(x.order_no)} · ${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}<small>${fmtMoney(x.total_amount)}</small></button>`).join('')||'<div class="muted">ไม่มีบิลที่รวมได้</div>'}</div>`;
   }else{
     const rows=o.items.filter(it=>Number(it.quantity||0)-Number(it.cancelled_quantity||0)>0);
@@ -1695,7 +1695,7 @@ function emptyState(icon, text) { return `<div class="empty-state"><span class="
     await renderOfflineQueue(); syncOfflineOrders();
   } catch (e) {
     try {
-      if (await restoreOfflineSession()) {
+      if ((e.transient || !e.status) && await restoreOfflineSession()) {
         showApp();
         $('#whoAvatar').textContent=(me.display_name||me.username||'?').slice(0,1).toUpperCase();
         $('#whoName').textContent=(me.display_name||me.username)+' · OFFLINE';
