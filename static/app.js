@@ -915,7 +915,6 @@ function orderCardHtml(o) {
       ${o.notes ? `<div class="hint">${escapeHtml(t('label_notes'))}: ${escapeHtml(o.notes)}</div>` : ''}
       <div class="row" style="border-top:1px dashed var(--border)"><b>${escapeHtml(t('label_total_short'))}</b><b>${fmtMoney(o.total_amount)}</b></div>
       <div class="head-actions" style="margin-top:8px">
-        ${nextStatus ? `<button class="ghost-btn primary" data-set-status="${o.id}:${nextStatus}">➡️ ${escapeHtml(statusLabel(nextStatus))}</button>` : ''}
         ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">${escapeHtml(t('kt_btn_cancel'))}</button>` : ''}
 
       </div>
@@ -1058,10 +1057,6 @@ $('#cpSubmit').addEventListener('click', async () => {
   const cashRaw = $('#cpCash').value.trim(); if (payload.payment_method === 'cash' && cashRaw) payload.cash_received = parseFloat(cashRaw);
   try {
     await apiJson('/api/orders/' + orderId + '/payment', 'PUT', payload);
-    const ord = findOrderById(orderId);
-    if (ord && ord.status === 'served') {
-      await apiJson('/api/orders/' + orderId + '/status', 'PUT', { status: 'completed' });
-    }
     toast(t('toast_payment_confirmed'), 'ok');
     closeModals();
     cpOrderId = null;

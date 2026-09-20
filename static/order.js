@@ -350,9 +350,26 @@ $('#checkoutSubmit').addEventListener('click', async () => {
   const originalLabel = btn.textContent;
   btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
   try {
-    const r = await fetch('/api/public/orders', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const body = await r.json();
-    if (!r.ok) { $('#checkoutError').textContent = body.error || t('err_generic'); return; }
+    const r = await fetch('/api/public/orders', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const raw = await r.text();
+    let body = {};
+    try { body = raw ? JSON.parse(raw) : {}; } catch (e) {}
+    if (!r.ok) {
+      $('#checkoutError').textContent = body.error || (r.status >= 500
+        ? 'ระบบบันทึกออเดอร์ขัดข้อง กรุณาลองอีกครั้ง'
+        : t('err_generic'));
+      return;
+    }
+    if (!body || !body.order_no) {
+      $('#checkoutError').textContent = 'ไม่ได้รับเลขออเดอร์จากระบบ กรุณาลองอีกครั้ง';
+      return;
+    }
     closeModals();
     cart = []; updateCartFab();
     $('#successOrderNo').textContent = '#' + body.order_no;
