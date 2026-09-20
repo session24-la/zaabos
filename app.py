@@ -1,0 +1,1162 @@
+from flask import Flask, render_template, request, jsonify, g, session, send_from_directory
+import sqlite3, os, functools, secrets, shutil, random, string
+from datetime import datetime, date, timedelta
+from pathlib import Path
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# ---------- dual SQLite/Postgres support (same pattern as CASHFLOW 24) ----------
+IS_POSTGRES = bool(os.getenv('DATABASE_URL'))
+try:
+    import psycopg2, psycopg2.extras
+except ImportError:
+    psycopg2 = None
+
+INTEGRITY_ERRORS = (sqlite3.IntegrityError,) + ((psycopg2.IntegrityError,) if psycopg2 else ())
+
+
+class PGCursor:
+    def __init__(self, cur, lastrowid=None):
+        self._cur = cur
+        self.lastrowid = lastrowid
+    def fetchone(self): return self._cur.fetchone()
+    def fetchall(self): return self._cur.fetchall()
+    def __iter__(self): return iter(self._cur.fetchall())
+    @property
+    def rowcount(self): return self._cur.rowcount
+
+
+class PGConn:
+    """Adapter so ?-placeholder / lastrowid / dict-row sqlite3-style code runs
+    unchanged on Postgres. Only this class + db()/init_db() know Postgres exists."""
+    def __init__(self, dsn):
+        self._conn = psycopg2.connect(dsn)
+
+    def execute(self, sql, params=()):
+        pg_sql = sql.replace('?', '%s')
+        add_returning = pg_sql.strip()[:11].upper() == 'INSERT INTO' and 'RETURNING' not in pg_sql.upper()
+        if add_returning:
+            pg_sql = pg_sql.rstrip().rstrip(';') + ' RETURNING id'
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            cur.execute(pg_sql, params)
+        except Exception:
+            self._conn.rollback()
+            raise
+        lastrowid = None
+        if add_returning:
+            row = cur.fetchone()
+            lastrowid = row['id'] if row else None
+        return PGCursor(cur, lastrowid)
+
+    def executescript(self, sql):
+        cur = self._conn.cursor()
+        try:
+            cur.execute(sql)
+        except Exception:
+            self._conn.rollback()
+            raise
+        cur.close()
+
+    def commit(self): self._conn.commit()
+    def rollback(self): self._conn.rollback()
+    def close(self): self._conn.close()
+
+
+def hash_password(p): return generate_password_hash(p, method='pbkdf2:sha256')
+
+def verify_password(pw_hash, password):
+    try:
+        return check_password_hash(pw_hash, password)
+    except Exception:
+        return False
+
+BASE = Path(__file__).resolve().parent
+DB = BASE / 'zaabos.db'
+SECRET_FILE = BASE / '.secret_key'
+app = Flask(__name__)
+app.config['JSON_AS_ASCII'] = False
+
+
+def get_secret_key():
+    env_key = os.getenv('ZAABOS_SECRET_KEY')
+    if env_key: return env_key
+    if SECRET_FILE.exists(): return SECRET_FILE.read_text().strip()
+    key = secrets.token_hex(32)
+    SECRET_FILE.write_text(key)
+    return key
+
+app.secret_key = get_secret_key()
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', PERMANENT_SESSION_LIFETIME=timedelta(days=7),
+    SESSION_COOKIE_SECURE=IS_POSTGRES)
+
+if IS_POSTGRES:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+ROLES = ('super_admin', 'owner', 'manager', 'staff')
+ORDER_STATUSES = ('received', 'preparing', 'ready', 'served', 'completed', 'cancelled')
+BACKUP_DIR = BASE / 'backups'
+
+
+def backup_db(label='auto'):
+    if IS_POSTGRES:
+        try:
+            import subprocess
+            BACKUP_DIR.mkdir(exist_ok=True)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            dest = BACKUP_DIR / f'zaabos_{label}_{ts}.sql'
+            with open(dest, 'w') as f:
+                subprocess.run(['pg_dump', os.getenv('DATABASE_URL')], stdout=f, check=True, timeout=60)
+            return dest.name
+        except Exception:
+            return None
+    try:
+        if not DB.exists(): return None
+        BACKUP_DIR.mkdir(exist_ok=True)
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dest = BACKUP_DIR / f'zaabos_{label}_{ts}.db'
+        shutil.copy2(DB, dest)
+        return dest.name
+    except Exception:
+        return None
+
+
+def db():
+    if 'db' not in g:
+        if IS_POSTGRES:
+            g.db = PGConn(os.getenv('DATABASE_URL'))
+        else:
+            g.db = sqlite3.connect(DB)
+            g.db.row_factory = sqlite3.Row
+            g.db.execute('PRAGMA foreign_keys=ON')
+    return g.db
+
+@app.teardown_appcontext
+def close_db(exc=None):
+    conn = g.pop('db', None)
+    if conn: conn.close()
+
+def now(): return datetime.now().isoformat(timespec='seconds')
+
+# ---------- schema bootstrap ----------
+
+def ensure_default_tenant(conn):
+    if not conn.execute('SELECT id FROM tenants ORDER BY id LIMIT 1').fetchone():
+        conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', ('ร้านของฉัน', '🍽️', now()))
+    conn.commit()
+
+def ensure_super_admin(conn):
+    if not conn.execute("SELECT 1 FROM users WHERE role='super_admin'").fetchone():
+        conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(NULL,?,?,?,?,1,?)',
+            ('admin', hash_password('changeme123'), 'ผู้ดูแลระบบ', 'super_admin', now()))
+    conn.commit()
+
+def create_tenant_indexes(conn):
+    for stmt in (
+        'CREATE INDEX IF NOT EXISTS idx_branches_tenant ON branches(tenant_id)',
+        'CREATE INDEX IF NOT EXISTS idx_tables_tenant ON dining_tables(tenant_id)',
+        'CREATE INDEX IF NOT EXISTS idx_menu_items_tenant ON menu_items(tenant_id)',
+        'CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id)',
+        'CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id)',
+    ):
+        conn.execute(stmt)
+
+def init_db():
+    if IS_POSTGRES:
+        conn = PGConn(os.getenv('DATABASE_URL'))
+        conn.executescript((BASE / 'schema_postgres.sql').read_text())
+        ensure_default_tenant(conn)
+        ensure_super_admin(conn)
+        conn.close()
+        return
+    conn = sqlite3.connect(DB)
+    conn.execute('PRAGMA foreign_keys=ON')
+    conn.executescript((BASE / 'schema.sql').read_text())
+    create_tenant_indexes(conn)
+    ensure_default_tenant(conn)
+    ensure_super_admin(conn)
+    conn.commit(); conn.close()
+
+# ---------- auth helpers (same pattern as CASHFLOW 24) ----------
+
+def get_current_user(conn):
+    uid = session.get('user_id')
+    if not uid: return None
+    u = conn.execute('SELECT * FROM users WHERE id=? AND active=1', (uid,)).fetchone()
+    return dict(u) if u else None
+
+def tenant_active(conn, tenant_id):
+    if tenant_id is None: return True
+    row = conn.execute('SELECT active FROM tenants WHERE id=?', (tenant_id,)).fetchone()
+    return bool(row and row['active'])
+
+def effective_tenant_id(conn, user):
+    if user['role'] == 'super_admin':
+        tid = session.get('active_tenant_id')
+        if tid in (None, ''):
+            row = conn.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id LIMIT 1').fetchone()
+            tid = row['id'] if row else None
+            session['active_tenant_id'] = tid
+        return None if tid == 'all' else tid
+    return user['tenant_id']
+
+def login_required(f):
+    @functools.wraps(f)
+    def wrapper(*a, **kw):
+        conn = db()
+        user = get_current_user(conn)
+        if not user:
+            session.clear()
+            return jsonify(error='กรุณาเข้าสู่ระบบ'), 401
+        if user['role'] != 'super_admin' and not tenant_active(conn, user['tenant_id']):
+            session.clear()
+            return jsonify(error='ร้านนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ'), 403
+        if request.method in ('POST', 'PUT', 'DELETE'):
+            token = request.headers.get('X-CSRF-Token')
+            if not token or token != session.get('csrf_token'):
+                return jsonify(error='คำขอไม่ถูกต้อง กรุณาโหลดหน้าใหม่แล้วลองอีกครั้ง'), 403
+        g.user = user
+        g.tenant_id = effective_tenant_id(conn, user)
+        return f(*a, **kw)
+    return wrapper
+
+def role_required(*roles):
+    def deco(f):
+        @functools.wraps(f)
+        def wrapper(*a, **kw):
+            if g.user['role'] != 'super_admin' and g.user['role'] not in roles:
+                return jsonify(error='คุณไม่มีสิทธิ์ทำรายการนี้'), 403
+            return f(*a, **kw)
+        return wrapper
+    return deco
+
+def super_admin_required(f):
+    @functools.wraps(f)
+    def wrapper(*a, **kw):
+        if g.user['role'] != 'super_admin':
+            return jsonify(error='เฉพาะผู้ดูแลระบบเท่านั้น'), 403
+        return f(*a, **kw)
+    return wrapper
+
+def require_tenant():
+    if g.tenant_id is None:
+        return jsonify(error='กรุณาเลือกร้านก่อนทำรายการนี้'), 400
+    return None
+
+def log_action(action, detail='', tenant_id=None):
+    conn = db()
+    tid = tenant_id if tenant_id is not None else g.get('tenant_id')
+    conn.execute('INSERT INTO audit_logs(tenant_id,user_id,action,detail,created_at) VALUES(?,?,?,?,?)',
+        (tid, g.user['id'] if g.get('user') else None, action, detail, now()))
+
+def gen_qr_token():
+    return secrets.token_urlsafe(12)
+
+def gen_order_no(conn, tenant_id):
+    today = datetime.now().strftime('%Y%m%d')
+    prefix = f'Z-{today}-'
+    row = conn.execute("SELECT COUNT(*) AS c FROM orders WHERE tenant_id=? AND order_no LIKE ?", (tenant_id, prefix + '%')).fetchone()
+    seq = (row['c'] if row else 0) + 1
+    return f'{prefix}{seq:04d}'
+
+# =====================================================================
+# Static pages
+# =====================================================================
+
+@app.get('/')
+def index():
+    return render_template('index.html')
+
+@app.get('/order/<qr_token>')
+def order_page_table(qr_token):
+    return render_template('order.html')
+
+@app.get('/order')
+def order_page_generic():
+    return render_template('order.html')
+
+@app.get('/track')
+def track_page():
+    return render_template('track.html')
+
+@app.get('/kitchen')
+def kitchen_page():
+    return render_template('kitchen.html')
+
+# =====================================================================
+# Auth routes
+# =====================================================================
+
+@app.post('/api/login')
+def login():
+    d = request.get_json() or {}
+    username = (d.get('username') or '').strip(); password = d.get('password') or ''
+    if not username or not password: return jsonify(error='กรุณาใส่ชื่อผู้ใช้และรหัสผ่าน'), 400
+    conn = db()
+    user = conn.execute('SELECT * FROM users WHERE username=? AND active=1', (username,)).fetchone()
+    if user and user['locked_until'] and user['locked_until'] > now():
+        return jsonify(error='ลองผิดหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่'), 429
+    if not user or not verify_password(user['password_hash'], password):
+        if user:
+            attempts = (user['failed_attempts'] or 0) + 1
+            locked = None
+            if attempts >= 8:
+                locked = (datetime.now() + timedelta(minutes=5)).isoformat(timespec='seconds')
+            conn.execute('UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?', (attempts, locked, user['id']))
+            conn.commit()
+        return jsonify(error='ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'), 401
+    if user['role'] != 'super_admin' and not tenant_active(conn, user['tenant_id']):
+        return jsonify(error='ร้านนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ'), 403
+    conn.execute('UPDATE users SET failed_attempts=0,locked_until=NULL WHERE id=?', (user['id'],))
+    session.clear(); session.permanent = True
+    session['user_id'] = user['id']; session['csrf_token'] = secrets.token_hex(16)
+    g.user = dict(user); g.tenant_id = effective_tenant_id(conn, dict(user))
+    log_action('login'); conn.commit()
+    return me()
+
+@app.post('/api/logout')
+def logout():
+    conn = db(); user = get_current_user(conn)
+    if user:
+        g.user = user; g.tenant_id = user['tenant_id'] if user['role'] != 'super_admin' else session.get('active_tenant_id')
+        if g.tenant_id == 'all': g.tenant_id = None
+        log_action('logout'); conn.commit()
+    session.clear()
+    return jsonify(ok=True)
+
+@app.get('/api/me')
+def me():
+    conn = db(); user = get_current_user(conn)
+    if not user: return jsonify(error='ยังไม่ได้เข้าสู่ระบบ'), 401
+    if not session.get('csrf_token'): session['csrf_token'] = secrets.token_hex(16)
+    tenant_id = effective_tenant_id(conn, user)
+    scope = 'all' if (user['role'] == 'super_admin' and session.get('active_tenant_id') == 'all') else 'tenant'
+    tenant = None
+    if tenant_id:
+        t = conn.execute('SELECT * FROM tenants WHERE id=?', (tenant_id,)).fetchone()
+        tenant = dict(t) if t else None
+    resp = dict(id=user['id'], username=user['username'], display_name=user['display_name'], role=user['role'],
+        csrf_token=session['csrf_token'], tenant_id=tenant_id, tenant=tenant, scope=scope,
+        must_change_password=bool(user['must_change_password']))
+    if user['role'] == 'super_admin':
+        resp['tenants'] = [dict(x) for x in conn.execute('SELECT id,name,icon FROM tenants WHERE active=1 ORDER BY name')]
+    return jsonify(resp)
+
+@app.post('/api/change-password')
+@login_required
+def change_password():
+    d = request.get_json() or {}
+    current = d.get('current_password') or ''; new = d.get('new_password') or ''
+    conn = db()
+    user = conn.execute('SELECT * FROM users WHERE id=?', (g.user['id'],)).fetchone()
+    if not verify_password(user['password_hash'], current):
+        return jsonify(error='รหัสผ่านเดิมไม่ถูกต้อง'), 400
+    if len(new) < 6: return jsonify(error='รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
+    conn.execute('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?', (hash_password(new), user['id']))
+    log_action('change_password'); conn.commit()
+    return jsonify(ok=True)
+
+@app.post('/api/change-username')
+@login_required
+def change_username():
+    d = request.get_json() or {}
+    new_username = (d.get('new_username') or '').strip()
+    password = d.get('password') or ''
+    conn = db()
+    user = conn.execute('SELECT * FROM users WHERE id=?', (g.user['id'],)).fetchone()
+    if not verify_password(user['password_hash'], password):
+        return jsonify(error='รหัสผ่านไม่ถูกต้อง'), 400
+    if len(new_username) < 3:
+        return jsonify(error='ชื่อผู้ใช้ต้องยาวอย่างน้อย 3 ตัวอักษร'), 400
+    dupe = conn.execute('SELECT 1 FROM users WHERE username=? AND id!=?', (new_username, user['id'])).fetchone()
+    if dupe:
+        return jsonify(error='ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาใช้ชื่ออื่น'), 400
+    try:
+        conn.execute('UPDATE users SET username=? WHERE id=?', (new_username, user['id']))
+    except INTEGRITY_ERRORS:
+        return jsonify(error='ชื่อผู้ใช้นี้มีคนใช้แล้ว กรุณาใช้ชื่ออื่น'), 400
+    log_action('change_username', detail=f'{user["username"]} -> {new_username}')
+    conn.commit()
+    return jsonify(ok=True, username=new_username)
+
+# =====================================================================
+# Tenants (super_admin only) — one tenant = one restaurant customer of ZaabOS
+# =====================================================================
+
+@app.get('/api/tenants')
+@login_required
+@super_admin_required
+def list_tenants():
+    conn = db()
+    rows = conn.execute('SELECT * FROM tenants ORDER BY name').fetchall()
+    return jsonify(tenants=[dict(x) for x in rows])
+
+@app.post('/api/tenants')
+@login_required
+@super_admin_required
+def add_tenant():
+    d = request.get_json() or {}
+    name = (d.get('name') or '').strip()
+    owner_username = (d.get('owner_username') or '').strip()
+    owner_display = (d.get('owner_display') or '').strip()
+    owner_password = d.get('owner_password') or ''
+    if not name or not owner_username or not owner_display or not owner_password:
+        return jsonify(error='กรุณากรอกข้อมูลให้ครบ'), 400
+    if len(owner_password) < 6: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
+    conn = db()
+    cur = conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', (name, '🍽️', now()))
+    tenant_id = cur.lastrowid
+    try:
+        conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(?,?,?,?,?,?,?)',
+            (tenant_id, owner_username, hash_password(owner_password), owner_display, 'owner', 1, now()))
+    except INTEGRITY_ERRORS:
+        conn.rollback()
+        return jsonify(error='ชื่อผู้ใช้นี้มีคนใช้แล้ว'), 400
+    # every new tenant starts with one branch so it isn't an empty shell
+    conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)', (tenant_id, name, '🏠', now()))
+    log_action('add_tenant', detail=name, tenant_id=tenant_id)
+    conn.commit()
+    return jsonify(ok=True, id=tenant_id)
+
+@app.delete('/api/tenants/<int:tid>')
+@login_required
+@super_admin_required
+def archive_tenant(tid):
+    conn = db()
+    conn.execute('UPDATE tenants SET active=0 WHERE id=?', (tid,))
+    log_action('archive_tenant', detail=str(tid))
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.post('/api/switch-tenant')
+@login_required
+def switch_tenant():
+    if g.user['role'] != 'super_admin': return jsonify(error='ไม่มีสิทธิ์'), 403
+    d = request.get_json() or {}; tid = d.get('tenant_id'); conn = db()
+    if tid == 'all':
+        session['active_tenant_id'] = 'all'
+    else:
+        try: tid = int(tid)
+        except (TypeError, ValueError): return jsonify(error='ข้อมูลไม่ถูกต้อง'), 400
+        if not conn.execute('SELECT 1 FROM tenants WHERE id=?', (tid,)).fetchone():
+            return jsonify(error='ไม่พบร้าน'), 404
+        session['active_tenant_id'] = tid
+    return jsonify(ok=True)
+
+# =====================================================================
+# Branches
+# =====================================================================
+
+@app.get('/api/branches')
+@login_required
+def list_branches():
+    conn = db()
+    if g.tenant_id is None:
+        return jsonify(branches=[])
+    rows = conn.execute('SELECT * FROM branches WHERE tenant_id=? AND active=1 ORDER BY id', (g.tenant_id,)).fetchall()
+    return jsonify(branches=[dict(x) for x in rows])
+
+@app.post('/api/branches')
+@login_required
+@role_required('owner')
+def add_branch():
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    name = (d.get('name') or '').strip()
+    if not name: return jsonify(error='กรุณาใส่ชื่อสาขา'), 400
+    conn = db()
+    cur = conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',
+        (g.tenant_id, name, d.get('icon') or '🏠', now()))
+    log_action('add_branch', detail=name)
+    conn.commit()
+    return jsonify(ok=True, id=cur.lastrowid)
+
+@app.put('/api/branches/<int:bid>')
+@login_required
+@role_required('owner')
+def edit_branch(bid):
+    conn = db()
+    old = conn.execute('SELECT * FROM branches WHERE id=? AND tenant_id=?', (bid, g.tenant_id)).fetchone()
+    if not old: return jsonify(error='ไม่พบสาขา'), 404
+    d = request.get_json() or {}
+    name = (d.get('name') or old['name']).strip()
+    icon = d.get('icon') or old['icon']
+    conn.execute('UPDATE branches SET name=?,icon=? WHERE id=?', (name, icon, bid))
+    log_action('edit_branch', detail=str(bid))
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.delete('/api/branches/<int:bid>')
+@login_required
+@role_required('owner')
+def archive_branch(bid):
+    conn = db()
+    conn.execute('UPDATE branches SET active=0 WHERE id=? AND tenant_id=?', (bid, g.tenant_id))
+    log_action('archive_branch', detail=str(bid))
+    conn.commit()
+    return jsonify(ok=True)
+
+# =====================================================================
+# Tables (dining tables) — each has a unique QR token
+# =====================================================================
+
+@app.get('/api/tables')
+@login_required
+def list_tables():
+    conn = db()
+    if g.tenant_id is None: return jsonify(tables=[])
+    branch_id = request.args.get('branch_id')
+    q = 'SELECT * FROM dining_tables WHERE tenant_id=? AND active=1'
+    args = [g.tenant_id]
+    if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
+    q += ' ORDER BY id'
+    rows = conn.execute(q, args).fetchall()
+    return jsonify(tables=[dict(x) for x in rows])
+
+@app.post('/api/tables')
+@login_required
+@role_required('owner', 'manager')
+def add_table():
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    name = (d.get('name') or '').strip()
+    branch_id = d.get('branch_id')
+    if not name or not branch_id: return jsonify(error='กรุณาใส่ชื่อโต๊ะและเลือกสาขา'), 400
+    conn = db()
+    branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขา'), 404
+    token = gen_qr_token()
+    cur = conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,created_at) VALUES(?,?,?,?,?)',
+        (g.tenant_id, branch_id, name, token, now()))
+    log_action('add_table', detail=name)
+    conn.commit()
+    return jsonify(ok=True, id=cur.lastrowid, qr_token=token)
+
+@app.post('/api/tables/bulk')
+@login_required
+@role_required('owner', 'manager')
+def add_tables_bulk():
+    """Quickly create N numbered tables at once (โต๊ะ 1..N) for a branch."""
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    branch_id = d.get('branch_id')
+    count = d.get('count')
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        return jsonify(error='จำนวนโต๊ะไม่ถูกต้อง'), 400
+    if not branch_id or count < 1 or count > 200:
+        return jsonify(error='กรุณาเลือกสาขาและระบุจำนวนโต๊ะ (1-200)'), 400
+    conn = db()
+    branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขา'), 404
+    existing = conn.execute('SELECT COUNT(*) AS c FROM dining_tables WHERE branch_id=?', (branch_id,)).fetchone()['c']
+    created = []
+    for i in range(1, count + 1):
+        token = gen_qr_token()
+        cur = conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,created_at) VALUES(?,?,?,?,?)',
+            (g.tenant_id, branch_id, f'โต๊ะ {existing + i}', token, now()))
+        created.append(cur.lastrowid)
+    log_action('add_tables_bulk', detail=f'{count} tables')
+    conn.commit()
+    return jsonify(ok=True, created=len(created))
+
+@app.put('/api/tables/<int:tbid>')
+@login_required
+@role_required('owner', 'manager')
+def edit_table(tbid):
+    conn = db()
+    old = conn.execute('SELECT * FROM dining_tables WHERE id=? AND tenant_id=?', (tbid, g.tenant_id)).fetchone()
+    if not old: return jsonify(error='ไม่พบโต๊ะ'), 404
+    d = request.get_json() or {}
+    name = (d.get('name') or old['name']).strip()
+    conn.execute('UPDATE dining_tables SET name=? WHERE id=?', (name, tbid))
+    log_action('edit_table', detail=str(tbid))
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.delete('/api/tables/<int:tbid>')
+@login_required
+@role_required('owner', 'manager')
+def archive_table(tbid):
+    conn = db()
+    conn.execute('UPDATE dining_tables SET active=0 WHERE id=? AND tenant_id=?', (tbid, g.tenant_id))
+    log_action('archive_table', detail=str(tbid))
+    conn.commit()
+    return jsonify(ok=True)
+
+# =====================================================================
+# Menu: categories, items, option groups/options
+# =====================================================================
+
+@app.get('/api/menu-categories')
+@login_required
+def list_menu_categories():
+    conn = db()
+    if g.tenant_id is None: return jsonify(categories=[])
+    branch_id = request.args.get('branch_id')
+    q = 'SELECT * FROM menu_categories WHERE tenant_id=? AND active=1'
+    args = [g.tenant_id]
+    if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
+    q += ' ORDER BY sort_order,id'
+    rows = conn.execute(q, args).fetchall()
+    return jsonify(categories=[dict(x) for x in rows])
+
+@app.post('/api/menu-categories')
+@login_required
+@role_required('owner', 'manager')
+def add_menu_category():
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    name = (d.get('name') or '').strip(); branch_id = d.get('branch_id')
+    if not name or not branch_id: return jsonify(error='กรุณาใส่ชื่อหมวดหมู่และเลือกสาขา'), 400
+    conn = db()
+    cur = conn.execute('INSERT INTO menu_categories(tenant_id,branch_id,name,icon,sort_order,created_at) VALUES(?,?,?,?,?,?)',
+        (g.tenant_id, branch_id, name, d.get('icon') or '🍜', d.get('sort_order') or 0, now()))
+    log_action('add_menu_category', detail=name)
+    conn.commit()
+    return jsonify(ok=True, id=cur.lastrowid)
+
+@app.put('/api/menu-categories/<int:cid>')
+@login_required
+@role_required('owner', 'manager')
+def edit_menu_category(cid):
+    conn = db()
+    old = conn.execute('SELECT * FROM menu_categories WHERE id=? AND tenant_id=?', (cid, g.tenant_id)).fetchone()
+    if not old: return jsonify(error='ไม่พบหมวดหมู่'), 404
+    d = request.get_json() or {}
+    conn.execute('UPDATE menu_categories SET name=?,icon=?,sort_order=? WHERE id=?',
+        ((d.get('name') or old['name']).strip(), d.get('icon') or old['icon'], d.get('sort_order', old['sort_order']), cid))
+    log_action('edit_menu_category', detail=str(cid))
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.delete('/api/menu-categories/<int:cid>')
+@login_required
+@role_required('owner', 'manager')
+def archive_menu_category(cid):
+    conn = db()
+    conn.execute('UPDATE menu_categories SET active=0 WHERE id=? AND tenant_id=?', (cid, g.tenant_id))
+    log_action('archive_menu_category', detail=str(cid))
+    conn.commit()
+    return jsonify(ok=True)
+
+def _menu_item_with_options(conn, item):
+    d = dict(item)
+    groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=? ORDER BY sort_order,id', (item['id'],)).fetchall()
+    d['option_groups'] = []
+    for grp in groups:
+        gd = dict(grp)
+        opts = conn.execute('SELECT * FROM menu_options WHERE group_id=? ORDER BY sort_order,id', (grp['id'],)).fetchall()
+        gd['options'] = [dict(o) for o in opts]
+        d['option_groups'].append(gd)
+    return d
+
+@app.get('/api/menu-items')
+@login_required
+def list_menu_items():
+    conn = db()
+    if g.tenant_id is None: return jsonify(items=[])
+    branch_id = request.args.get('branch_id')
+    q = 'SELECT * FROM menu_items WHERE tenant_id=? AND active=1'
+    args = [g.tenant_id]
+    if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
+    q += ' ORDER BY sort_order,id'
+    rows = conn.execute(q, args).fetchall()
+    return jsonify(items=[_menu_item_with_options(conn, r) for r in rows])
+
+@app.post('/api/menu-items')
+@login_required
+@role_required('owner', 'manager')
+def add_menu_item():
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    name = (d.get('name') or '').strip(); branch_id = d.get('branch_id')
+    if not name or not branch_id: return jsonify(error='กรุณาใส่ชื่อเมนูและเลือกสาขา'), 400
+    try:
+        base_price = float(d.get('base_price') or 0)
+    except (TypeError, ValueError):
+        return jsonify(error='ราคาไม่ถูกต้อง'), 400
+    conn = db()
+    cur = conn.execute('''INSERT INTO menu_items(tenant_id,branch_id,category_id,name,description,base_price,image_url,sort_order,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?)''',
+        (g.tenant_id, branch_id, d.get('category_id'), name, d.get('description') or '', base_price,
+         d.get('image_url'), d.get('sort_order') or 0, now()))
+    item_id = cur.lastrowid
+    _save_option_groups(conn, item_id, d.get('option_groups') or [])
+    log_action('add_menu_item', detail=name)
+    conn.commit()
+    return jsonify(ok=True, id=item_id)
+
+def _save_option_groups(conn, item_id, groups):
+    """Replace an item's option groups/options wholesale — simplest correct
+    approach for a small admin form (a handful of groups/options per item)."""
+    old_groups = conn.execute('SELECT id FROM menu_option_groups WHERE menu_item_id=?', (item_id,)).fetchall()
+    for og in old_groups:
+        conn.execute('DELETE FROM menu_options WHERE group_id=?', (og['id'],))
+    conn.execute('DELETE FROM menu_option_groups WHERE menu_item_id=?', (item_id,))
+    for gi, grp in enumerate(groups):
+        gname = (grp.get('name') or '').strip()
+        if not gname: continue
+        cur = conn.execute('INSERT INTO menu_option_groups(menu_item_id,name,required,sort_order) VALUES(?,?,?,?)',
+            (item_id, gname, 1 if grp.get('required') else 0, gi))
+        gid = cur.lastrowid
+        for oi, opt in enumerate(grp.get('options') or []):
+            oname = (opt.get('name') or '').strip()
+            if not oname: continue
+            try:
+                delta = float(opt.get('price_delta') or 0)
+            except (TypeError, ValueError):
+                delta = 0
+            conn.execute('INSERT INTO menu_options(group_id,name,price_delta,sort_order) VALUES(?,?,?,?)',
+                (gid, oname, delta, oi))
+
+@app.put('/api/menu-items/<int:mid>')
+@login_required
+@role_required('owner', 'manager')
+def edit_menu_item(mid):
+    conn = db()
+    old = conn.execute('SELECT * FROM menu_items WHERE id=? AND tenant_id=?', (mid, g.tenant_id)).fetchone()
+    if not old: return jsonify(error='ไม่พบเมนู'), 404
+    d = request.get_json() or {}
+    try:
+        base_price = float(d.get('base_price', old['base_price']))
+    except (TypeError, ValueError):
+        return jsonify(error='ราคาไม่ถูกต้อง'), 400
+    conn.execute('''UPDATE menu_items SET name=?,description=?,base_price=?,category_id=?,image_url=?,
+        sold_out=?,sort_order=? WHERE id=?''',
+        ((d.get('name') or old['name']).strip(), d.get('description', old['description']), base_price,
+         d.get('category_id', old['category_id']), d.get('image_url', old['image_url']),
+         1 if d.get('sold_out') else 0, d.get('sort_order', old['sort_order']), mid))
+    if 'option_groups' in d:
+        _save_option_groups(conn, mid, d.get('option_groups') or [])
+    log_action('edit_menu_item', detail=str(mid))
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.put('/api/menu-items/<int:mid>/sold-out')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def toggle_sold_out(mid):
+    """Lighter-weight endpoint for the common day-to-day action (mark an item
+    sold out / back in stock) so staff don't need full menu-edit rights."""
+    conn = db()
+    old = conn.execute('SELECT * FROM menu_items WHERE id=? AND tenant_id=?', (mid, g.tenant_id)).fetchone()
+    if not old: return jsonify(error='ไม่พบเมนู'), 404
+    d = request.get_json() or {}
+    conn.execute('UPDATE menu_items SET sold_out=? WHERE id=?', (1 if d.get('sold_out') else 0, mid))
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.delete('/api/menu-items/<int:mid>')
+@login_required
+@role_required('owner', 'manager')
+def archive_menu_item(mid):
+    conn = db()
+    conn.execute('UPDATE menu_items SET active=0 WHERE id=? AND tenant_id=?', (mid, g.tenant_id))
+    log_action('archive_menu_item', detail=str(mid))
+    conn.commit()
+    return jsonify(ok=True)
+
+# =====================================================================
+# Bootstrap (admin SPA hydration)
+# =====================================================================
+
+@app.get('/api/bootstrap')
+@login_required
+def bootstrap():
+    conn = db()
+    if g.tenant_id is None:
+        return jsonify(branches=[], tables=[], categories=[], items=[])
+    branches = [dict(x) for x in conn.execute('SELECT * FROM branches WHERE tenant_id=? AND active=1 ORDER BY id', (g.tenant_id,))]
+    tables = [dict(x) for x in conn.execute('SELECT * FROM dining_tables WHERE tenant_id=? AND active=1 ORDER BY id', (g.tenant_id,))]
+    categories = [dict(x) for x in conn.execute('SELECT * FROM menu_categories WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,))]
+    items_rows = conn.execute('SELECT * FROM menu_items WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,)).fetchall()
+    items = [_menu_item_with_options(conn, r) for r in items_rows]
+    return jsonify(branches=branches, tables=tables, categories=categories, items=items)
+
+# =====================================================================
+# Orders — public (customer QR ordering, no login) + staff-side management
+# =====================================================================
+
+def _order_with_items(conn, order):
+    d = dict(order)
+    items = conn.execute('SELECT * FROM order_items WHERE order_id=? ORDER BY id', (order['id'],)).fetchall()
+    d['items'] = []
+    for it in items:
+        item_d = dict(it)
+        opts = conn.execute('SELECT * FROM order_item_options WHERE order_item_id=? ORDER BY id', (it['id'],)).fetchall()
+        item_d['options'] = [dict(o) for o in opts]
+        d['items'].append(item_d)
+    return d
+
+def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
+    """Recompute prices server-side from the real menu — never trust client-sent
+    totals. Returns (order_items_to_insert, total) or raises ValueError(msg)."""
+    if not cart:
+        raise ValueError('ตะกร้าว่างเปล่า กรุณาเลือกเมนูก่อนสั่ง')
+    prepared = []
+    total = 0.0
+    for line in cart:
+        menu_item_id = line.get('menu_item_id')
+        qty = line.get('quantity') or 1
+        try:
+            qty = int(qty)
+        except (TypeError, ValueError):
+            raise ValueError('จำนวนสินค้าไม่ถูกต้อง')
+        if qty < 1 or qty > 50:
+            raise ValueError('จำนวนสินค้าต่อรายการต้องอยู่ระหว่าง 1-50')
+        item = conn.execute('SELECT * FROM menu_items WHERE id=? AND tenant_id=? AND branch_id=? AND active=1',
+            (menu_item_id, tenant_id, branch_id)).fetchone()
+        if not item:
+            raise ValueError('พบเมนูที่ไม่ถูกต้องในตะกร้า กรุณาโหลดหน้าใหม่')
+        if item['sold_out']:
+            raise ValueError(f'"{item["name"]}" หมดแล้ว กรุณาเอาออกจากตะกร้า')
+        unit_price = item['base_price']
+        chosen_options = []
+        groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=?', (menu_item_id,)).fetchall()
+        selected = line.get('selected_options') or {}  # {group_id: option_id}
+        for grp in groups:
+            opt_id = selected.get(str(grp['id'])) or selected.get(grp['id'])
+            if grp['required'] and not opt_id:
+                raise ValueError(f'กรุณาเลือก "{grp["name"]}" สำหรับเมนู {item["name"]}')
+            if opt_id:
+                opt = conn.execute('SELECT * FROM menu_options WHERE id=? AND group_id=?', (opt_id, grp['id'])).fetchone()
+                if not opt:
+                    raise ValueError('ตัวเลือกเมนูไม่ถูกต้อง กรุณาโหลดหน้าใหม่')
+                unit_price += opt['price_delta']
+                chosen_options.append({'group_name': grp['name'], 'option_name': opt['name'], 'price_delta': opt['price_delta']})
+        line_total = unit_price * qty
+        total += line_total
+        prepared.append({
+            'menu_item_id': menu_item_id, 'item_name': item['name'], 'quantity': qty,
+            'unit_price': unit_price, 'line_total': line_total,
+            'notes': (line.get('notes') or '').strip()[:300], 'options': chosen_options,
+        })
+    return prepared, total
+
+PHONE_RE_MIN, PHONE_RE_MAX = 8, 12  # digits, covers Lao/Thai mobile numbers
+
+def _valid_phone(phone):
+    digits = ''.join(ch for ch in (phone or '') if ch.isdigit())
+    return PHONE_RE_MIN <= len(digits) <= PHONE_RE_MAX
+
+@app.get('/api/public/menu')
+def public_menu():
+    """Customer-facing menu. table=<qr_token> auto-resolves the table (and its
+    branch/tenant); otherwise branch_id must be given directly (takeaway/delivery
+    QR that isn't tied to one physical table)."""
+    conn = db()
+    table_token = request.args.get('table')
+    branch_id = request.args.get('branch_id')
+    table = None
+    if table_token:
+        table = conn.execute('SELECT * FROM dining_tables WHERE qr_token=? AND active=1', (table_token,)).fetchone()
+        if not table:
+            return jsonify(error='ไม่พบโต๊ะนี้ QR อาจไม่ถูกต้องหรือถูกปิดใช้งาน'), 404
+        branch_id = table['branch_id']
+        tenant_id = table['tenant_id']
+    elif branch_id:
+        branch = conn.execute('SELECT * FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
+        if not branch:
+            return jsonify(error='ไม่พบสาขานี้'), 404
+        tenant_id = branch['tenant_id']
+    else:
+        return jsonify(error='ไม่พบข้อมูลร้าน กรุณาสแกน QR ใหม่อีกครั้ง'), 400
+    tenant = conn.execute('SELECT * FROM tenants WHERE id=? AND active=1', (tenant_id,)).fetchone()
+    if not tenant:
+        return jsonify(error='ร้านนี้ปิดให้บริการชั่วคราว'), 404
+    categories = [dict(x) for x in conn.execute('SELECT * FROM menu_categories WHERE branch_id=? AND active=1 ORDER BY sort_order,id', (branch_id,))]
+    items_rows = conn.execute('SELECT * FROM menu_items WHERE branch_id=? AND active=1 ORDER BY sort_order,id', (branch_id,)).fetchall()
+    items = [_menu_item_with_options(conn, r) for r in items_rows]
+    return jsonify(
+        tenant=dict(name=tenant['name'], icon=tenant['icon'], currency=tenant['currency']),
+        branch_id=branch_id,
+        table=dict(id=table['id'], name=table['name']) if table else None,
+        categories=categories, items=items,
+    )
+
+@app.get('/api/public/tables')
+def public_tables():
+    """Used only by the generic-QR (no table auto-detected) fallback flow, so the
+    customer can explicitly pick their table before confirming — never exposes
+    QR tokens, just id+name for the picker."""
+    conn = db()
+    branch_id = request.args.get('branch_id')
+    if not branch_id:
+        return jsonify(error='ไม่พบข้อมูลสาขา'), 400
+    branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
+    if not branch:
+        return jsonify(error='ไม่พบสาขานี้'), 404
+    rows = conn.execute('SELECT id,name FROM dining_tables WHERE branch_id=? AND active=1 ORDER BY id', (branch_id,)).fetchall()
+    return jsonify(tables=[dict(x) for x in rows])
+
+@app.post('/api/public/orders')
+def public_create_order():
+    d = request.get_json() or {}
+    conn = db()
+    branch_id = d.get('branch_id')
+    order_type = d.get('order_type') or 'dine_in'
+    if order_type not in ('dine_in', 'takeaway', 'delivery'):
+        return jsonify(error='ประเภทออเดอร์ไม่ถูกต้อง'), 400
+    branch = conn.execute('SELECT * FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
+    if not branch:
+        return jsonify(error='ไม่พบสาขา กรุณาสแกน QR ใหม่'), 400
+    tenant_id = branch['tenant_id']
+
+    table_id = None
+    table_name = None
+    table_token = d.get('table_token')
+    if table_token:
+        table = conn.execute('SELECT * FROM dining_tables WHERE qr_token=? AND branch_id=? AND active=1', (table_token, branch_id)).fetchone()
+        if not table:
+            return jsonify(error='ไม่พบโต๊ะนี้'), 400
+        table_id, table_name = table['id'], table['name']
+    elif order_type == 'dine_in':
+        # No table QR was scanned (generic QR / walk-in) — the customer MUST
+        # pick their table explicitly before the order can be confirmed.
+        table_id_raw = d.get('table_id')
+        if not table_id_raw:
+            return jsonify(error='กรุณาเลือกโต๊ะก่อนยืนยันออเดอร์'), 400
+        table = conn.execute('SELECT * FROM dining_tables WHERE id=? AND branch_id=? AND active=1', (table_id_raw, branch_id)).fetchone()
+        if not table:
+            return jsonify(error='โต๊ะที่เลือกไม่ถูกต้อง'), 400
+        table_id, table_name = table['id'], table['name']
+
+    customer_name = (d.get('customer_name') or '').strip()[:100]
+    customer_phone = (d.get('customer_phone') or '').strip()
+    customer_phone_confirm = (d.get('customer_phone_confirm') or '').strip()
+    customer_address = (d.get('customer_address') or '').strip()[:500] if order_type == 'delivery' else None
+
+    if not customer_name:
+        return jsonify(error='กรุณากรอกชื่อผู้สั่ง'), 400
+    if order_type == 'delivery':
+        if not _valid_phone(customer_phone):
+            return jsonify(error='เบอร์โทรไม่ถูกต้อง กรุณากรอกเบอร์ให้ครบถ้วน'), 400
+        if customer_phone != customer_phone_confirm:
+            return jsonify(error='เบอร์โทรทั้งสองช่องไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง'), 400
+        if not customer_address:
+            return jsonify(error='กรุณากรอกที่อยู่จัดส่ง'), 400
+    elif customer_phone and not _valid_phone(customer_phone):
+        return jsonify(error='เบอร์โทรไม่ถูกต้อง'), 400
+
+    try:
+        prepared_items, total = _validate_and_price_cart(conn, tenant_id, branch_id, d.get('cart') or [])
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+    order_no = gen_order_no(conn, tenant_id)
+    cur = conn.execute('''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
+        customer_name,customer_phone,customer_address,total_amount,notes,placed_by,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
+         customer_address, total, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
+    order_id = cur.lastrowid
+    for it in prepared_items:
+        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes)
+            VALUES(?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes']))
+        oi_id = oi_cur.lastrowid
+        for opt in it['options']:
+            conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
+                (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
+    conn.commit()
+    return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+
+@app.get('/api/public/orders/track')
+def public_track_order():
+    order_no = (request.args.get('order_no') or '').strip()
+    phone = (request.args.get('phone') or '').strip()
+    if not order_no or not phone:
+        return jsonify(error='กรุณากรอกเลขที่ออเดอร์และเบอร์โทร'), 400
+    conn = db()
+    order = conn.execute('SELECT * FROM orders WHERE order_no=? AND customer_phone=?', (order_no, phone)).fetchone()
+    if not order:
+        return jsonify(error='ไม่พบออเดอร์ กรุณาตรวจสอบเลขที่ออเดอร์และเบอร์โทรอีกครั้ง'), 404
+    return jsonify(order=_order_with_items(conn, order))
+
+# ---------- staff-side order management ----------
+
+@app.get('/api/orders')
+@login_required
+def list_orders():
+    conn = db()
+    if g.tenant_id is None: return jsonify(orders=[])
+    status = request.args.get('status')
+    branch_id = request.args.get('branch_id')
+    q = 'SELECT * FROM orders WHERE tenant_id=?'
+    args = [g.tenant_id]
+    if status: q += ' AND status=?'; args.append(status)
+    if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
+    q += ' ORDER BY id DESC LIMIT 200'
+    rows = conn.execute(q, args).fetchall()
+    return jsonify(orders=[_order_with_items(conn, r) for r in rows])
+
+@app.post('/api/orders')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def staff_create_order():
+    """Staff places an order on the customer's behalf (walk-in / assisted order)."""
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    branch_id = d.get('branch_id')
+    order_type = d.get('order_type') or 'dine_in'
+    if order_type not in ('dine_in', 'takeaway', 'delivery'):
+        return jsonify(error='ประเภทออเดอร์ไม่ถูกต้อง'), 400
+    conn = db()
+    branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขา'), 400
+
+    table_id, table_name = None, None
+    if order_type == 'dine_in':
+        table_id_raw = d.get('table_id')
+        if not table_id_raw:
+            return jsonify(error='กรุณาเลือกโต๊ะก่อนยืนยันออเดอร์'), 400
+        table = conn.execute('SELECT * FROM dining_tables WHERE id=? AND tenant_id=? AND branch_id=?', (table_id_raw, g.tenant_id, branch_id)).fetchone()
+        if not table: return jsonify(error='โต๊ะที่เลือกไม่ถูกต้อง'), 400
+        table_id, table_name = table['id'], table['name']
+
+    customer_name = (d.get('customer_name') or 'ลูกค้า').strip()[:100]
+    customer_phone = (d.get('customer_phone') or '').strip()
+    customer_address = (d.get('customer_address') or '').strip()[:500] if order_type == 'delivery' else None
+    if order_type == 'delivery' and not _valid_phone(customer_phone):
+        return jsonify(error='เบอร์โทรไม่ถูกต้อง'), 400
+
+    try:
+        prepared_items, total = _validate_and_price_cart(conn, g.tenant_id, branch_id, d.get('cart') or [])
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+    order_no = gen_order_no(conn, g.tenant_id)
+    cur = conn.execute('''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
+        customer_name,customer_phone,customer_address,total_amount,notes,placed_by,created_by_user_id,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (g.tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
+         customer_address, total, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
+    order_id = cur.lastrowid
+    for it in prepared_items:
+        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes)
+            VALUES(?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes']))
+        oi_id = oi_cur.lastrowid
+        for opt in it['options']:
+            conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
+                (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
+    log_action('staff_create_order', detail=order_no)
+    conn.commit()
+    return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+
+@app.put('/api/orders/<int:oid>/status')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def update_order_status(oid):
+    conn = db()
+    order = conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid, g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'), 404
+    d = request.get_json() or {}
+    status = d.get('status')
+    if status not in ORDER_STATUSES:
+        return jsonify(error='สถานะไม่ถูกต้อง'), 400
+    conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (status, now(), oid))
+    log_action('update_order_status', detail=f'{oid} -> {status}')
+    conn.commit()
+    return jsonify(ok=True)
+
+@app.put('/api/orders/<int:oid>/payment')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def update_order_payment(oid):
+    conn = db()
+    order = conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid, g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'), 404
+    d = request.get_json() or {}
+    payment_status = d.get('payment_status')
+    if payment_status not in ('unpaid', 'paid'):
+        return jsonify(error='สถานะการชำระเงินไม่ถูกต้อง'), 400
+    conn.execute('UPDATE orders SET payment_status=?,updated_at=? WHERE id=?', (payment_status, now(), oid))
+    log_action('update_order_payment', detail=f'{oid} -> {payment_status}')
+    conn.commit()
+    return jsonify(ok=True)
+
+# =====================================================================
+# Users management (same pattern as CASHFLOW 24)
+# =====================================================================
+
+@app.get('/api/users')
+@login_required
+@role_required('owner')
+def list_users():
+    conn = db()
+    rows = conn.execute('SELECT id,username,display_name,role,active FROM users WHERE tenant_id=? ORDER BY id', (g.tenant_id,)).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.post('/api/users')
+@login_required
+@role_required('owner')
+def add_user():
+    err = require_tenant()
+    if err: return err
+    d = request.get_json() or {}
+    username = (d.get('username') or '').strip(); display_name = (d.get('display_name') or '').strip()
+    password = d.get('password') or ''; role = d.get('role') or 'staff'
+    if not username or not display_name or not password: return jsonify(error='กรุณาใส่ชื่อผู้ใช้ ชื่อที่แสดง และรหัสผ่าน'), 400
+    if role not in ('owner', 'manager', 'staff'): return jsonify(error='สิทธิ์ไม่ถูกต้อง'), 400
+    if len(password) < 6: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
+    conn = db()
+    try:
+        cur = conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(?,?,?,?,?,?,?)',
+            (g.tenant_id, username, hash_password(password), display_name, role, 1, now()))
+    except INTEGRITY_ERRORS:
+        return jsonify(error='ชื่อผู้ใช้นี้มีคนใช้แล้ว'), 400
+    log_action('add_user', detail=username)
+    conn.commit()
+    return jsonify(ok=True, id=cur.lastrowid)
+
+@app.put('/api/users/<int:uid>')
+@login_required
+@role_required('owner')
+def edit_user(uid):
+    d = request.get_json() or {}; conn = db()
+    old = conn.execute('SELECT * FROM users WHERE id=? AND tenant_id=?', (uid, g.tenant_id)).fetchone()
+    if not old: return jsonify(error='ไม่พบผู้ใช้'), 404
+    display_name = (d.get('display_name') or old['display_name']).strip()
+    role = d.get('role') or old['role']
+    if role not in ('owner', 'manager', 'staff'): return jsonify(error='สิทธิ์ไม่ถูกต้อง'), 400
+    if uid == g.user['id'] and role != 'owner':
+        return jsonify(error='ไม่สามารถลดสิทธิ์ตัวเองได้ ให้เจ้าของอีกคนทำแทน'), 400
+    active = 1 if d.get('active', old['active']) else 0
+    params = [display_name, role, active]
+    sql = 'UPDATE users SET display_name=?,role=?,active=?'
+    if d.get('password'):
+        if len(d['password']) < 6: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
+        sql += ',password_hash=?,must_change_password=1'; params.append(hash_password(d['password']))
+    sql += ' WHERE id=?'; params.append(uid)
+    conn.execute(sql, params)
+    log_action('edit_user', detail=f'id={uid}'); conn.commit()
+    return jsonify(ok=True)
+
+@app.delete('/api/users/<int:uid>')
+@login_required
+@role_required('owner')
+def deactivate_user(uid):
+    if uid == g.user['id']: return jsonify(error='ปิดการใช้งานบัญชีตัวเองไม่ได้'), 400
+    conn = db()
+    conn.execute('UPDATE users SET active=0 WHERE id=? AND tenant_id=? AND active=1', (uid, g.tenant_id))
+    log_action('deactivate_user', detail=str(uid))
+    conn.commit()
+    return jsonify(ok=True)
+
+# =====================================================================
+# App bootstrap
+# =====================================================================
+
+with app.app_context():
+    init_db()
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 5300))
+    app.run(host='0.0.0.0', port=port, debug=not IS_POSTGRES)

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+zaabos.db
+.secret_key
+backups/*.db
+backups/*.sql
+.env

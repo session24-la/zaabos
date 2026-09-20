@@ -1,0 +1,24 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ติดตามออเดอร์ — ZaabOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<meta name="theme-color" content="#ea580c">
+</head><body>
+
+<main class="narrow" style="padding-top:30px">
+  <div class="brand center" style="margin-bottom:20px">Zaab<b>OS</b></div>
+
+  <div class="panel" id="lookupPanel">
+    <h2>ติดตามสถานะออเดอร์</h2>
+    <label><span>เลขที่ออเดอร์</span><input id="orderNoInput" placeholder="เช่น Z-20260920-0001"></label>
+    <label><span>เบอร์โทรที่ใช้ตอนสั่ง</span><input id="phoneInput" inputmode="numeric"></label>
+    <div class="login-error" id="lookupError"></div>
+    <button class="save" id="lookupBtn">🔍 ตรวจสอบสถานะ</button>
+  </div>
+
+  <div id="resultPanel" class="hidden"></div>
+</main>
+
+<script src="/static/track.js"></script>
+</body></html>
