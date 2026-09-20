@@ -921,7 +921,7 @@ function orderCardHtml(o) {
         <span class="hint">รายการใหม่ที่ยังไม่เข้าครัว:</span>
         <label class="oc-select-all"><input type="checkbox" data-select-all-kitchen="${o.id}"> ${escapeHtml(t('label_select_all'))}</label>
         <button class="ghost-btn btn-send-kitchen" data-send-kitchen="${o.id}" disabled>🔔 ${escapeHtml(t('btn_send_to_kitchen'))}</button>
-      </div>` : `<div class="hint oc-auto-kitchen">🔔 รายการออเดอร์ถูกส่งเข้าครัวอัตโนมัติเมื่อยืนยันแล้ว</div>`}
+      </div>` : `<div class="hint oc-auto-kitchen">✅ รายการที่ต้องส่งเข้าครัวถูกส่งแล้ว</div>`}
       <div class="oc-pay-actions">
         ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn primary" data-add-items="${o.id}">➕ เพิ่มอาหาร</button>` : ''}
         ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}">↔️ ย้ายโต๊ะ</button>` : ''}
@@ -1369,7 +1369,7 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
     const endpoint = addItemsOrderId ? `/api/orders/${addItemsOrderId}/items` : '/api/orders';
     const sendPayload = addItemsOrderId ? {items: payload.cart} : payload;
     const r = await apiJson(endpoint, 'POST', sendPayload);
-    closeModals(); toast(addItemsOrderId ? 'เพิ่มรายการแล้ว' : t('toast_order_saved', { no: r.order_no }), 'ok');
+    closeModals(); toast(addItemsOrderId ? 'เพิ่มรายการแล้ว — กรุณากดส่งเข้าครัว' : (t('toast_order_saved', { no: r.order_no }) + ' — กรุณากดส่งเข้าครัว'), 'ok');
     addItemsOrderId = null; loadOrders(); loadBoardData();
     // items with stock tracking just got decremented server-side — refresh the
     // cached menu (boot.items) so the Menu tab shows the real count, not what
