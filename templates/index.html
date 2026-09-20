@@ -346,9 +346,11 @@
   </div>
   <label><span data-i18n="label_customer_name">ชื่อลูกค้า</span><input id="takeOrderCustomerName" placeholder="ลูกค้า" data-i18n-ph="placeholder_customer_name"></label>
   <label><span data-i18n="label_guest_count">จำนวนลูกค้า (คน)</span><input id="takeOrderGuestCount" type="number" min="1" max="200" inputmode="numeric" placeholder="เช่น 4" data-i18n-ph="placeholder_guest_count"></label>
+  <div id="takeOrderScheduleRow" class="hidden"><label><span>เวลารับ/จัดส่งล่วงหน้า (ถ้ามี)</span><input id="takeOrderScheduledFor" type="datetime-local"></label></div>
   <div id="takeOrderDeliveryFields" class="hidden">
     <label><span data-i18n="label_phone">เบอร์โทร</span><input id="takeOrderPhone" inputmode="numeric"></label>
     <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress"></textarea></label>
+    <label><span>ค่าจัดส่ง</span><input id="takeOrderDeliveryFee" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
   </div>
   <h3 data-i18n="label_choose_menu">เลือกเมนู</h3>
   <div class="cat-scroll" id="takeOrderCatScroll"></div>
