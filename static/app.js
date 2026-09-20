@@ -948,7 +948,7 @@ function orderCardHtml(o) {
         </div>
         <div style="text-align:right">
           <span class="pill ${o.status}"><span class="pill-dot ${o.status}"></span>${escapeHtml(statusLabel(o.status))}</span><br>
-          <span class="pill ${o.payment_status}" style="margin-top:6px">${escapeHtml(o.payment_status === 'paid' ? t('payment_paid') : t('payment_unpaid'))}</span>
+          ${o.status !== 'cancelled' ? `<span class="pill ${o.payment_status}" style="margin-top:6px">${escapeHtml(o.payment_status === 'paid' ? t('payment_paid') : t('payment_unpaid'))}</span>` : ''}
         </div>
       </div>
       <ul class="oc-items">${itemsHtml}</ul>
