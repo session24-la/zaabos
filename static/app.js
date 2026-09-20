@@ -66,7 +66,9 @@ async function api(url, opts) {
   if (opts.method && opts.method !== 'GET') {
     opts.headers['X-CSRF-Token'] = (me && me.csrf_token) || '';
   }
-  const r = await fetch(url, opts);
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) { if (!silent) toast('การเชื่อมต่อขัดข้อง กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง','err'); throw new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้'); }
   let body = null;
   try { body = await r.json(); } catch (e) { /* no body */ }
   if (r.status === 401) {
@@ -341,6 +343,7 @@ function renderReportCards(s) {
     <div class="report-card rc-profit ${profit < 0 ? 'rc-loss' : ''}"><div class="rc-label">${escapeHtml(t('label_net_profit'))}</div><div class="rc-value">${fmtMoney(profit)}</div></div>
   `;
   const labels={cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'};
+  if (s.refund_total > 0) cards.insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
 }
 
@@ -927,6 +930,8 @@ function orderCardHtml(o) {
         ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}">↔️ ย้ายโต๊ะ</button>` : ''}
         ${o.payment_status === 'unpaid' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
+        ${o.payment_status === 'paid' && (me.role === 'owner' || me.role === 'manager' || me.role === 'super_admin') ? `<button class="ghost-btn danger" data-refund-order="${o.id}">↩️ คืนเงิน</button>` : ''}
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-merge-order="${o.id}">🔗 รวมบิล</button>` : ''}
       </div>
     </div>`;
 }
@@ -963,6 +968,7 @@ function wireOrderActionClicks(container) {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
     const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
+    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
     if (iq) { const [oid,iid,qty]=iq.split(':'); apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:Number(qty)}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
     else if (ci) { const [oid,iid,qty]=ci.split(':'); if(confirm('ยืนยันยกเลิกรายการนี้?')) apiJson(`/api/orders/${oid}/items/${iid}/cancel`,'PUT',{quantity:Number(qty),reason:'ยกเลิกโดยพนักงาน'}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
@@ -972,6 +978,8 @@ function wireOrderActionClicks(container) {
     else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (cp) { openConfirmPaymentModal(parseInt(cp, 10)); }
     else if (pr) { printReceipt(parseInt(pr, 10)); }
+    else if (rf) { refundOrder(parseInt(rf,10)); }
+    else if (mg) { mergeOrder(parseInt(mg,10)); }
     else if (sk) { const card = e.target.closest('.order-card'); if (card) sendSelectedToKitchen(parseInt(sk, 10), card); }
   });
   container.addEventListener('change', (e) => {
@@ -987,6 +995,24 @@ function wireOrderActionClicks(container) {
 }
 wireOrderActionClicks($('#ordersList'));
 wireOrderActionClicks($('#orderDetailBody'));
+
+async function refundOrder(orderId) {
+  const reason=prompt('เหตุผลการคืนเงิน:'); if(reason===null) return;
+  if(!reason.trim()) { toast('กรุณาระบุเหตุผลการคืนเงิน','err'); return; }
+  if(!confirm('ยืนยันคืนเงินเต็มจำนวนสำหรับบิลนี้? รายการจะถูกบันทึกในประวัติ')) return;
+  try { const r=await apiJson(`/api/orders/${orderId}/refund`,'POST',{reason:reason.trim()}); toast(`บันทึกคืนเงิน ${fmtMoney(r.amount)} แล้ว`,'ok'); onOrderActionDone(); }
+  catch(e){ toast(e.message,'err'); }
+}
+async function mergeOrder(sourceId) {
+  const candidates=activeOrders.filter(o=>o.id!==sourceId && o.payment_status==='unpaid' && o.status!=='cancelled' && o.status!=='completed');
+  if(!candidates.length){ toast('ไม่มีบิลเปิดอื่นสำหรับรวม','err'); return; }
+  const choices=candidates.map(o=>`${o.id}: #${o.order_no}${o.table_name_snapshot?' · '+o.table_name_snapshot:''}`).join('\n');
+  const raw=prompt('กรอก ID บิลปลายทาง:\n'+choices); if(raw===null) return;
+  const target=Number(raw); if(!Number.isInteger(target)){ toast('ID บิลไม่ถูกต้อง','err'); return; }
+  if(!confirm('ยืนยันรวมบิล? รายการทั้งหมดจะย้ายไปบิลปลายทาง')) return;
+  try { await apiJson(`/api/orders/${sourceId}/merge`,'POST',{target_order_id:target}); toast('รวมบิลเรียบร้อย','ok'); onOrderActionDone(); }
+  catch(e){ toast(e.message,'err'); }
+}
 
 function onOrderActionDone() { loadOrders(); loadBoardData(); }
 
