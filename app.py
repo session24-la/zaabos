@@ -324,6 +324,12 @@ def ensure_schema_migrations(conn):
             refunded_by_user_id INTEGER, refunded_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
         conn.commit()
     record_migration(conn, 10, 'production_safety_foundation')
+    # Round 11: DB-level concurrency invariants.
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_tenant_order ON payments(tenant_id,order_id)')
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_refunds_tenant_order ON refunds(tenant_id,order_id)')
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_closing_tenant_branch_date ON daily_closings(tenant_id,branch_id,closing_date)')
+    conn.commit()
+    record_migration(conn, 11, 'concurrency_and_recovery_hardening')
 
 def init_db():
     if IS_POSTGRES:
@@ -1524,16 +1530,22 @@ def update_order_payment(oid):
         return jsonify(error='จำนวนเงินสดที่รับมาต้องไม่น้อยกว่ายอดชำระ'), 400
     if method != 'cash': cash=None
     ts=now()
-    conn.execute('UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,cash_received=?,paid_at=?,updated_at=? WHERE id=?',
-                 ('paid',method,tax,cash,ts,ts,oid))
-    # Auto-close a paid bill. Staff should not have to manually click
-    # Preparing/Ready/Served/Completed after the money is already settled.
-    if payment_status == 'paid' and order['status'] not in ('cancelled', 'completed'):
-        conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', ('completed', ts, oid))
-    conn.execute('INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at) VALUES(?,?,?,?,?,?,?,?,?)',
-                 (g.tenant_id,order['branch_id'],oid,due,method,cash,(d.get('reference') or '')[:120],g.user['id'],ts))
-    log_action('payment_completed', detail=f'{oid}: {method} {due}')
-    conn.commit()
+    claimed = conn.execute('''UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,cash_received=?,paid_at=?,updated_at=?
+        WHERE id=? AND tenant_id=? AND payment_status='unpaid' AND status<>'cancelled' ''',
+        ('paid',method,tax,cash,ts,ts,oid,g.tenant_id))
+    if claimed.rowcount != 1:
+        conn.rollback()
+        return jsonify(error='ออเดอร์นี้ถูกชำระหรือเปลี่ยนสถานะจากอุปกรณ์อื่นแล้ว กรุณารีเฟรช'),409
+    if order['status'] not in ('cancelled', 'completed'):
+        conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=? AND tenant_id=?', ('completed', ts, oid, g.tenant_id))
+    try:
+        conn.execute('INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                     (g.tenant_id,order['branch_id'],oid,due,method,cash,(d.get('reference') or '')[:120],g.user['id'],ts))
+        log_action('payment_completed', detail=f'{oid}: {method} {due}')
+        conn.commit()
+    except INTEGRITY_ERRORS:
+        conn.rollback()
+        return jsonify(error='ออเดอร์นี้มีรายการชำระเงินแล้ว กรุณารีเฟรช'),409
     return jsonify(ok=True, amount=due, payment_method=method, change=max(0,(cash or 0)-due) if method=='cash' else 0)
 
 @app.post('/api/orders/<int:oid>/items')
@@ -1633,10 +1645,15 @@ def refund_order(oid):
     d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
     if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการคืนเงิน'),400
     amount=float(payment['amount'] or 0); ts=now()
-    conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at) VALUES(?,?,?,?,?,?,?,?)',
-                 (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts))
-    log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}')
-    conn.commit(); return jsonify(ok=True,amount=amount,refunded_at=ts)
+    try:
+        conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at) VALUES(?,?,?,?,?,?,?,?)',
+                     (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts))
+        log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}')
+        conn.commit()
+    except INTEGRITY_ERRORS:
+        conn.rollback()
+        return jsonify(error='ออเดอร์นี้ถูกคืนเงินแล้วจากอุปกรณ์อื่น กรุณารีเฟรช'),409
+    return jsonify(ok=True,amount=amount,refunded_at=ts)
 
 @app.post('/api/orders/<int:source_id>/merge')
 @login_required
@@ -1839,11 +1856,19 @@ def save_daily_closing():
     except ValueError as e: return jsonify(error=str(e)),400
     cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND substr(paid_at,1,10)=?",(g.tenant_id,branch_id,closing_date)).fetchone()['total'] or 0
     expected=opening+float(cash)-cash_out; difference=counted-expected; ts=now(); notes=(d.get('notes') or '')[:500]
-    old=conn.execute('SELECT id FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
-    if old:
-        conn.execute('UPDATE daily_closings SET opening_cash=?,cash_out=?,expected_cash=?,counted_cash=?,difference=?,notes=?,closed_by_user_id=?,closed_at=? WHERE id=?',(opening,cash_out,expected,counted,difference,notes,g.user['id'],ts,old['id']))
+    if IS_POSTGRES:
+        conn.execute('''INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (tenant_id,branch_id,closing_date) DO UPDATE SET
+            opening_cash=EXCLUDED.opening_cash,cash_out=EXCLUDED.cash_out,expected_cash=EXCLUDED.expected_cash,
+            counted_cash=EXCLUDED.counted_cash,difference=EXCLUDED.difference,notes=EXCLUDED.notes,
+            closed_by_user_id=EXCLUDED.closed_by_user_id,closed_at=EXCLUDED.closed_at''',
+            (g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
     else:
-        conn.execute('INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
+        old=conn.execute('SELECT id FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
+        if old:
+            conn.execute('UPDATE daily_closings SET opening_cash=?,cash_out=?,expected_cash=?,counted_cash=?,difference=?,notes=?,closed_by_user_id=?,closed_at=? WHERE id=?',(opening,cash_out,expected,counted,difference,notes,g.user['id'],ts,old['id']))
+        else:
+            conn.execute('INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
     log_action('daily_closing',detail=f'{branch_id} {closing_date}: expected={expected} counted={counted} difference={difference}')
     conn.commit(); return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=difference,cash_sales=cash)
 
