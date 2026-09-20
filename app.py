@@ -2131,6 +2131,55 @@ def merge_orders(source_id):
     log_action('merge_orders',detail=f'{source_id} -> {target_id}')
     conn.commit(); return jsonify(ok=True,target_order_id=target_id,total_amount=total)
 
+@app.post('/api/orders/<int:source_id>/split')
+@login_required
+@role_required('owner','manager','staff')
+def split_order(source_id):
+    """Split selected active quantities into a new unpaid bill without changing stock."""
+    conn=db(); d=request.get_json() or {}
+    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(source_id,g.tenant_id)).fetchone()
+    if not source: return jsonify(error='ไม่พบบิลต้นทาง'),404
+    if source['payment_status']!='unpaid' or source['status'] in ('completed','cancelled'):
+        return jsonify(error='แยกได้เฉพาะบิลที่ยังเปิดและยังไม่ชำระ'),409
+    req=d.get('items') or []
+    if not isinstance(req,list) or not req: return jsonify(error='กรุณาเลือกรายการที่ต้องการแยกบิล'),400
+    selections=[]; seen=set()
+    for x in req:
+        try: iid=int(x.get('item_id')); qty=int(x.get('quantity'))
+        except (TypeError,ValueError,AttributeError): return jsonify(error='รายการหรือจำนวนไม่ถูกต้อง'),400
+        if iid in seen: return jsonify(error='มีรายการซ้ำ'),400
+        seen.add(iid)
+        it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,source_id)).fetchone()
+        if not it: return jsonify(error='ไม่พบรายการในบิลต้นทาง'),404
+        active=max(0,int(it['quantity'] or 0)-int(it['cancelled_quantity'] or 0))
+        if qty<1 or qty>active: return jsonify(error='จำนวนที่แยกไม่ถูกต้อง'),400
+        selections.append((it,qty,active))
+    total_active=int(conn.execute('SELECT COALESCE(SUM(quantity-COALESCE(cancelled_quantity,0)),0) q FROM order_items WHERE order_id=?',(source_id,)).fetchone()['q'] or 0)
+    if sum(q for _,q,_ in selections)>=total_active: return jsonify(error='ต้องเหลืออย่างน้อย 1 รายการในบิลเดิม'),409
+    ts=now()
+    try:
+        no,cur=insert_order_row(conn,g.tenant_id,
+          """INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,customer_name,customer_phone,customer_address,total_amount,guest_count,scheduled_for,delivery_fee,fulfillment_status,delivery_status,driver_name,driver_phone,delivery_note,status,notes,placed_by,created_by_user_id,created_at,updated_at)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+          lambda n:(g.tenant_id,source['branch_id'],n,source['order_type'],source['table_id'],source['table_name_snapshot'],source['customer_name'],source['customer_phone'],source['customer_address'],0,None,source['scheduled_for'],0,source['fulfillment_status'],source['delivery_status'],source['driver_name'],source['driver_phone'],source['delivery_note'],source['status'],f'แยกจากบิล #{source["order_no"]}','staff',g.user['id'],ts,ts))
+        new_id=cur.lastrowid
+        for it,qty,active in selections:
+            cancelled=int(it['cancelled_quantity'] or 0)
+            if qty==active and cancelled==0:
+                conn.execute('UPDATE order_items SET order_id=? WHERE id=?',(new_id,it['id']))
+            else:
+                remain=int(it['quantity'])-qty
+                conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(remain,remain*float(it['unit_price']),it['id']))
+                nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at)
+                                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(new_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],qty*float(it['unit_price']),it['notes'],it['kitchen_sent_at'],0,'',None))
+                for op in conn.execute('SELECT * FROM order_item_options WHERE order_item_id=?',(it['id'],)).fetchall():
+                    conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(nc.lastrowid,op['group_name_snapshot'],op['option_name_snapshot'],op['price_delta_snapshot']))
+        a=_recalculate_order_total(conn,source_id); b=_recalculate_order_total(conn,new_id)
+        log_action('split_order',detail=f'{source_id}->{new_id}; items={len(selections)}'); conn.commit()
+        return jsonify(ok=True,new_order_id=new_id,new_order_no=no,source_total=a,new_total=b)
+    except Exception:
+        conn.rollback(); app.logger.exception('split_order failed'); return jsonify(error='ไม่สามารถแยกบิลได้'),500
+
 # =====================================================================
 # Users management (same pattern as CASHFLOW 24)
 # =====================================================================
