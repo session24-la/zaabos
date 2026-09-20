@@ -348,6 +348,30 @@ def ensure_schema_migrations(conn):
     record_migration(conn, 11, 'concurrency_and_recovery_hardening')
     record_migration(conn, 12, 'production_acceptance_security')
     record_migration(conn, 13, 'launch_readiness_recovery')
+    # Round 14A: restaurant operations — shifts, cash drawer and critical-operation reasons.
+    idcol = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    money = 'DOUBLE PRECISION' if IS_POSTGRES else 'REAL'
+    conn.execute(f'''CREATE TABLE IF NOT EXISTS work_shifts (
+        id {idcol}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, opened_by_user_id INTEGER NOT NULL,
+        closed_by_user_id INTEGER, opened_at TEXT NOT NULL, closed_at TEXT, opening_cash {money} NOT NULL DEFAULT 0,
+        counted_cash {money}, expected_cash {money}, difference {money}, status TEXT NOT NULL DEFAULT 'open',
+        notes TEXT NOT NULL DEFAULT '')''')
+    conn.execute(f'''CREATE TABLE IF NOT EXISTS cash_movements (
+        id {idcol}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, shift_id INTEGER NOT NULL,
+        movement_type TEXT NOT NULL, amount {money} NOT NULL, reason TEXT NOT NULL, created_by_user_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL, FOREIGN KEY(shift_id) REFERENCES work_shifts(id))''')
+    conn.execute(f'''CREATE TABLE IF NOT EXISTS operation_reasons (
+        id {idcol}, tenant_id INTEGER NOT NULL, operation_type TEXT NOT NULL, label TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)''')
+    conn.execute(f'''CREATE TABLE IF NOT EXISTS critical_operations (
+        id {idcol}, tenant_id INTEGER NOT NULL, branch_id INTEGER, operation_type TEXT NOT NULL,
+        entity_type TEXT NOT NULL DEFAULT '', entity_id INTEGER, reason_id INTEGER, reason_text TEXT NOT NULL DEFAULT '',
+        performed_by_user_id INTEGER NOT NULL, approved_by_user_id INTEGER, detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)''')
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_open_shift_user_branch ON work_shifts(tenant_id,branch_id,opened_by_user_id) WHERE status='open'")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_cash_movements_shift ON cash_movements(tenant_id,shift_id,created_at)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_critical_ops_tenant_created ON critical_operations(tenant_id,created_at)')
+    conn.commit()
+    record_migration(conn, 14, 'restaurant_operations_foundation')
 
 def init_db():
     if IS_POSTGRES:
@@ -1909,6 +1933,78 @@ def save_daily_closing():
             conn.execute('INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
     log_action('daily_closing',detail=f'{branch_id} {closing_date}: expected={expected} counted={counted} difference={difference}')
     conn.commit(); return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=difference,cash_sales=cash)
+
+# ---------- Round 14A: shifts / cash drawer / critical operations ----------
+@app.get('/api/operations/shift')
+@login_required
+@role_required('owner','manager','staff')
+def current_shift():
+    conn=db(); branch_id=request.args.get('branch_id')
+    if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
+    branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขา'),404
+    sh=conn.execute("SELECT s.*,u.display_name AS opened_by_name FROM work_shifts s LEFT JOIN users u ON u.id=s.opened_by_user_id WHERE s.tenant_id=? AND s.branch_id=? AND s.opened_by_user_id=? AND s.status='open' ORDER BY s.id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
+    if not sh: return jsonify(shift=None,movements=[])
+    moves=conn.execute('SELECT * FROM cash_movements WHERE tenant_id=? AND shift_id=? ORDER BY id DESC',(g.tenant_id,sh['id'])).fetchall()
+    return jsonify(shift=dict(sh),movements=[dict(x) for x in moves])
+
+@app.post('/api/operations/shift/open')
+@login_required
+@role_required('owner','manager','staff')
+def open_shift():
+    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id')
+    if not conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
+    try: opening=float(d.get('opening_cash',0) or 0)
+    except: return jsonify(error='เงินเปิดกะไม่ถูกต้อง'),400
+    if opening<0: return jsonify(error='เงินเปิดกะต้องไม่ติดลบ'),400
+    old=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open'",(g.tenant_id,branch_id,g.user['id'])).fetchone()
+    if old: return jsonify(error='คุณมีกะที่ยังเปิดอยู่ในสาขานี้'),409
+    try:
+        cur=conn.execute("INSERT INTO work_shifts(tenant_id,branch_id,opened_by_user_id,opened_at,opening_cash,status,notes) VALUES(?,?,?,?,?,'open',?)",(g.tenant_id,branch_id,g.user['id'],now(),opening,(d.get('notes') or '')[:300]))
+        log_action('shift_opened',detail=f'branch={branch_id} opening={opening}'); conn.commit()
+    except INTEGRITY_ERRORS:
+        conn.rollback(); return jsonify(error='มีกะนี้เปิดอยู่แล้ว กรุณารีเฟรช'),409
+    return jsonify(ok=True,id=cur.lastrowid)
+
+@app.post('/api/operations/cash-movement')
+@login_required
+@role_required('owner','manager','staff')
+def add_cash_movement():
+    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id'); typ=d.get('movement_type')
+    if typ not in ('cash_in','cash_out'): return jsonify(error='ประเภทเงินสดไม่ถูกต้อง'),400
+    try: amount=float(d.get('amount',0) or 0)
+    except: return jsonify(error='จำนวนเงินไม่ถูกต้อง'),400
+    reason=(d.get('reason') or '').strip()[:300]
+    if amount<=0 or not reason: return jsonify(error='กรุณาระบุจำนวนเงินและเหตุผล'),400
+    sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
+    if not sh: return jsonify(error='กรุณาเปิดกะก่อนทำรายการเงินสด'),409
+    conn.execute('INSERT INTO cash_movements(tenant_id,branch_id,shift_id,movement_type,amount,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,sh['id'],typ,amount,reason,g.user['id'],now()))
+    log_action(typ,detail=f'branch={branch_id} amount={amount} reason={reason}'); conn.commit(); return jsonify(ok=True)
+
+@app.post('/api/operations/shift/close')
+@login_required
+@role_required('owner','manager','staff')
+def close_shift():
+    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id')
+    sh=conn.execute("SELECT * FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
+    if not sh: return jsonify(error='ไม่พบกะที่เปิดอยู่'),409
+    try: counted=float(d.get('counted_cash',0) or 0)
+    except: return jsonify(error='ยอดเงินนับจริงไม่ถูกต้อง'),400
+    if counted<0: return jsonify(error='ยอดเงินนับจริงต้องไม่ติดลบ'),400
+    cash_sales=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND paid_by_user_id=? AND paid_at>=?",(g.tenant_id,branch_id,g.user['id'],sh['opened_at'])).fetchone()['total'] or 0
+    mv=conn.execute("SELECT COALESCE(SUM(CASE WHEN movement_type='cash_in' THEN amount ELSE -amount END),0) AS total FROM cash_movements WHERE tenant_id=? AND shift_id=?",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
+    expected=float(sh['opening_cash'])+float(cash_sales)+float(mv); diff=counted-expected; ts=now()
+    claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],sh['id'],g.tenant_id))
+    if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='กะนี้ถูกปิดจากอุปกรณ์อื่นแล้ว'),409
+    log_action('shift_closed',detail=f'branch={branch_id} expected={expected} counted={counted} diff={diff}'); conn.commit()
+    return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=diff,cash_sales=cash_sales)
+
+@app.get('/api/operations/critical')
+@login_required
+@role_required('owner','manager')
+def list_critical_operations():
+    conn=db(); rows=conn.execute("SELECT c.*,u.display_name AS performed_by_name FROM critical_operations c LEFT JOIN users u ON u.id=c.performed_by_user_id WHERE c.tenant_id=? ORDER BY c.id DESC LIMIT 200",(g.tenant_id,)).fetchall()
+    return jsonify([dict(x) for x in rows])
 
 @app.get('/api/expenses')
 @login_required

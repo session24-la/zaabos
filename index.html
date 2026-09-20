@@ -55,6 +55,7 @@
     <button data-tab="orders" class="active"><span class="tab-ic">🧾</span><span class="tab-lb" data-i18n="tab_orders">ออเดอร์</span></button>
     <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
     <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
     <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
     <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
     <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
@@ -133,6 +134,23 @@
         <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item">➕ เพิ่มเมนู</button>
       </div>
       <div class="menu-grid" id="menuItemsGrid"></div>
+    </div>
+  </section>
+
+
+  <!-- ===== Operations tab ===== -->
+  <section id="tab-operations" class="tab-panel hidden">
+    <div class="panel"><div class="panel-head"><h2>กะพนักงาน &amp; ลิ้นชักเงินสด</h2><button class="ghost-btn" id="refreshOpsBtn">🔄 รีเฟรช</button></div>
+      <div id="shiftStatus" class="report-cards"></div>
+      <div class="report-date-range" style="margin-top:14px">
+        <input id="opsAmount" type="number" min="0" placeholder="จำนวนเงิน">
+        <input id="opsReason" placeholder="เหตุผล / หมายเหตุ">
+        <button class="ghost-btn primary" id="openShiftBtn">เปิดกะ</button>
+        <button class="ghost-btn" id="cashInBtn">+ เงินเข้า</button>
+        <button class="ghost-btn" id="cashOutBtn">− เงินออก</button>
+        <button class="ghost-btn" id="closeShiftBtn">ปิดกะ</button>
+      </div>
+      <h3 style="margin-top:18px">รายการเงินสดในกะ</h3><div id="cashMovementList"></div>
     </div>
   </section>
 
