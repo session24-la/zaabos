@@ -35,3 +35,13 @@ Validation performed in the build environment:
 - Browser JS parses (`node --check`).
 - Fresh SQLite schema executes successfully.
 - Full Flask/PostgreSQL integration test was not run in this build environment because Flask/PostgreSQL runtime dependencies are not installed here. Test on Railway staging/production after database backup.
+
+## Round 3 — Kitchen + Order Workflow
+- New customer and staff orders are now sent to the kitchen automatically at creation time (`kitchen_sent_at` is populated on each new item).
+- Items added later to an existing open order are already sent as only those new lines, preventing the old order from being re-issued as a duplicate ticket.
+- Added `/api/kitchen/orders`: the KDS receives only active kitchen-queue orders that contain items actually sent to the kitchen.
+- Manual send-to-kitchen is now safer: cancelled lines are rejected and already-sent lines cannot be silently resent unless an explicit resend is requested.
+- Kitchen refresh reduced from 8 seconds to 2.5 seconds for near-real-time service without adding a new WebSocket dependency.
+- Kitchen display now shows active quantity after partial cancellation and clearly marks cancelled quantity/reason.
+- Existing backend order state machine remains enforced: received → preparing → ready → served → completed, with cancellation only from allowed open states.
+- No destructive database migration was added in this round.

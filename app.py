@@ -1161,8 +1161,8 @@ def public_create_order():
          customer_address, total, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
     order_id = cur.lastrowid
     for it in prepared_items:
-        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes)
-            VALUES(?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes']))
+        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
+            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], now()))
         oi_id = oi_cur.lastrowid
         for opt in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
@@ -1201,6 +1201,26 @@ def list_orders():
     q += ' ORDER BY orders.id DESC LIMIT 200'
     rows = conn.execute(q, args).fetchall()
     return jsonify(orders=[_order_with_items(conn, r) for r in rows])
+
+@app.get('/api/kitchen/orders')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def kitchen_orders():
+    """Kitchen-only queue. Only orders with at least one item that has actually
+    been sent to the kitchen are returned. This keeps draft/unsent items off KDS."""
+    conn = db()
+    if g.tenant_id is None: return jsonify(orders=[])
+    branch_id = request.args.get('branch_id')
+    q = '''SELECT DISTINCT o.* FROM orders o
+           JOIN order_items oi ON oi.order_id=o.id
+           WHERE o.tenant_id=? AND o.status IN ('received','preparing','ready')
+             AND oi.kitchen_sent_at IS NOT NULL'''
+    args=[g.tenant_id]
+    if branch_id:
+        q += ' AND o.branch_id=?'; args.append(branch_id)
+    q += ' ORDER BY o.id ASC LIMIT 200'
+    rows=conn.execute(q,args).fetchall()
+    return jsonify(orders=[_order_with_items(conn,r) for r in rows])
 
 @app.post('/api/orders')
 @login_required
@@ -1256,8 +1276,8 @@ def staff_create_order():
          customer_address, total, guest_count, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
     order_id = cur.lastrowid
     for it in prepared_items:
-        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes)
-            VALUES(?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes']))
+        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
+            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], now()))
         oi_id = oi_cur.lastrowid
         for opt in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
@@ -1311,10 +1331,16 @@ def send_order_items_to_kitchen(oid):
         item_ids = [int(x) for x in item_ids]
     except (TypeError, ValueError):
         return jsonify(error='รายการอาหารไม่ถูกต้อง'), 400
-    valid_ids = {r['id'] for r in conn.execute('SELECT id FROM order_items WHERE order_id=?', (oid,)).fetchall()}
-    item_ids = [i for i in item_ids if i in valid_ids]
+    rows = conn.execute('SELECT id,quantity,cancelled_quantity,kitchen_sent_at FROM order_items WHERE order_id=?', (oid,)).fetchall()
+    by_id = {r['id']: r for r in rows}
+    item_ids = [i for i in item_ids if i in by_id and int(by_id[i]['quantity']) > int(by_id[i]['cancelled_quantity'] or 0)]
     if not item_ids:
-        return jsonify(error='รายการอาหารไม่ถูกต้อง'), 400
+        return jsonify(error='รายการอาหารไม่ถูกต้องหรือถูกยกเลิกแล้ว'), 400
+    resend = bool(d.get('resend'))
+    if not resend:
+        item_ids = [i for i in item_ids if not by_id[i]['kitchen_sent_at']]
+        if not item_ids:
+            return jsonify(error='รายการที่เลือกส่งเข้าครัวแล้ว'), 409
     ts = now()
     for iid in item_ids:
         conn.execute('UPDATE order_items SET kitchen_sent_at=? WHERE id=?', (ts, iid))
