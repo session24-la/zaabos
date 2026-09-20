@@ -122,6 +122,10 @@ CREATE TABLE IF NOT EXISTS orders (
     payment_status TEXT NOT NULL DEFAULT 'unpaid' CHECK(payment_status IN ('unpaid','paid')),
     total_amount REAL NOT NULL DEFAULT 0,
     tax_amount REAL NOT NULL DEFAULT 0,
+    service_charge_amount REAL NOT NULL DEFAULT 0,
+    discount_amount REAL NOT NULL DEFAULT 0,
+    discount_label TEXT NOT NULL DEFAULT '',
+    promotion_id INTEGER,
     cash_received REAL,
     payment_method TEXT,
     paid_at TEXT,
@@ -233,3 +237,8 @@ CREATE TABLE IF NOT EXISTS work_shifts (id INTEGER PRIMARY KEY AUTOINCREMENT, te
 CREATE TABLE IF NOT EXISTS cash_movements (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, shift_id INTEGER NOT NULL, movement_type TEXT NOT NULL, amount REAL NOT NULL, reason TEXT NOT NULL, created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS operation_reasons (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, operation_type TEXT NOT NULL, label TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS critical_operations (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER, operation_type TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '', entity_id INTEGER, reason_id INTEGER, reason_text TEXT NOT NULL DEFAULT '', performed_by_user_id INTEGER NOT NULL, approved_by_user_id INTEGER, detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+
+-- Round 14D pricing/promotions
+CREATE TABLE IF NOT EXISTS pricing_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, tax_rate REAL NOT NULL DEFAULT 0, service_charge_rate REAL NOT NULL DEFAULT 0, updated_by_user_id INTEGER, updated_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id));
+CREATE TABLE IF NOT EXISTS promotions (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER, code TEXT NOT NULL, name TEXT NOT NULL, discount_type TEXT NOT NULL DEFAULT 'percent', discount_value REAL NOT NULL DEFAULT 0, min_spend REAL NOT NULL DEFAULT 0, max_discount REAL, starts_at TEXT, ends_at TEXT, active INTEGER NOT NULL DEFAULT 1, created_by_user_id INTEGER, created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_promotions_tenant_code ON promotions(tenant_id,code);

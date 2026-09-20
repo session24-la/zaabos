@@ -55,6 +55,7 @@
     <button data-tab="orders" class="active"><span class="tab-ic">🧾</span><span class="tab-lb" data-i18n="tab_orders">ออเดอร์</span></button>
     <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
     <button data-tab="menu"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
     <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
     <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
     <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
@@ -137,6 +138,8 @@
     </div>
   </section>
 
+
+  <section id="tab-pricing" class="tab-panel hidden"><div class="panel"><div class="panel-head"><h2>ราคา โปรโมชั่น Service Charge &amp; Tax</h2></div><div class="report-date-range"><input id="pricingTax" type="number" min="0" max="100" step="0.01" placeholder="Tax %"><input id="pricingService" type="number" min="0" max="100" step="0.01" placeholder="Service charge %"><button class="ghost-btn primary" id="savePricingBtn">บันทึกอัตราสาขานี้</button></div><h3 style="margin-top:22px">สร้างโปรโมชั่น</h3><div class="report-date-range"><input id="promoCode" placeholder="CODE"><input id="promoName" placeholder="ชื่อโปรโมชั่น"><select id="promoType"><option value="percent">ลด %</option><option value="fixed">ลดจำนวนเงิน</option></select><input id="promoValue" type="number" min="0" placeholder="ส่วนลด"><input id="promoMin" type="number" min="0" placeholder="ยอดขั้นต่ำ"><button class="ghost-btn primary" id="addPromoBtn">+ โปรโมชั่น</button></div><div id="promotionsList" style="margin-top:16px"></div></div></section>
 
   <!-- ===== Operations tab ===== -->
   <section id="tab-operations" class="tab-panel hidden">
@@ -381,7 +384,12 @@
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
   <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
   <label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label>
-  <label><span data-i18n="label_tax_amount">ภาษี (ถ้ามี)</span><input id="cpTax" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+  <label><span>โปรโมชั่น</span><input id="cpPromo" placeholder="รหัสโปรโมชั่น (ถ้ามี)"></label>
+  <label><span>ส่วนลดพิเศษ</span><input id="cpDiscount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+  <label><span>เหตุผลส่วนลด</span><input id="cpDiscountReason" placeholder="เช่น ลูกค้าประจำ"></label>
+  <label><span>ผู้อนุมัติ (สำหรับ Staff ที่ให้ส่วนลด)</span><input id="cpApprovalUser" autocomplete="off" placeholder="Username Owner/Manager"></label>
+  <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="new-password"></label>
+  <div class="row"><small>Service charge และ Tax คำนวณจากการตั้งค่าสาขาที่ Backend</small></div>
   <label><span data-i18n="label_cash_received">รับเงินมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <div class="row" style="margin-top:6px"><span data-i18n="label_change">เงินทอน</span><b id="cpChange">0</b></div>
   <div class="login-error" id="cpError"></div>

@@ -388,6 +388,24 @@ def ensure_schema_migrations(conn):
     record_migration(conn, 14, 'restaurant_operations_foundation')
     record_migration(conn, 15, 'restaurant_menu_modifiers')
     record_migration(conn, 16, 'critical_operations_approval')
+    # Round 14D: pricing, promotions, service charge and tax.
+    if IS_POSTGRES:
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_amount DOUBLE PRECISION NOT NULL DEFAULT 0')
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS service_charge_amount DOUBLE PRECISION NOT NULL DEFAULT 0')
+        conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_label TEXT NOT NULL DEFAULT ''")
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS promotion_id INTEGER')
+    else:
+        o14=[r[1] for r in conn.execute('PRAGMA table_info(orders)').fetchall()]
+        if 'discount_amount' not in o14: conn.execute('ALTER TABLE orders ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0')
+        if 'service_charge_amount' not in o14: conn.execute('ALTER TABLE orders ADD COLUMN service_charge_amount REAL NOT NULL DEFAULT 0')
+        if 'discount_label' not in o14: conn.execute("ALTER TABLE orders ADD COLUMN discount_label TEXT NOT NULL DEFAULT ''")
+        if 'promotion_id' not in o14: conn.execute('ALTER TABLE orders ADD COLUMN promotion_id INTEGER')
+    conn.execute(f"CREATE TABLE IF NOT EXISTS pricing_settings (id {idcol}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, tax_rate {money} NOT NULL DEFAULT 0, service_charge_rate {money} NOT NULL DEFAULT 0, updated_by_user_id INTEGER, updated_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id))")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS promotions (id {idcol}, tenant_id INTEGER NOT NULL, branch_id INTEGER, code TEXT NOT NULL, name TEXT NOT NULL, discount_type TEXT NOT NULL DEFAULT 'percent', discount_value {money} NOT NULL DEFAULT 0, min_spend {money} NOT NULL DEFAULT 0, max_discount {money}, starts_at TEXT, ends_at TEXT, active INTEGER NOT NULL DEFAULT 1, created_by_user_id INTEGER, created_at TEXT NOT NULL)")
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_promotions_tenant_code ON promotions(tenant_id,code)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_promotions_tenant_branch ON promotions(tenant_id,branch_id,active)')
+    conn.commit()
+    record_migration(conn, 17, 'pricing_promotions_service_tax')
 
 def init_db():
     if IS_POSTGRES:
@@ -1597,6 +1615,78 @@ def send_order_items_to_kitchen(oid):
     conn.commit()
     return jsonify(ok=True, sent_at=ts, item_ids=item_ids)
 
+# ---------- Round 14D: pricing / promotions / service charge / tax ----------
+def _pricing_settings(conn, branch_id):
+    row=conn.execute('SELECT * FROM pricing_settings WHERE tenant_id=? AND branch_id=?',(g.tenant_id,branch_id)).fetchone()
+    return dict(row) if row else {'tax_rate':0,'service_charge_rate':0}
+
+def _active_promotion(conn, code, branch_id, subtotal):
+    code=(code or '').strip().upper()
+    if not code: return None
+    promo=conn.execute('SELECT * FROM promotions WHERE tenant_id=? AND UPPER(code)=? AND active=1 AND (branch_id IS NULL OR branch_id=?) LIMIT 1',(g.tenant_id,code,branch_id)).fetchone()
+    if not promo: raise ValueError('ไม่พบโปรโมชั่นหรือโปรโมชั่นไม่เปิดใช้งาน')
+    ts=now()
+    if promo['starts_at'] and ts < promo['starts_at']: raise ValueError('โปรโมชั่นนี้ยังไม่เริ่ม')
+    if promo['ends_at'] and ts > promo['ends_at']: raise ValueError('โปรโมชั่นนี้หมดอายุแล้ว')
+    if subtotal < float(promo['min_spend'] or 0): raise ValueError('ยอดสั่งซื้อยังไม่ถึงขั้นต่ำของโปรโมชั่น')
+    return promo
+
+@app.get('/api/pricing/settings')
+@login_required
+@role_required('owner','manager','staff')
+def get_pricing_settings():
+    bid=request.args.get('branch_id',type=int) or getattr(g,'branch_id',None)
+    conn=db(); br=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(bid,g.tenant_id)).fetchone()
+    if not br: return jsonify(error='ไม่พบสาขา'),404
+    return jsonify(_pricing_settings(conn,bid))
+
+@app.put('/api/pricing/settings')
+@login_required
+@role_required('owner','manager')
+def put_pricing_settings():
+    d=request.get_json() or {}; bid=int(d.get('branch_id') or getattr(g,'branch_id',None) or 0)
+    try: tax=float(d.get('tax_rate') or 0); svc=float(d.get('service_charge_rate') or 0)
+    except (TypeError,ValueError): return jsonify(error='อัตราไม่ถูกต้อง'),400
+    if not (0<=tax<=100 and 0<=svc<=100): return jsonify(error='อัตราต้องอยู่ระหว่าง 0–100%'),400
+    conn=db(); br=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(bid,g.tenant_id)).fetchone()
+    if not br: return jsonify(error='ไม่พบสาขา'),404
+    ts=now(); old=conn.execute('SELECT id FROM pricing_settings WHERE tenant_id=? AND branch_id=?',(g.tenant_id,bid)).fetchone()
+    if old: conn.execute('UPDATE pricing_settings SET tax_rate=?,service_charge_rate=?,updated_by_user_id=?,updated_at=? WHERE id=?',(tax,svc,g.user['id'],ts,old['id']))
+    else: conn.execute('INSERT INTO pricing_settings(tenant_id,branch_id,tax_rate,service_charge_rate,updated_by_user_id,updated_at) VALUES(?,?,?,?,?,?)',(g.tenant_id,bid,tax,svc,g.user['id'],ts))
+    log_action('pricing_settings_updated',detail=f'branch={bid} tax={tax} service={svc}'); conn.commit(); return jsonify(ok=True)
+
+@app.get('/api/promotions')
+@login_required
+@role_required('owner','manager')
+def list_promotions():
+    conn=db(); return jsonify([dict(x) for x in conn.execute('SELECT * FROM promotions WHERE tenant_id=? ORDER BY active DESC,id DESC',(g.tenant_id,)).fetchall()])
+
+@app.post('/api/promotions')
+@login_required
+@role_required('owner','manager')
+def create_promotion():
+    d=request.get_json() or {}; code=(d.get('code') or '').strip().upper()[:40]; name=(d.get('name') or '').strip()[:120]; typ=(d.get('discount_type') or 'percent').strip()
+    if not code or not name or typ not in ('percent','fixed'): return jsonify(error='ข้อมูลโปรโมชั่นไม่ถูกต้อง'),400
+    try:
+        value=float(d.get('discount_value') or 0); minimum=float(d.get('min_spend') or 0); maxd=d.get('max_discount'); maxd=float(maxd) if maxd not in (None,'') else None
+    except (TypeError,ValueError): return jsonify(error='จำนวนเงิน/ส่วนลดไม่ถูกต้อง'),400
+    if value<=0 or minimum<0 or (typ=='percent' and value>100) or (maxd is not None and maxd<0): return jsonify(error='ค่าของโปรโมชั่นไม่ถูกต้อง'),400
+    bid=d.get('branch_id'); bid=int(bid) if bid not in (None,'') else None; conn=db()
+    if bid and not conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(bid,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
+    try:
+        cur=conn.execute('INSERT INTO promotions(tenant_id,branch_id,code,name,discount_type,discount_value,min_spend,max_discount,starts_at,ends_at,active,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,bid,code,name,typ,value,minimum,maxd,d.get('starts_at') or None,d.get('ends_at') or None,1,g.user['id'],now()))
+        conn.commit(); return jsonify(ok=True,id=cur.lastrowid)
+    except INTEGRITY_ERRORS:
+        conn.rollback(); return jsonify(error='รหัสโปรโมชั่นนี้มีอยู่แล้ว'),409
+
+@app.delete('/api/promotions/<int:pid>')
+@login_required
+@role_required('owner','manager')
+def disable_promotion(pid):
+    conn=db(); row=conn.execute('SELECT id FROM promotions WHERE id=? AND tenant_id=?',(pid,g.tenant_id)).fetchone()
+    if not row: return jsonify(error='ไม่พบโปรโมชั่น'),404
+    conn.execute('UPDATE promotions SET active=0 WHERE id=? AND tenant_id=?',(pid,g.tenant_id)); conn.commit(); return jsonify(ok=True)
+
 @app.put('/api/orders/<int:oid>/payment')
 @login_required
 @role_required('owner', 'manager', 'staff')
@@ -1622,17 +1712,32 @@ def update_order_payment(oid):
         if v < 0 or v > 1000000000: raise ValueError(f'{key} ไม่ถูกต้อง')
         return v
     try:
-        tax=money('tax_amount', order['tax_amount'] or 0) or 0
         cash=money('cash_received')
+        subtotal=float(order['total_amount'] or 0); settings=_pricing_settings(conn,order['branch_id'])
+        discount=0.0; discount_label=''; promotion_id=None
+        promo_code=(d.get('promotion_code') or '').strip()
+        if promo_code:
+            promo=_active_promotion(conn,promo_code,order['branch_id'],subtotal); promotion_id=promo['id']; discount_label=promo['name']
+            discount=(subtotal*float(promo['discount_value'])/100.0) if promo['discount_type']=='percent' else float(promo['discount_value'])
+            if promo['max_discount'] is not None: discount=min(discount,float(promo['max_discount']))
+        manual=money('discount_amount',0) or 0
+        if manual>0:
+            approved_by, approval_err=_critical_approval(conn,d)
+            if approval_err: return approval_err
+            discount += manual; discount_label=(d.get('discount_reason') or 'ส่วนลดพิเศษ')[:120]
+            _record_critical(conn,'discount',order['branch_id'],'order',oid,discount_label,approved_by,f'manual_discount={manual}')
+        discount=min(discount,subtotal); after_discount=max(0,subtotal-discount)
+        service=after_discount*float(settings.get('service_charge_rate') or 0)/100.0
+        tax=(after_discount+service)*float(settings.get('tax_rate') or 0)/100.0
+        due=after_discount+service+tax
     except ValueError as e: return jsonify(error=str(e)),400
-    due=float(order['total_amount'] or 0)+tax
     if method == 'cash' and (cash is None or cash < due):
         return jsonify(error='จำนวนเงินสดที่รับมาต้องไม่น้อยกว่ายอดชำระ'), 400
     if method != 'cash': cash=None
     ts=now()
-    claimed = conn.execute('''UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,cash_received=?,paid_at=?,updated_at=?
+    claimed = conn.execute('''UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,service_charge_amount=?,discount_amount=?,discount_label=?,promotion_id=?,cash_received=?,paid_at=?,updated_at=?
         WHERE id=? AND tenant_id=? AND payment_status='unpaid' AND status<>'cancelled' ''',
-        ('paid',method,tax,cash,ts,ts,oid,g.tenant_id))
+        ('paid',method,tax,service,discount,discount_label,promotion_id,cash,ts,ts,oid,g.tenant_id))
     if claimed.rowcount != 1:
         conn.rollback()
         return jsonify(error='ออเดอร์นี้ถูกชำระหรือเปลี่ยนสถานะจากอุปกรณ์อื่นแล้ว กรุณารีเฟรช'),409
@@ -1918,7 +2023,7 @@ def reports_summary():
     branch_id = request.args.get('branch_id')
 
     q = '''SELECT COUNT(*) AS c, COALESCE(SUM(total_amount),0) AS subtotal, COALESCE(SUM(tax_amount),0) AS tax,
-           COALESCE(SUM(guest_count),0) AS guests
+           COALESCE(SUM(discount_amount),0) AS discount, COALESCE(SUM(service_charge_amount),0) AS service, COALESCE(SUM(guest_count),0) AS guests
            FROM orders WHERE tenant_id=? AND payment_status='paid' AND status!='cancelled' AND substr(COALESCE(paid_at,created_at),1,10) BETWEEN ? AND ?'''
     args = [g.tenant_id, frm, to]
     if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
@@ -1926,8 +2031,10 @@ def reports_summary():
     order_count = row['c'] or 0
     subtotal = row['subtotal'] or 0
     tax = row['tax'] or 0
+    discount = row['discount'] or 0
+    service = row['service'] or 0
     guests = row['guests'] or 0
-    total_sales = subtotal + tax
+    total_sales = subtotal - discount + service + tax
 
     ti_q = '''SELECT oi.item_name_snapshot AS name, SUM(oi.quantity) AS qty, SUM(oi.line_total) AS revenue
               FROM order_items oi JOIN orders o ON o.id=oi.order_id
@@ -1955,14 +2062,14 @@ def reports_summary():
     refund_args=[g.tenant_id,frm,to]
     if branch_id: refund_q += ' AND branch_id=?'; refund_args.append(branch_id)
     refund_row=conn.execute(refund_q,refund_args).fetchone(); refund_total=float(refund_row['total'] or 0)
-    open_q="SELECT COUNT(*) AS c, COALESCE(SUM(total_amount+tax_amount),0) AS total FROM orders WHERE tenant_id=? AND payment_status='unpaid' AND status!='cancelled'"
+    open_q="SELECT COUNT(*) AS c, COALESCE(SUM(total_amount-discount_amount+service_charge_amount+tax_amount),0) AS total FROM orders WHERE tenant_id=? AND payment_status='unpaid' AND status!='cancelled'"
     open_args=[g.tenant_id]
     if branch_id: open_q+=' AND branch_id=?'; open_args.append(branch_id)
     open_row=conn.execute(open_q,open_args).fetchone()
 
     return jsonify(
         from_date=frm, to_date=to,
-        order_count=order_count, subtotal=subtotal, tax=tax, guests=guests, total_sales=total_sales,
+        order_count=order_count, subtotal=subtotal, discount=discount, service_charge=service, tax=tax, guests=guests, total_sales=total_sales,
         top_items=top_items,
         expense_total=expense_total, expense_by_category=expense_by_category,
         net_profit=total_sales - refund_total - expense_total, payment_breakdown=payment_breakdown,
