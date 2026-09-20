@@ -561,6 +561,22 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_order_items_order_active ON order_items(order_id,cancelled_quantity)')
     conn.commit()
     record_migration(conn, 24, 'production_financial_safety')
+    # Round 17 — Restaurant Operations Complete
+    id17 = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS inventory_counts (
+        id {id17}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL,
+        system_qty DOUBLE PRECISION NOT NULL, counted_qty DOUBLE PRECISION NOT NULL,
+        difference DOUBLE PRECISION NOT NULL, note TEXT NOT NULL DEFAULT '',
+        counted_by_user_id INTEGER, counted_at TEXT NOT NULL)""")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_counts_tenant_branch ON inventory_counts(tenant_id,branch_id,counted_at)')
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS kitchen_print_jobs (
+        id {id17}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, order_id INTEGER NOT NULL,
+        station_id INTEGER, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, printed_at TEXT)""")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_kitchen_print_jobs_queue ON kitchen_print_jobs(tenant_id,branch_id,status,created_at)')
+    conn.commit()
+    record_migration(conn, 25, 'restaurant_operations_complete')
+
 
 
 
@@ -1220,11 +1236,16 @@ def add_menu_item():
         if not category: return jsonify(error='หมวดหมู่ไม่ถูกต้องหรือไม่ได้อยู่ในสาขานี้'), 400
     else:
         category_id = None
+    station_id=d.get('kitchen_station_id')
+    if station_id not in (None,''):
+        station=conn.execute('SELECT id FROM kitchen_stations WHERE id=? AND tenant_id=? AND active=1 AND (branch_id IS NULL OR branch_id=?)',(station_id,g.tenant_id,branch_id)).fetchone()
+        if not station:return jsonify(error='สถานีครัวไม่ถูกต้อง'),400
+    else: station_id=None
     cur = conn.execute('''INSERT INTO menu_items(tenant_id,branch_id,category_id,name,description,base_price,image_url,sort_order,
-        cost_price,track_stock,stock_qty,low_stock_threshold,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        cost_price,track_stock,stock_qty,low_stock_threshold,kitchen_station_id,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (g.tenant_id, branch_id, category_id, name, d.get('description') or '', base_price,
-         d.get('image_url'), d.get('sort_order') or 0, cost_price, track_stock, stock_qty, low_stock_threshold, now()))
+         d.get('image_url'), d.get('sort_order') or 0, cost_price, track_stock, stock_qty, low_stock_threshold, station_id, now()))
     item_id = cur.lastrowid
     _save_option_groups(conn, item_id, d.get('option_groups') or [])
     log_action('add_menu_item', detail=name)
@@ -1290,12 +1311,17 @@ def edit_menu_item(mid):
         if not category: return jsonify(error='หมวดหมู่ไม่ถูกต้องหรือไม่ได้อยู่ในสาขานี้'), 400
     else:
         category_id = None
+    station_id=d.get('kitchen_station_id',old['kitchen_station_id'])
+    if station_id not in (None,''):
+        station=conn.execute('SELECT id FROM kitchen_stations WHERE id=? AND tenant_id=? AND active=1 AND (branch_id IS NULL OR branch_id=?)',(station_id,g.tenant_id,old['branch_id'])).fetchone()
+        if not station:return jsonify(error='สถานีครัวไม่ถูกต้อง'),400
+    else: station_id=None
     conn.execute('''UPDATE menu_items SET name=?,description=?,base_price=?,category_id=?,image_url=?,
-        sold_out=?,sort_order=?,cost_price=?,track_stock=?,stock_qty=?,low_stock_threshold=? WHERE id=?''',
+        sold_out=?,sort_order=?,cost_price=?,track_stock=?,stock_qty=?,low_stock_threshold=?,kitchen_station_id=? WHERE id=?''',
         ((d.get('name') or old['name']).strip(), d.get('description', old['description']), base_price,
          category_id, d.get('image_url', old['image_url']),
          1 if d.get('sold_out') else 0, d.get('sort_order', old['sort_order']),
-         cost_price, track_stock, stock_qty, low_stock_threshold, mid))
+         cost_price, track_stock, stock_qty, low_stock_threshold, station_id, mid))
     if 'option_groups' in d:
         _save_option_groups(conn, mid, d.get('option_groups') or [])
     log_action('edit_menu_item', detail=str(mid))
@@ -1687,7 +1713,17 @@ def kitchen_orders():
         q += ' AND mi.kitchen_station_id=?'; args.append(station_id)
     q += ' ORDER BY o.id ASC LIMIT 200'
     rows=conn.execute(q,args).fetchall()
-    return jsonify(orders=[_order_with_items(conn,r) for r in rows])
+    orders=[]
+    for r in rows:
+        od=_order_with_items(conn,r)
+        if station_id:
+            filtered=[]
+            for it in od['items']:
+                mi=conn.execute('SELECT kitchen_station_id FROM menu_items WHERE id=? AND tenant_id=?',(it['menu_item_id'],g.tenant_id)).fetchone()
+                if mi and str(mi['kitchen_station_id'])==str(station_id): filtered.append(it)
+            od['items']=filtered
+        orders.append(od)
+    return jsonify(orders=orders)
 
 @app.post('/api/orders')
 @login_required
@@ -2352,6 +2388,99 @@ def recipe_put(mid):
         conn.commit()
     except Exception:
         conn.rollback();return jsonify(error='สูตรวัตถุดิบไม่ถูกต้อง'),400
+    return jsonify(ok=True)
+
+
+# ---------- Round 17: complete restaurant operations ----------
+@app.put('/api/kitchen/stations/<int:sid>')
+@login_required
+@role_required('owner','manager')
+def kitchen_station_update(sid):
+    d=request.get_json() or {}; conn=db()
+    row=conn.execute('SELECT * FROM kitchen_stations WHERE id=? AND tenant_id=?',(sid,g.tenant_id)).fetchone()
+    if not row:return jsonify(error='ไม่พบสถานี'),404
+    name=(d.get('name') or row['name']).strip()[:80]; active=1 if d.get('active',bool(row['active'])) else 0
+    conn.execute('UPDATE kitchen_stations SET name=?,active=?,sort_order=? WHERE id=?',(name,active,int(d.get('sort_order',row['sort_order']) or 0),sid));conn.commit()
+    return jsonify(ok=True)
+
+@app.get('/api/inventory/movements')
+@login_required
+@role_required('owner','manager')
+def inventory_movements_list():
+    bid=request.args.get('branch_id',type=int); limit=min(200,max(1,request.args.get('limit',50,type=int)))
+    if not bid:return jsonify(error='กรุณาเลือกสาขา'),400
+    rows=db().execute("""SELECT m.*,i.name ingredient_name,i.unit,u.display_name user_name
+      FROM inventory_movements m JOIN ingredients i ON i.id=m.ingredient_id LEFT JOIN users u ON u.id=m.created_by_user_id
+      WHERE m.tenant_id=? AND m.branch_id=? ORDER BY m.id DESC LIMIT ?""",(g.tenant_id,bid,limit)).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.post('/api/inventory/ingredients/<int:iid>/waste')
+@login_required
+@role_required('owner','manager')
+def ingredient_waste(iid):
+    d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
+    try: qty=float(d.get('quantity') or 0)
+    except:return jsonify(error='จำนวนไม่ถูกต้อง'),400
+    if qty<=0 or not reason:return jsonify(error='กรุณาระบุจำนวนและเหตุผล'),400
+    conn=db(); ing=conn.execute('SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone()
+    if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
+    if qty>float(ing['stock_qty']):return jsonify(error='จำนวนทิ้งมากกว่าสต็อกคงเหลือ'),409
+    ts=now(); new=float(ing['stock_qty'])-qty
+    conn.execute('UPDATE ingredients SET stock_qty=?,updated_at=? WHERE id=?',(new,ts,iid))
+    conn.execute('INSERT INTO inventory_movements(tenant_id,branch_id,ingredient_id,movement_type,quantity,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
+      (g.tenant_id,ing['branch_id'],iid,'waste',-qty,reason,g.user['id'],ts));conn.commit()
+    return jsonify(ok=True,stock_qty=new)
+
+@app.post('/api/inventory/ingredients/<int:iid>/count')
+@login_required
+@role_required('owner','manager')
+def ingredient_stock_count(iid):
+    d=request.get_json() or {}; note=(d.get('note') or '').strip()[:300]
+    try: counted=float(d.get('counted_qty'))
+    except:return jsonify(error='จำนวนตรวจนับไม่ถูกต้อง'),400
+    if counted<0:return jsonify(error='จำนวนตรวจนับไม่ถูกต้อง'),400
+    conn=db(); ing=conn.execute('SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone()
+    if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
+    system=float(ing['stock_qty']); diff=counted-system; ts=now()
+    conn.execute('INSERT INTO inventory_counts(tenant_id,branch_id,ingredient_id,system_qty,counted_qty,difference,note,counted_by_user_id,counted_at) VALUES(?,?,?,?,?,?,?,?,?)',
+      (g.tenant_id,ing['branch_id'],iid,system,counted,diff,note,g.user['id'],ts))
+    conn.execute('UPDATE ingredients SET stock_qty=?,updated_at=? WHERE id=?',(counted,ts,iid))
+    if abs(diff)>0.000001:
+        conn.execute('INSERT INTO inventory_movements(tenant_id,branch_id,ingredient_id,movement_type,quantity,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
+          (g.tenant_id,ing['branch_id'],iid,'stock_count',diff,note or 'ปรับจากการตรวจนับ',g.user['id'],ts))
+    conn.commit();return jsonify(ok=True,system_qty=system,counted_qty=counted,difference=diff)
+
+@app.get('/api/inventory/counts')
+@login_required
+@role_required('owner','manager')
+def inventory_counts_list():
+    bid=request.args.get('branch_id',type=int)
+    if not bid:return jsonify(error='กรุณาเลือกสาขา'),400
+    rows=db().execute("""SELECT c.*,i.name ingredient_name,i.unit,u.display_name user_name
+      FROM inventory_counts c JOIN ingredients i ON i.id=c.ingredient_id LEFT JOIN users u ON u.id=c.counted_by_user_id
+      WHERE c.tenant_id=? AND c.branch_id=? ORDER BY c.id DESC LIMIT 100""",(g.tenant_id,bid)).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.get('/api/kitchen/print-jobs')
+@login_required
+@role_required('owner','manager','staff')
+def kitchen_print_jobs_list():
+    bid=request.args.get('branch_id',type=int); status=request.args.get('status') or 'pending'
+    if not bid:return jsonify(error='กรุณาเลือกสาขา'),400
+    rows=db().execute("""SELECT j.*,s.name station_name,o.order_no FROM kitchen_print_jobs j
+      LEFT JOIN kitchen_stations s ON s.id=j.station_id JOIN orders o ON o.id=j.order_id
+      WHERE j.tenant_id=? AND j.branch_id=? AND j.status=? ORDER BY j.id LIMIT 100""",(g.tenant_id,bid,status)).fetchall()
+    return jsonify([dict(x) for x in rows])
+
+@app.post('/api/kitchen/print-jobs/<int:jid>/result')
+@login_required
+@role_required('owner','manager','staff')
+def kitchen_print_job_result(jid):
+    d=request.get_json() or {}; ok=bool(d.get('ok')); conn=db()
+    row=conn.execute('SELECT * FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
+    if not row:return jsonify(error='ไม่พบงานพิมพ์'),404
+    conn.execute("UPDATE kitchen_print_jobs SET status=?,attempts=attempts+1,last_error=?,printed_at=? WHERE id=?",
+      ('printed' if ok else 'pending','' if ok else (d.get('error') or 'print failed')[:300],now() if ok else None,jid));conn.commit()
     return jsonify(ok=True)
 
 # =====================================================================

@@ -265,3 +265,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_menu_ingredient ON recipes(tenant_id
 CREATE TABLE IF NOT EXISTS inventory_movements (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL, movement_type TEXT NOT NULL, quantity REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', order_id INTEGER, created_by_user_id INTEGER, created_at TEXT NOT NULL);
 
 CREATE INDEX IF NOT EXISTS idx_order_items_order_active ON order_items(order_id,cancelled_quantity);
+
+CREATE TABLE IF NOT EXISTS inventory_counts (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL, system_qty DOUBLE PRECISION NOT NULL, counted_qty DOUBLE PRECISION NOT NULL, difference DOUBLE PRECISION NOT NULL, note TEXT NOT NULL DEFAULT '', counted_by_user_id INTEGER, counted_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_inventory_counts_tenant_branch ON inventory_counts(tenant_id,branch_id,counted_at);
+CREATE TABLE IF NOT EXISTS kitchen_print_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, order_id INTEGER NOT NULL, station_id INTEGER, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, printed_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_kitchen_print_jobs_queue ON kitchen_print_jobs(tenant_id,branch_id,status,created_at);
