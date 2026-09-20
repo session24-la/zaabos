@@ -1,3 +1,15 @@
+const ZAABOS_RESTAURANT_TZ = 'Asia/Vientiane';
+function zaabosDateTime(value, options={}) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', ...options}).format(d);
+}
+function zaabosTime(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, hour:'2-digit', minute:'2-digit'}).format(d);
+}
+
 'use strict';
 let me = null;
 let branches = [];
@@ -113,7 +125,7 @@ function renderBoard(orders) {
       const cancelled = Number(it.cancelled_quantity || 0);
       const activeQty = Math.max(0, Number(it.quantity || 0) - cancelled);
       const age = Date.now() - new Date(it.kitchen_sent_at).getTime();
-      const clock = new Date(it.kitchen_sent_at).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' });
+      const clock = zaabosTime(it.kitchen_sent_at);
       liClass = age >= 0 && age < KITCHEN_HIGHLIGHT_MS ? ' kt-item-highlight' : ' kt-item-sent';
       sentBadge = `<span class="kt-sent-badge">🔔 ${clock}</span>`;
       const cancelNote = cancelled > 0 ? `<div class="kt-cancelled">❌ ${escapeHtml(t('kt_cancelled_qty') || 'Cancelled')} ${cancelled}${it.cancellation_reason ? ' · ' + escapeHtml(it.cancellation_reason) : ''}</div>` : '';
@@ -124,7 +136,7 @@ function renderBoard(orders) {
     }).join('');
     const actions = (STATUS_ACTIONS[o.status] || []).map(a => `<button class="${a.cls}" data-set="${o.id}:${a.to}">${escapeHtml(t(a.labelKey))}</button>`).join('');
     return `<div class="kitchen-ticket ${o.status}">
-      <div class="kt-head"><span class="kt-no">#${escapeHtml(o.order_no)}</span><span class="kt-time">${new Date(o.created_at).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' })}</span></div>
+      <div class="kt-head"><span class="kt-no">#${escapeHtml(o.order_no)}</span><span class="kt-time">${zaabosTime(o.created_at)}</span></div>
       <div class="kt-table">${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''} · ${escapeHtml(o.customer_name)}</div>
       <ul>${itemsHtml}</ul>
       ${o.notes ? `<div class="kt-notes">📝 ${escapeHtml(o.notes)}</div>` : ''}

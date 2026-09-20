@@ -1,3 +1,15 @@
+const ZAABOS_RESTAURANT_TZ = 'Asia/Vientiane';
+function zaabosDateTime(value, options={}) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', ...options}).format(d);
+}
+function zaabosTime(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, hour:'2-digit', minute:'2-digit'}).format(d);
+}
+
 'use strict';
 // A future optional UI control must not blank the whole SPA on startup.
 window.addEventListener('error', () => {
@@ -897,7 +909,7 @@ $('#orderStatusFilter').addEventListener('change', loadOrders);
 $('#refreshOrdersBtn').addEventListener('click', () => { loadOrders(); loadBoardData(); });
 
 function fmtClock(iso) {
-  try { return new Date(iso).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' }); }
+  try { return zaabosTime(iso); }
   catch (e) { return ''; }
 }
 
@@ -923,7 +935,7 @@ function orderCardHtml(o) {
       <div class="oc-head">
         <div>
           <div class="oc-no">#${escapeHtml(o.order_no)} — ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${new Date(o.created_at).toLocaleString(localeFor(currentLang))}${o.scheduled_for ? ' · ⏰ '+escapeHtml(new Date(o.scheduled_for).toLocaleString(localeFor(currentLang))) : ''}${o.order_type==='delivery' && Number(o.delivery_fee||0)>0 ? ' · 🛵 '+fmtMoney(o.delivery_fee) : ''}</div>
+          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${zaabosDateTime(o.created_at)}${o.scheduled_for ? ' · ⏰ '+escapeHtml(zaabosDateTime(o.scheduled_for)) : ''}${o.order_type==='delivery' && Number(o.delivery_fee||0)>0 ? ' · 🛵 '+fmtMoney(o.delivery_fee) : ''}</div>
         </div>
         <div style="text-align:right">
           <span class="pill ${o.status}"><span class="pill-dot ${o.status}"></span>${escapeHtml(statusLabel(o.status))}</span><br>
@@ -1179,8 +1191,8 @@ function printReceipt(orderId) {
     ${cash != null ? `<div class="rp-row"><span>${escapeHtml(t('label_cash_received'))}</span><span>${fmtMoney(cash)}</span></div>` : ''}
     ${change != null ? `<div class="rp-row"><span>${escapeHtml(t('label_change'))}</span><span>${fmtMoney(change)}</span></div>` : ''}
     <div class="rp-sep"></div>
-    <div class="rp-footrow"><span>Order time</span><span>${createdAt.toLocaleString(localeFor(currentLang))}</span></div>
-    ${paidAt ? `<div class="rp-footrow"><span>Paid time</span><span>${paidAt.toLocaleString(localeFor(currentLang))}</span></div>` : ''}
+    <div class="rp-footrow"><span>Order time</span><span>${zaabosDateTime(createdAt)}</span></div>
+    ${paidAt ? `<div class="rp-footrow"><span>Paid time</span><span>${zaabosDateTime(paidAt)}</span></div>` : ''}
     ${o.created_by_name ? `<div class="rp-footrow"><span>Cashier</span><span>${escapeHtml(o.created_by_name)}</span></div>` : ''}
     <div class="rp-thanks">${escapeHtml(t('receipt_thank_you'))}</div>
     <div class="rp-powered">ZaabOS</div>`;
@@ -1200,7 +1212,7 @@ function printKitchenTicket(orderId, itemIds) {
   $('#kitchenTicketPrintArea').innerHTML = `
     <div class="kt-print-head">${escapeHtml(t('kitchen_ticket_header'))}</div>
     <div class="rp-sub">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-    <div class="rp-sub">${new Date().toLocaleString(localeFor(currentLang))}</div>
+    <div class="rp-sub">${zaabosDateTime(new Date())}</div>
     <div class="rp-line"></div>
     ${itemsHtml}
     ${o.notes ? `<div class="rp-line"></div><div class="kt-print-notes">📝 ${escapeHtml(o.notes)}</div>` : ''}`;

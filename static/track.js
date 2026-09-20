@@ -1,3 +1,15 @@
+const ZAABOS_RESTAURANT_TZ = 'Asia/Vientiane';
+function zaabosDateTime(value, options={}) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', ...options}).format(d);
+}
+function zaabosTime(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, hour:'2-digit', minute:'2-digit'}).format(d);
+}
+
 'use strict';
 const $ = (s, el) => (el || document).querySelector(s);
 
@@ -52,7 +64,7 @@ function renderResult(order) {
       <div class="oc-head">
         <div>
           <div class="oc-no">#${escapeHtml(order.order_no)}</div>
-          <div class="oc-meta">${escapeHtml(order.customer_name)} · ${new Date(order.created_at).toLocaleString(localeFor(currentLang))}</div>
+          <div class="oc-meta">${escapeHtml(order.customer_name)} · ${zaabosDateTime(order.created_at)}</div>
         </div>
         <span class="pill ${order.status}"><span class="pill-dot ${order.status}"></span>${escapeHtml(t('status_' + order.status))}</span>
       </div>
