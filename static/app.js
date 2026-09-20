@@ -668,6 +668,7 @@ $('#addMenuItemBtn').addEventListener('click', () => openMenuItemModal(null));
 
 function openMenuItemModal(id) {
   fillCategorySelect();
+  fillKitchenStationSelect();
   $('#menuItemError').textContent = '';
   if (id) {
     const it = boot.items.find(x => x.id === id);
@@ -682,6 +683,7 @@ function openMenuItemModal(id) {
     $('#menuItemTrackStock').checked = !!it.track_stock;
     $('#menuItemStockQty').value = it.stock_qty != null ? it.stock_qty : '';
     $('#menuItemLowStockThreshold').value = it.low_stock_threshold != null ? it.low_stock_threshold : 5;
+    $('#menuItemKitchenStation').value = it.kitchen_station_id || '';
     optGroupsDraft = JSON.parse(JSON.stringify(it.option_groups || []));
     menuItemImageDraft = it.image_url || null;
   } else {
@@ -690,6 +692,7 @@ function openMenuItemModal(id) {
     $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false;
     $('#menuItemCostPrice').value = ''; $('#menuItemTrackStock').checked = false;
     $('#menuItemStockQty').value = ''; $('#menuItemLowStockThreshold').value = 5;
+    $('#menuItemKitchenStation').value = '';
     optGroupsDraft = [];
     menuItemImageDraft = null;
   }
@@ -786,6 +789,7 @@ $('#menuItemSave').addEventListener('click', async () => {
     image_url: menuItemImageDraft,
     cost_price: isNaN(costPrice) ? 0 : costPrice, track_stock: trackStock,
     stock_qty: stockQty, low_stock_threshold: lowStockThreshold,
+    kitchen_station_id: $('#menuItemKitchenStation').value || null,
   };
   try {
     if (id) await apiJson('/api/menu-items/' + id, 'PUT', payload);
@@ -1675,3 +1679,22 @@ async function loadInventory(){
 $('#addIngredientBtn').addEventListener('click',()=>openModal('#ingredientModal'));
 $('#ingSave').addEventListener('click',async()=>{try{await apiJson('/api/inventory/ingredients','POST',{branch_id:currentBranchId,name:$('#ingName').value.trim(),unit:$('#ingUnit').value.trim()||'unit',stock_qty:Number($('#ingQty').value||0),low_stock_threshold:Number($('#ingLow').value||0),cost_per_unit:Number($('#ingCost').value||0)});closeModals();toast('เพิ่มวัตถุดิบแล้ว','ok');loadInventory()}catch(e){toast(e.message,'err')}});
 $('#ingredientsList').addEventListener('click',async e=>{const b=e.target.closest('[data-ing-adjust]');if(!b)return;const q=prompt('ปรับจำนวน เช่น 10 หรือ -2');if(q===null)return;const reason=prompt('เหตุผลการปรับสต็อก');if(!reason)return;try{await apiJson(`/api/inventory/ingredients/${b.dataset.ingAdjust}/adjust`,'POST',{quantity:Number(q),reason});loadInventory()}catch(err){toast(err.message,'err')}});
+
+// Round 17 operations
+let kitchenStationsCache=[],recipeMenuId=null,recipeDraft=[];
+async function fillKitchenStationSelect(){const sel=$('#menuItemKitchenStation');if(!sel||!currentBranchId)return;try{kitchenStationsCache=await api('/api/kitchen/stations?branch_id='+currentBranchId);const cur=sel.value;sel.innerHTML='<option value="">ไม่ระบุสถานี</option>'+kitchenStationsCache.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');sel.value=cur||'';}catch(e){}}
+async function openRecipeEditor(mid){if(!mid){toast('บันทึกเมนูก่อน แล้วจึงกำหนดสูตรวัตถุดิบ','err');return;}recipeMenuId=Number(mid);const it=boot.items.find(x=>x.id===recipeMenuId);$('#recipeMenuName').textContent=it?it.name:'';const [ings,recipe]=await Promise.all([api('/api/inventory/ingredients?branch_id='+currentBranchId),api('/api/inventory/recipes/'+recipeMenuId)]);window._recipeIngredients=ings;recipeDraft=recipe.map(x=>({ingredient_id:x.ingredient_id,quantity:Number(x.quantity)}));renderRecipeRows();openModal('#recipeModal');}
+function renderRecipeRows(){const ings=window._recipeIngredients||[];$('#recipeRows').innerHTML=recipeDraft.map((r,i)=>`<div class="recipe-row"><select data-recipe-ing="${i}">${ings.map(x=>`<option value="${x.id}" ${Number(x.id)===Number(r.ingredient_id)?'selected':''}>${escapeHtml(x.name)} (${escapeHtml(x.unit)})</option>`).join('')}</select><input data-recipe-qty="${i}" type="number" min="0.0001" step="0.01" value="${r.quantity}"><button class="icon-btn danger" data-recipe-del="${i}">×</button></div>`).join('')||'<div class="muted">ยังไม่มีสูตร</div>';}
+$('#menuItemRecipeBtn').addEventListener('click',()=>openRecipeEditor($('#menuItemId').value));
+$('#recipeAddRow').addEventListener('click',()=>{const a=window._recipeIngredients||[];if(!a.length){toast('เพิ่มวัตถุดิบก่อน','err');return;}recipeDraft.push({ingredient_id:a[0].id,quantity:1});renderRecipeRows();});
+$('#recipeRows').addEventListener('input',e=>{let i=e.target.dataset.recipeIng;if(i!==undefined)recipeDraft[+i].ingredient_id=Number(e.target.value);i=e.target.dataset.recipeQty;if(i!==undefined)recipeDraft[+i].quantity=Number(e.target.value||0);});
+$('#recipeRows').addEventListener('click',e=>{const i=e.target.dataset.recipeDel;if(i!==undefined){recipeDraft.splice(+i,1);renderRecipeRows();}});
+$('#recipeSave').addEventListener('click',async()=>{try{await apiJson('/api/inventory/recipes/'+recipeMenuId,'PUT',{items:recipeDraft});closeModals();toast('บันทึกสูตรแล้ว','ok')}catch(e){toast(e.message,'err')}});
+$('#manageStationsBtn').addEventListener('click',async()=>{await loadStationsManager();openModal('#stationsModal')});
+async function loadStationsManager(){kitchenStationsCache=await api('/api/kitchen/stations?branch_id='+currentBranchId);$('#stationsList').innerHTML=kitchenStationsCache.map(x=>`<div class="row"><b>${escapeHtml(x.name)}</b><button class="ghost-btn" data-station-off="${x.id}">ปิดใช้งาน</button></div>`).join('')||'<div class="muted">ยังไม่มีสถานีครัว</div>';}
+$('#stationAdd').addEventListener('click',async()=>{const name=$('#newStationName').value.trim();if(!name)return;try{await apiJson('/api/kitchen/stations','POST',{branch_id:currentBranchId,name});$('#newStationName').value='';await loadStationsManager();await fillKitchenStationSelect()}catch(e){toast(e.message,'err')}});
+$('#stationsList').addEventListener('click',async e=>{const b=e.target.closest('[data-station-off]');if(!b)return;try{await apiJson('/api/kitchen/stations/'+b.dataset.stationOff,'PUT',{active:false});await loadStationsManager();await fillKitchenStationSelect()}catch(err){toast(err.message,'err')}});
+$('#inventoryHistoryBtn').addEventListener('click',async()=>{const box=$('#inventoryHistory');box.classList.toggle('hidden');if(box.classList.contains('hidden'))return;try{const rows=await api('/api/inventory/movements?branch_id='+currentBranchId+'&limit=100');box.innerHTML='<h3>ประวัติสต็อกล่าสุด</h3>'+rows.map(x=>`<div class="inventory-history-row"><div><b>${escapeHtml(x.ingredient_name)}</b><small>${escapeHtml(x.movement_type)} · ${escapeHtml(x.reason||'')}</small></div><strong>${Number(x.quantity)>0?'+':''}${Number(x.quantity).toLocaleString()} ${escapeHtml(x.unit)}</strong></div>`).join('')||'<div class="muted">ยังไม่มีประวัติ</div>';}catch(e){toast(e.message,'err')}});
+const _r17LoadInventory=loadInventory;
+loadInventory=async function(){await _r17LoadInventory();const rows=await api('/api/inventory/ingredients?branch_id='+currentBranchId);$('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><div class="ingredient-actions"><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button><button class="ghost-btn" data-ing-waste="${x.id}">ของเสีย</button><button class="ghost-btn" data-ing-count="${x.id}">ตรวจนับ</button></div></div>`).join(''):emptyState('📦','ยังไม่มีวัตถุดิบ');};
+$('#ingredientsList').addEventListener('click',async e=>{const w=e.target.closest('[data-ing-waste]');if(w){const q=prompt('จำนวนวัตถุดิบที่เสีย/ทิ้ง');if(q===null)return;const reason=prompt('สาเหตุของเสีย');if(!reason)return;try{await apiJson(`/api/inventory/ingredients/${w.dataset.ingWaste}/waste`,'POST',{quantity:Number(q),reason});toast('บันทึกของเสียแล้ว','ok');loadInventory()}catch(err){toast(err.message,'err')}return;}const c=e.target.closest('[data-ing-count]');if(c){const q=prompt('จำนวนที่ตรวจนับได้จริง');if(q===null)return;const note=prompt('หมายเหตุการตรวจนับ (ถ้ามี)')||'';try{const r=await apiJson(`/api/inventory/ingredients/${c.dataset.ingCount}/count`,'POST',{counted_qty:Number(q),note});toast(`ตรวจนับแล้ว · ต่าง ${Number(r.difference).toLocaleString()}`,'ok');loadInventory()}catch(err){toast(err.message,'err')}}});
