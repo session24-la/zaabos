@@ -240,6 +240,19 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .lang-select-login{position:fixed;top:16px;right:16px;z-index:5;width:auto;box-shadow:var(--shadow-md)}
 .lang-bar{display:flex;justify-content:flex-end;padding:12px 16px 0}
 
+/* ===== Password show/hide toggle (auto-wired by i18n.js on every password field) ===== */
+.pw-field{position:relative;margin-top:6px}
+.pw-field .pw-input{margin-top:0;width:100%;padding-right:42px}
+.pw-toggle{
+  position:absolute;top:50%;right:4px;transform:translateY(-50%);
+  display:flex;align-items:center;justify-content:center;
+  width:32px;height:32px;padding:0;border:0;border-radius:8px;
+  background:transparent;color:var(--text-muted);cursor:pointer;
+  transition:background .15s,color .15s;
+}
+.pw-toggle:hover{background:var(--surface-2);color:var(--text)}
+.pw-toggle-active{color:var(--primary)}
+
 /* ===== Login ===== */
 .login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:
   radial-gradient(600px 400px at 15% 10%,var(--primary-soft),transparent 60%),

@@ -366,3 +366,37 @@ function initLangSwitcher(selector) {
   el.addEventListener('change', () => setLang(el.value));
   _langSwitcherEls.push(el);
 }
+
+/* ===== Password show/hide eye icon — auto-applied to every <input type="password">
+   on every page, no per-page wiring needed. ===== */
+const _EYE_OPEN = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const _EYE_OFF = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a21.3 21.3 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a21.3 21.3 0 0 1-2.68 3.68M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+
+function wirePasswordToggles(root) {
+  const scope = root || document;
+  scope.querySelectorAll('input[type="password"]:not([data-pw-wired])').forEach(input => {
+    input.setAttribute('data-pw-wired', '1');
+    const wrap = document.createElement('div');
+    wrap.className = 'pw-field';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    input.classList.add('pw-input');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pw-toggle';
+    btn.setAttribute('aria-label', 'show/hide password');
+    btn.innerHTML = _EYE_OPEN;
+    btn.addEventListener('click', () => {
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.innerHTML = showing ? _EYE_OPEN : _EYE_OFF;
+      btn.classList.toggle('pw-toggle-active', !showing);
+    });
+    wrap.appendChild(btn);
+  });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => wirePasswordToggles());
+} else {
+  wirePasswordToggles();
+}
