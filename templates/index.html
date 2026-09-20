@@ -4,6 +4,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 <meta name="theme-color" content="#ea580c">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/static/manifest.webmanifest">
 </head><body>
 
 <section id="loginView" class="login-screen hidden">
@@ -356,6 +358,7 @@
 <!-- Confirm payment: optional tax + cash received, computes change before printing the receipt -->
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
   <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
+  <label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label>
   <label><span data-i18n="label_tax_amount">ภาษี (ถ้ามี)</span><input id="cpTax" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <label><span data-i18n="label_cash_received">รับเงินมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <div class="row" style="margin-top:6px"><span data-i18n="label_change">เงินทอน</span><b id="cpChange">0</b></div>
