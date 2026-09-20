@@ -387,7 +387,7 @@ def ensure_schema_migrations(conn):
     # Round 11: DB-level concurrency invariants.
     # Migration 21 owns active-payment uniqueness. Do not recreate the legacy
     # full unique index because reopened bills retain reversed payment history.
-    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_refunds_tenant_order ON refunds(tenant_id,order_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_refunds_tenant_order ON refunds(tenant_id,order_id)')
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_closing_tenant_branch_date ON daily_closings(tenant_id,branch_id,closing_date)')
     conn.commit()
     record_migration(conn, 11, 'concurrency_and_recovery_hardening')
@@ -534,6 +534,12 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_movements_tenant_branch ON inventory_movements(tenant_id,branch_id,created_at)')
     conn.commit()
     record_migration(conn, 22, 'restaurant_core_complete')
+    # Round 15.1 — acceptance hardening
+    conn.execute('DROP INDEX IF EXISTS uq_refunds_tenant_order')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_refunds_tenant_order ON refunds(tenant_id,order_id)')
+    conn.commit()
+    record_migration(conn, 23, 'round15_acceptance_hardening')
+
 
 
 def init_db():
@@ -1645,13 +1651,17 @@ def kitchen_orders():
     conn = db()
     if g.tenant_id is None: return jsonify(orders=[])
     branch_id = request.args.get('branch_id')
+    station_id = request.args.get('station_id')
     q = '''SELECT DISTINCT o.* FROM orders o
            JOIN order_items oi ON oi.order_id=o.id
+           LEFT JOIN menu_items mi ON mi.id=oi.menu_item_id AND mi.tenant_id=o.tenant_id
            WHERE o.tenant_id=? AND o.status IN ('received','preparing','ready')
              AND oi.kitchen_sent_at IS NOT NULL'''
     args=[g.tenant_id]
     if branch_id:
         q += ' AND o.branch_id=?'; args.append(branch_id)
+    if station_id:
+        q += ' AND mi.kitchen_station_id=?'; args.append(station_id)
     q += ' ORDER BY o.id ASC LIMIT 200'
     rows=conn.execute(q,args).fetchall()
     return jsonify(orders=[_order_with_items(conn,r) for r in rows])
