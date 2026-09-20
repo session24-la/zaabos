@@ -33,7 +33,16 @@ class PGConn:
 
     def execute(self, sql, params=()):
         pg_sql = sql.replace('?', '%s')
-        add_returning = pg_sql.strip()[:11].upper() == 'INSERT INTO' and 'RETURNING' not in pg_sql.upper()
+        # Most application tables use an integer `id` and need SQLite-style
+        # lastrowid emulation. Migration ledgers are keyed by `version`, not `id`,
+        # so blindly appending RETURNING id makes PostgreSQL crash at startup.
+        insert_head = pg_sql.lstrip().upper()
+        no_id_return_tables = ('SCHEMA_MIGRATIONS',)
+        add_returning = (
+            insert_head.startswith('INSERT INTO')
+            and 'RETURNING' not in pg_sql.upper()
+            and not any(insert_head.startswith(f'INSERT INTO {table}') for table in no_id_return_tables)
+        )
         if add_returning:
             pg_sql = pg_sql.rstrip().rstrip(';') + ' RETURNING id'
         cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
