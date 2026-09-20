@@ -970,12 +970,15 @@ function updateCpChange() {
   const ord = findOrderById(cpOrderId);
   if (!ord) return;
   const tax = parseFloat($('#cpTax').value) || 0;
-  const cash = parseFloat($('#cpCash').value) || 0;
+  const method = $('#cpMethod').value;
+  const cash = method === 'cash' ? (parseFloat($('#cpCash').value) || 0) : 0;
+  $('#cpCash').closest('label').classList.toggle('hidden', method !== 'cash');
   const due = ord.total_amount + tax;
   $('#cpChange').textContent = fmtMoney(cash > 0 ? Math.max(0, cash - due) : 0);
 }
 $('#cpTax').addEventListener('input', updateCpChange);
 $('#cpCash').addEventListener('input', updateCpChange);
+$('#cpMethod').addEventListener('change', updateCpChange);
 
 function openConfirmPaymentModal(orderId) {
   const ord = findOrderById(orderId);
@@ -985,6 +988,7 @@ function openConfirmPaymentModal(orderId) {
   $('#cpTax').value = ord.tax_amount ? String(ord.tax_amount) : '';
   $('#cpCash').value = ord.cash_received ? String(ord.cash_received) : '';
   $('#cpError').textContent = '';
+  $('#cpMethod').value = ord.payment_method || 'cash';
   updateCpChange();
   openModal('#confirmPaymentModal');
 }
@@ -993,13 +997,13 @@ $('#cpSubmit').addEventListener('click', async () => {
   if (cpOrderId == null) return;
   $('#cpError').textContent = '';
   const orderId = cpOrderId;
-  const payload = { payment_status: 'paid' };
+  const payload = { payment_status: 'paid', payment_method: $('#cpMethod').value };
   const taxRaw = $('#cpTax').value.trim(); if (taxRaw) payload.tax_amount = parseFloat(taxRaw);
-  const cashRaw = $('#cpCash').value.trim(); if (cashRaw) payload.cash_received = parseFloat(cashRaw);
+  const cashRaw = $('#cpCash').value.trim(); if (payload.payment_method === 'cash' && cashRaw) payload.cash_received = parseFloat(cashRaw);
   try {
     await apiJson('/api/orders/' + orderId + '/payment', 'PUT', payload);
     const ord = findOrderById(orderId);
-    if (ord && ord.status !== 'completed' && ord.status !== 'cancelled') {
+    if (ord && ord.status === 'served') {
       await apiJson('/api/orders/' + orderId + '/status', 'PUT', { status: 'completed' });
     }
     toast(t('toast_payment_confirmed'), 'ok');
