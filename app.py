@@ -926,7 +926,7 @@ def change_password():
     user = conn.execute('SELECT * FROM users WHERE id=?', (g.user['id'],)).fetchone()
     if not verify_password(user['password_hash'], current):
         return jsonify(error='รหัสผ่านเดิมไม่ถูกต้อง'), 400
-    if len(new) < 6: return jsonify(error='รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
+    if len(new) < 10: return jsonify(error='รหัสผ่านใหม่ต้องยาวอย่างน้อย 10 ตัวอักษร'), 400
     conn.execute('UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?', (hash_password(new), user['id']))
     log_action('change_password'); conn.commit()
     return jsonify(ok=True)
@@ -980,7 +980,7 @@ def add_tenant():
     owner_password = d.get('owner_password') or ''
     if not name or not owner_username or not owner_display or not owner_password:
         return jsonify(error='กรุณากรอกข้อมูลให้ครบ'), 400
-    if len(owner_password) < 6: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร'), 400
+    if len(owner_password) < 10: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 10 ตัวอักษร'), 400
     conn=db(); plan_code=(d.get('plan_code') or 'starter').strip()
     plan=conn.execute('SELECT * FROM saas_plans WHERE code=? AND active=1',(plan_code,)).fetchone()
     if not plan:return jsonify(error='แพ็กเกจไม่ถูกต้อง'),400
