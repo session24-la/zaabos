@@ -385,7 +385,8 @@ def ensure_schema_migrations(conn):
         conn.commit()
     record_migration(conn, 10, 'production_safety_foundation')
     # Round 11: DB-level concurrency invariants.
-    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_tenant_order ON payments(tenant_id,order_id)')
+    # Migration 21 owns active-payment uniqueness. Do not recreate the legacy
+    # full unique index because reopened bills retain reversed payment history.
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_refunds_tenant_order ON refunds(tenant_id,order_id)')
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_closing_tenant_branch_date ON daily_closings(tenant_id,branch_id,closing_date)')
     conn.commit()
@@ -2390,7 +2391,7 @@ def close_shift():
     cash_sales=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND reversed_at IS NULL AND paid_by_user_id=? AND paid_at>=?",(g.tenant_id,branch_id,g.user['id'],sh['opened_at'])).fetchone()['total'] or 0
     mv=conn.execute("SELECT COALESCE(SUM(CASE WHEN movement_type='cash_in' THEN amount ELSE -amount END),0) AS total FROM cash_movements WHERE tenant_id=? AND shift_id=?",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
     cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
-    cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
+    cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL AND paid_at<?",(g.tenant_id,sh['id'],sh['opened_at'])).fetchone()['total'] or 0
     expected=float(sh['opening_cash'])+float(cash_sales)+float(mv)-float(cash_refunds)-float(cash_reversals); diff=counted-expected; ts=now()
     claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],sh['id'],g.tenant_id))
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='กะนี้ถูกปิดจากอุปกรณ์อื่นแล้ว'),409

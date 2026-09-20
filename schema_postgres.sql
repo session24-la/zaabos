@@ -179,9 +179,18 @@ CREATE TABLE IF NOT EXISTS payments (
  cash_received DOUBLE PRECISION,
  reference TEXT NOT NULL DEFAULT '',
  paid_by_user_id INTEGER,
+ reversed_at TEXT,
+ reversed_by_user_id INTEGER,
+ reversal_reason TEXT NOT NULL DEFAULT '',
+ reversed_shift_id INTEGER,
  paid_at TEXT NOT NULL,
  FOREIGN KEY(order_id) REFERENCES orders(id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_tenant_order_active
+ON payments(tenant_id, order_id) WHERE reversed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_payments_reversed_shift
+ON payments(tenant_id, reversed_shift_id);
 
 CREATE TABLE IF NOT EXISTS audit_logs (
  id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
