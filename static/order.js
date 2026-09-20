@@ -287,6 +287,7 @@ $('#orderTypePicker').addEventListener('click', async (e) => {
 function updateDeliveryFieldsVisibility() {
   $('#deliveryFields').classList.toggle('hidden', orderType !== 'delivery');
   $('#phoneOptionalRow').classList.toggle('hidden', orderType === 'delivery');
+  $('#scheduleRow').classList.toggle('hidden', orderType === 'dine_in');
 }
 async function updateTableUi() {
   $('#tableResolvedRow').classList.add('hidden');
@@ -334,6 +335,7 @@ $('#checkoutSubmit').addEventListener('click', async () => {
   const payload = {
     branch_id: menuData.branch_id, order_type: orderType, customer_name: customerName,
     notes: $('#orderNotes').value.trim(),
+    scheduled_for: orderType === 'dine_in' ? null : ($('#scheduledFor').value || null),
     cart: cart.map(c => ({ menu_item_id: c.menu_item_id, quantity: c.qty, selected_options: c.selected_options, notes: c.notes })),
   };
   const token = getTableTokenFromPath();

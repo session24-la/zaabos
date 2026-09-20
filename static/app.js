@@ -913,7 +913,7 @@ function orderCardHtml(o) {
       <div class="oc-head">
         <div>
           <div class="oc-no">#${escapeHtml(o.order_no)} — ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${new Date(o.created_at).toLocaleString(localeFor(currentLang))}</div>
+          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${new Date(o.created_at).toLocaleString(localeFor(currentLang))}${o.scheduled_for ? ' · ⏰ '+escapeHtml(new Date(o.scheduled_for).toLocaleString(localeFor(currentLang))) : ''}${o.order_type==='delivery' && Number(o.delivery_fee||0)>0 ? ' · 🛵 '+fmtMoney(o.delivery_fee) : ''}</div>
         </div>
         <div style="text-align:right">
           <span class="pill ${o.status}"><span class="pill-dot ${o.status}"></span>${escapeHtml(statusLabel(o.status))}</span><br>
@@ -925,6 +925,7 @@ function orderCardHtml(o) {
       <div class="row" style="border-top:1px dashed var(--border)"><b>${escapeHtml(t('label_total_short'))}</b><b>${fmtMoney(o.total_amount)}</b></div>
       <div class="head-actions" style="margin-top:8px">
         ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">${escapeHtml(t('kt_btn_cancel'))}</button>` : ''}
+        ${o.order_type !== 'dine_in' && o.status !== 'cancelled' ? `<button class="ghost-btn" data-fulfillment="${o.id}:confirmed">รับออเดอร์</button><button class="ghost-btn" data-fulfillment="${o.id}:ready">พร้อมรับ</button>${o.order_type==='delivery'?`<button class="ghost-btn" data-fulfillment="${o.id}:out_for_delivery">กำลังจัดส่ง</button><button class="ghost-btn" data-fulfillment="${o.id}:delivered">ส่งสำเร็จ</button>`:`<button class="ghost-btn" data-fulfillment="${o.id}:picked_up">รับแล้ว</button>`}` : ''}
 
       </div>
       ${kitchenEligible && o.items.some(it => !it.kitchen_sent_at && (Number(it.quantity||0)-Number(it.cancelled_quantity||0))>0) ? `
@@ -1006,9 +1007,10 @@ function wireOrderActionClicks(container) {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
     const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
-    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder;
+    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, ff=e.target.dataset.fulfillment;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
-    if (iq) { const [oid,iid,qty]=iq.split(':'); apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:Number(qty)}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    if (ff) { const [oid,status]=ff.split(':'); apiJson(`/api/orders/${oid}/fulfillment`,'PUT',{fulfillment_status:status}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    else if (iq) { const [oid,iid,qty]=iq.split(':'); apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:Number(qty)}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
     else if (ci) { const [oid,iid,qty]=ci.split(':'); cancelOrderItemCritical(oid,iid,qty); }
     else if (ai) { openAddItemsToOrder(parseInt(ai,10)); }
     else if (mv) { openMoveTable(parseInt(mv,10)); }
@@ -1304,7 +1306,7 @@ function openTakeOrderForTable(tableId=null) {
   $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b.dataset.type === 'dine_in'));
   $('#takeOrderTableRow').classList.remove('hidden'); $('#takeOrderDeliveryFields').classList.add('hidden');
   $('#takeOrderCustomerName').value = ''; $('#takeOrderPhone').value = ''; $('#takeOrderAddress').value = '';
-  $('#takeOrderGuestCount').value = '';
+  $('#takeOrderGuestCount').value = ''; $('#takeOrderScheduledFor').value=''; $('#takeOrderDeliveryFee').value='0';
   $('#takeOrderError').textContent = '';
   const tsel = $('#takeOrderTable');
   tsel.innerHTML = branchTables().map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
@@ -1322,6 +1324,7 @@ $('#takeOrderType').addEventListener('click', (e) => {
   $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b === btn));
   $('#takeOrderTableRow').classList.toggle('hidden', takeOrderType !== 'dine_in');
   $('#takeOrderDeliveryFields').classList.toggle('hidden', takeOrderType !== 'delivery');
+  $('#takeOrderScheduleRow').classList.toggle('hidden', takeOrderType === 'dine_in');
 });
 
 let takeOrderActiveCat = null;
@@ -1444,7 +1447,8 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   const guestCountRaw = $('#takeOrderGuestCount').value.trim();
   if (guestCountRaw) payload.guest_count = parseInt(guestCountRaw, 10);
   if (takeOrderType === 'dine_in') payload.table_id = parseInt($('#takeOrderTable').value, 10);
-  if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); }
+  if (takeOrderType !== 'dine_in') payload.scheduled_for = $('#takeOrderScheduledFor').value || null;
+  if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); payload.delivery_fee = Number($('#takeOrderDeliveryFee').value || 0); }
   const btn = $('#takeOrderSubmit');
   const originalLabel = btn.textContent;
   btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
