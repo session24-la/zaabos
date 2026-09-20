@@ -972,7 +972,7 @@ function orderCardHtml(o) {
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
         ${o.payment_status === 'paid' && (me.role === 'owner' || me.role === 'manager' || me.role === 'super_admin') ? `<button class="ghost-btn danger" data-refund-order="${o.id}">↩️ คืนเงิน</button>` : ''}
         ${o.payment_status === 'paid' ? `<button class="ghost-btn" data-reopen-order="${o.id}">↩️ เปิดบิลกลับมาแก้ไข</button>` : ''}
-        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-merge-order="${o.id}">🔗 รวมบิล</button>` : ''}
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-merge-order="${o.id}">🔗 รวมบิล</button>` : ''}\n        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-split-order="${o.id}">✂️ แยกบิล</button>` : ''}
       </div>
     </div>`;
 }
@@ -1050,7 +1050,7 @@ function wireOrderActionClicks(container) {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
     const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
-    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, ff=e.target.dataset.fulfillment, ro=e.target.dataset.reopenOrder;
+    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, sp = e.target.dataset.splitOrder, ff=e.target.dataset.fulfillment, ro=e.target.dataset.reopenOrder;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
     if (ff) { const [oid,status]=ff.split(':'); apiJson(`/api/orders/${oid}/fulfillment`,'PUT',{fulfillment_status:status}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
     else if (iq) {
@@ -1073,6 +1073,7 @@ function wireOrderActionClicks(container) {
     else if (rf) { refundOrder(parseInt(rf,10)); }
     else if (ro) { reopenPaidOrder(parseInt(ro,10)); }
     else if (mg) { mergeOrder(parseInt(mg,10)); }
+    else if (sp) { splitOrder(parseInt(sp,10)); }
     else if (sk) { const card = e.target.closest('.order-card'); if (card) sendSelectedToKitchen(parseInt(sk, 10), card); }
   });
   container.addEventListener('change', (e) => {
@@ -1111,6 +1112,18 @@ async function mergeOrder(sourceId) {
   if(!confirm('ยืนยันรวมบิล? รายการทั้งหมดจะย้ายไปบิลปลายทาง')) return;
   try { await apiJson(`/api/orders/${sourceId}/merge`,'POST',{target_order_id:target}); toast('รวมบิลเรียบร้อย','ok'); onOrderActionDone(); }
   catch(e){ toast(e.message,'err'); }
+}
+
+async function splitOrder(sourceId){
+  const ord=findOrderById(sourceId); if(!ord){toast('ไม่พบบิล','err');return;}
+  const rows=ord.items.map(it=>({it,active:Math.max(0,Number(it.quantity||0)-Number(it.cancelled_quantity||0))})).filter(x=>x.active>0);
+  const guide=rows.map((x,i)=>`${i+1}. ${x.it.item_name_snapshot} — มี ${x.active}`).join('\n');
+  const raw=prompt('แยกบิล — เลือกรายการและจำนวน\n\n'+guide+'\n\nพิมพ์แบบ 1x1, 2x2'); if(raw===null)return;
+  const selected=[],used=new Set();
+  for(const part of raw.split(',')){const m=part.trim().match(/^(\d+)\s*[xX×]\s*(\d+)$/);if(!m){toast('รูปแบบไม่ถูกต้อง เช่น 1x1, 2x2','err');return;}const pos=Number(m[1])-1,qty=Number(m[2]);if(!rows[pos]||qty<1||qty>rows[pos].active||used.has(pos)){toast('รายการหรือจำนวนไม่ถูกต้อง','err');return;}used.add(pos);selected.push({item_id:rows[pos].it.id,quantity:qty});}
+  const moved=selected.reduce((a,x)=>a+x.quantity,0),all=rows.reduce((a,x)=>a+x.active,0);if(!selected.length||moved>=all){toast('ต้องเหลืออย่างน้อย 1 รายการในบิลเดิม','err');return;}
+  if(!confirm(`ยืนยันแยก ${moved} รายการเป็นบิลใหม่?\nจะไม่หักสต็อกหรือส่งครัวซ้ำ`))return;
+  try{const r=await apiJson(`/api/orders/${sourceId}/split`,'POST',{items:selected});closeModals();toast(`แยกบิลสำเร็จ → #${r.new_order_no}`,'ok');onOrderActionDone();}catch(e){toast(e.message,'err');}
 }
 
 function onOrderActionDone() { loadOrders(); loadBoardData(); }
