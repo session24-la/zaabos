@@ -1,0 +1,110 @@
+<!doctype html><html lang="lo"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ສັ່ງອາຫານ — ZaabOS</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<meta name="theme-color" content="#ea580c">
+</head><body>
+
+<select id="langSelect" class="lang-select lang-select-login"></select>
+
+<div id="loadingView" style="padding:60px 20px;text-align:center;color:var(--text-muted)" data-i18n="loading_menu">กำลังโหลดเมนู...</div>
+
+<div id="errorView" class="hidden" style="padding:60px 20px;text-align:center">
+  <div style="font-size:40px">😕</div>
+  <p id="errorMsg" style="color:var(--text-muted);margin-top:10px"></p>
+</div>
+
+<div id="menuView" class="hidden">
+  <div class="order-hero">
+    <div class="oh-icon" id="ohIcon">🍽️</div>
+    <div class="oh-name" id="ohName">ร้านอาหาร</div>
+    <div class="oh-table hidden" id="ohTable"></div>
+  </div>
+  <main class="narrow" style="padding-top:16px">
+    <div id="categoriesView">
+      <div class="category-tiles" id="categoryTiles"></div>
+    </div>
+    <div id="itemsView" class="hidden">
+      <div class="items-view-head">
+        <button type="button" class="ivh-back" id="backToCatsBtn" data-i18n="btn_back_to_categories">← กลับหมวดหมู่</button>
+        <div class="ivh-title" id="itemsViewTitle"></div>
+      </div>
+      <div class="cat-scroll" id="catScroll"></div>
+      <div class="menu-grid" id="menuGrid"></div>
+    </div>
+  </main>
+  <button class="cart-fab hidden" id="cartFab" type="button">
+    <span id="cartFabCount">0</span><span id="cartFabTotal">0</span>
+  </button>
+</div>
+
+<!-- Item option picker -->
+<div class="modal" id="itemModal"><div class="sheet small"><div class="sheet-head"><h2 id="itemModalTitle">เมนู</h2><button data-close>×</button></div>
+  <p class="hint" id="itemModalDesc"></p>
+  <div id="itemModalBody"></div>
+  <label><span data-i18n="label_notes_optional">หมายเหตุ (ถ้ามี)</span><input id="itemNotes" placeholder="เช่น ไม่ใส่ผัก ไม่เผ็ด" data-i18n-ph="placeholder_notes_customer"></label>
+  <div class="qty-stepper" style="margin-top:14px;justify-content:center">
+    <button type="button" id="itemMinus">−</button><span id="itemQty">1</span><button type="button" id="itemPlus">+</button>
+  </div>
+  <div class="login-error" id="itemError"></div>
+  <button class="save" id="itemAdd"><span data-i18n="btn_add_to_cart_price">เพิ่มลงตะกร้า —</span> <span id="itemAddPrice">0</span></button>
+</div></div>
+
+<!-- Cart / checkout sheet -->
+<div class="modal" id="cartModal"><div class="sheet"><div class="sheet-head"><h2 data-i18n="cart_title">ตะกร้าของคุณ</h2><button data-close>×</button></div>
+  <div id="cartLines"></div>
+  <div class="cart-total-row"><span data-i18n="label_total">รวมทั้งหมด</span><span id="cartTotal">0</span></div>
+
+  <h3 data-i18n="label_order_type_title">ประเภทการสั่ง</h3>
+  <div class="type" id="orderTypePicker">
+    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in">🍽️ ทานที่ร้าน</button>
+    <button data-type="takeaway" data-i18n="order_type_takeaway">🥡 กลับบ้าน</button>
+    <button data-type="delivery" data-i18n="order_type_delivery">🛵 เดลิเวอรี่</button>
+  </div>
+
+  <div id="tableResolvedRow" class="hidden">
+    <label><span data-i18n="label_your_table">โต๊ะของคุณ</span><input id="tableResolvedDisplay" disabled></label>
+  </div>
+  <div id="tablePickRow" class="hidden">
+    <label><span data-i18n="label_pick_table">กรุณาเลือกโต๊ะของคุณ</span></label>
+    <div class="table-pick-grid" id="tablePickGrid"></div>
+    <div class="table-select-error hidden" id="tableSelectError" data-i18n="err_pick_table_first">กรุณาเลือกโต๊ะก่อนยืนยันออเดอร์</div>
+  </div>
+
+  <label><span data-i18n="label_orderer_name">ชื่อผู้สั่ง</span><input id="custName" placeholder="ชื่อของคุณ" data-i18n-ph="placeholder_your_name"></label>
+
+  <div id="deliveryFields" class="hidden">
+    <label><span data-i18n="label_delivery_phone">เบอร์โทรติดต่อ</span><input id="custPhone" inputmode="numeric" placeholder="เช่น 020xxxxxxx" data-i18n-ph="placeholder_phone_example"></label>
+    <label><span data-i18n="label_phone_confirm">กรอกเบอร์โทรอีกครั้งเพื่อยืนยัน</span><input id="custPhoneConfirm" inputmode="numeric"></label>
+    <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="custAddress" placeholder="บ้านเลขที่ / ถนน / จุดสังเกต" data-i18n-ph="placeholder_address"></textarea></label>
+  </div>
+  <div id="phoneOptionalRow">
+    <label><span data-i18n="label_phone_optional">เบอร์โทร (ถ้ามี — เผื่อร้านต้องการติดต่อ)</span><input id="custPhoneOptional" inputmode="numeric"></label>
+  </div>
+
+  <label><span data-i18n="label_notes_to_shop">หมายเหตุถึงร้าน (ถ้ามี)</span><input id="orderNotes" placeholder="เช่น ขอช้อนเพิ่ม" data-i18n-ph="placeholder_notes_shop_example"></label>
+
+  <div class="login-error" id="checkoutError"></div>
+  <button class="save" id="checkoutSubmit" data-i18n="btn_confirm_order_customer">✅ ยืนยันสั่งอาหาร</button>
+</div></div>
+
+<!-- Success screen -->
+<div class="modal" id="successModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="success_title">สั่งอาหารสำเร็จ! 🎉</h2><button data-close>×</button></div>
+  <div style="text-align:center;padding:10px 0">
+    <div style="font-size:44px">✅</div>
+    <p style="font-weight:800;font-size:18px;margin-top:8px"><span data-i18n="success_order_no_prefix">เลขที่ออเดอร์</span> <span id="successOrderNo"></span></p>
+    <p class="hint" data-i18n="success_hint">ทางร้านได้รับออเดอร์ของคุณแล้ว กรุณารอสักครู่</p>
+    <a class="save" id="successTrackLink" style="text-decoration:none;display:block;text-align:center;margin-top:16px" data-i18n="btn_track_order">📍 ติดตามสถานะออเดอร์</a>
+    <button class="save secondary" id="successNewOrderBtn" style="margin-top:8px" data-i18n="btn_order_more">🍽️ สั่งเพิ่ม</button>
+  </div>
+</div></div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>const DEFAULT_LANG = 'lo';</script>
+<script src="/static/i18n.js"></script>
+<script src="/static/order.js"></script>
+</body></html>

@@ -1,0 +1,30 @@
+<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ติดตามออเดอร์ — ZaabOS</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<meta name="theme-color" content="#ea580c">
+</head><body>
+
+<div class="lang-bar"><select id="langSelect" class="lang-select"></select></div>
+
+<main class="narrow" style="padding-top:14px">
+  <div class="brand center" style="margin-bottom:20px">Zaab<b>OS</b></div>
+
+  <div class="panel" id="lookupPanel">
+    <h2 data-i18n="track_title">ติดตามสถานะออเดอร์</h2>
+    <label><span data-i18n="label_order_no">เลขที่ออเดอร์</span><input id="orderNoInput" placeholder="เช่น Z-20260920-0001" data-i18n-ph="placeholder_order_no_example"></label>
+    <label><span data-i18n="label_phone_used">เบอร์โทรที่ใช้ตอนสั่ง</span><input id="phoneInput" inputmode="numeric"></label>
+    <div class="login-error" id="lookupError"></div>
+    <button class="save" id="lookupBtn" data-i18n="btn_check_status">🔍 ตรวจสอบสถานะ</button>
+  </div>
+
+  <div id="resultPanel" class="hidden"></div>
+</main>
+
+<script>const DEFAULT_LANG = 'th';</script>
+<script src="/static/i18n.js"></script>
+<script src="/static/track.js"></script>
+</body></html>
