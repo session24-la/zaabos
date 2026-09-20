@@ -154,7 +154,8 @@ CREATE TABLE IF NOT EXISTS orders (
     FOREIGN KEY(branch_id) REFERENCES branches(id),
     FOREIGN KEY(table_id) REFERENCES dining_tables(id),
     FOREIGN KEY(created_by_user_id) REFERENCES users(id),
- UNIQUE(tenant_id, order_no)
+ UNIQUE(tenant_id, order_no),
+ UNIQUE(tenant_id, client_request_id)
 );
 
 CREATE TABLE IF NOT EXISTS order_items (

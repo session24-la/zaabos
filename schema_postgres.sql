@@ -142,13 +142,17 @@ CREATE TABLE IF NOT EXISTS orders (
  notes TEXT NOT NULL DEFAULT '',
  placed_by TEXT NOT NULL DEFAULT 'customer' CHECK(placed_by IN ('customer','staff')),
  created_by_user_id INTEGER,
+ client_request_id TEXT,
+ client_device_id TEXT,
+ offline_created_at TEXT,
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  FOREIGN KEY(tenant_id) REFERENCES tenants(id),
  FOREIGN KEY(branch_id) REFERENCES branches(id),
  FOREIGN KEY(table_id) REFERENCES dining_tables(id),
  FOREIGN KEY(created_by_user_id) REFERENCES users(id),
- UNIQUE(tenant_id, order_no)
+ UNIQUE(tenant_id, order_no),
+ UNIQUE(tenant_id, client_request_id)
 );
 
 CREATE TABLE IF NOT EXISTS order_items (

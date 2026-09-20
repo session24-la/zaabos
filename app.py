@@ -602,6 +602,24 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_tenants_subscription ON tenants(active,subscription_status,trial_ends_at,current_period_end)')
     conn.commit()
     record_migration(conn, 26, 'saas_commercial_layer')
+    # Round 20 — Offline POS + Safe Sync
+    if IS_POSTGRES:
+        order_cols = {r['column_name'] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='orders'"
+        ).fetchall()}
+    else:
+        order_cols = {r['name'] for r in conn.execute('PRAGMA table_info(orders)').fetchall()}
+    if 'client_request_id' not in order_cols:
+        conn.execute('ALTER TABLE orders ADD COLUMN client_request_id TEXT')
+    if 'client_device_id' not in order_cols:
+        conn.execute('ALTER TABLE orders ADD COLUMN client_device_id TEXT')
+    if 'offline_created_at' not in order_cols:
+        conn.execute('ALTER TABLE orders ADD COLUMN offline_created_at TEXT')
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_tenant_client_request ON orders(tenant_id,client_request_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_orders_tenant_device ON orders(tenant_id,client_device_id,created_at)')
+    conn.commit()
+    record_migration(conn, 27, 'offline_pos_safe_sync')
+
 
 
 
@@ -1140,6 +1158,15 @@ def add_table():
     branch_id = d.get('branch_id')
     if not name or not branch_id: return jsonify(error='กรุณาใส่ชื่อโต๊ะและเลือกสาขา'), 400
     conn = db()
+    client_request_id = (d.get('client_request_id') or '').strip()[:100] or None
+    client_device_id = (d.get('client_device_id') or '').strip()[:100] or None
+    offline_created_at = (d.get('offline_created_at') or '').strip()[:80] or None
+    if client_request_id:
+        existing = conn.execute('SELECT id,order_no,total_amount FROM orders WHERE tenant_id=? AND client_request_id=?',
+                                (g.tenant_id, client_request_id)).fetchone()
+        if existing:
+            return jsonify(ok=True, idempotent=True, order_id=existing['id'], order_no=existing['order_no'],
+                           total_amount=existing['total_amount'])
     branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'), 404
     token = gen_qr_token()
@@ -1881,10 +1908,12 @@ def staff_create_order():
     try:
         order_no, cur = insert_order_row(conn, g.tenant_id,
             '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
-            customer_name,customer_phone,customer_address,total_amount,guest_count,scheduled_for,delivery_fee,notes,placed_by,created_by_user_id,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            customer_name,customer_phone,customer_address,total_amount,guest_count,scheduled_for,delivery_fee,notes,placed_by,created_by_user_id,created_at,updated_at,
+            client_request_id,client_device_id,offline_created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             lambda order_no: (g.tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
-             customer_address, total, guest_count, scheduled_for, delivery_fee, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
+             customer_address, total, guest_count, scheduled_for, delivery_fee, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now(),
+             client_request_id, client_device_id, offline_created_at))
         order_id = cur.lastrowid
         if not order_id:
             raise RuntimeError('order insert did not return an id')
@@ -1901,6 +1930,16 @@ def staff_create_order():
         log_action('staff_create_order', detail=order_no)
         conn.commit()
         return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+    except INTEGRITY_ERRORS:
+        conn.rollback()
+        if client_request_id:
+            existing = conn.execute('SELECT id,order_no,total_amount FROM orders WHERE tenant_id=? AND client_request_id=?',
+                                    (g.tenant_id, client_request_id)).fetchone()
+            if existing:
+                return jsonify(ok=True, idempotent=True, order_id=existing['id'], order_no=existing['order_no'],
+                               total_amount=existing['total_amount'])
+        app.logger.exception('staff_create_order integrity failure')
+        return jsonify(error='บันทึกออเดอร์ไม่สำเร็จ กรุณาลองอีกครั้ง'), 409
     except Exception:
         conn.rollback()
         app.logger.exception('staff_create_order failed')
