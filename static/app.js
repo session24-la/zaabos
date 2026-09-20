@@ -236,6 +236,7 @@ function refreshCurrentTab(tab) {
   if (tab === 'orders') { loadOrders(); loadBoardData(); }
   else if (tab === 'tables') renderTables();
   else if (tab === 'menu') loadBootstrap().then(renderMenu); // re-fetch so stock counts (which change from orders placed elsewhere — staff or customer QR) are current whenever this tab is opened
+  else if (tab === 'operations') loadOperations();
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
   else if (tab === 'users') loadUsers();
@@ -1452,3 +1453,21 @@ function emptyState(icon, text) { return `<div class="empty-state"><span class="
     showLogin();
   }
 })();
+
+
+// ===================== Round 14A Operations =====================
+async function loadOperations() {
+  if (!currentBranchId) return;
+  try {
+    const data = await api('/api/operations/shift?branch_id=' + currentBranchId);
+    const sh = data.shift;
+    $('#shiftStatus').innerHTML = sh ? `<div class="report-card"><div class="rc-label">สถานะกะ</div><div class="rc-value">เปิดอยู่</div></div><div class="report-card"><div class="rc-label">เงินเปิดกะ</div><div class="rc-value">${fmtMoney(sh.opening_cash)}</div></div><div class="report-card"><div class="rc-label">เปิดโดย</div><div class="rc-value">${escapeHtml(sh.opened_by_name||'')}</div></div>` : `<div class="report-card"><div class="rc-label">สถานะกะ</div><div class="rc-value">ยังไม่ได้เปิดกะ</div></div>`;
+    $('#cashMovementList').innerHTML = data.movements.length ? data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(m.created_at)}</div></div><strong>${fmtMoney(m.amount)}</strong></div>`).join('') : emptyState('💵','ยังไม่มีรายการเงินสด');
+  } catch(e) { toast(e.message,'err'); }
+}
+async function opsPost(url, body) { try { await apiJson(url,'POST',body); toast('บันทึกแล้ว','ok'); $('#opsAmount').value=''; $('#opsReason').value=''; loadOperations(); } catch(e){ toast(e.message,'err'); } }
+$('#refreshOpsBtn').onclick=()=>loadOperations();
+$('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:currentBranchId,opening_cash:Number($('#opsAmount').value||0),notes:$('#opsReason').value});
+$('#cashInBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_in',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
+$('#cashOutBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_out',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
+$('#closeShiftBtn').onclick=()=>opsPost('/api/operations/shift/close',{branch_id:currentBranchId,counted_cash:Number($('#opsAmount').value||0),notes:$('#opsReason').value});
