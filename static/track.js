@@ -25,7 +25,7 @@ async function lookup() {
   $('#lookupError').textContent = '';
   if (!orderNo || !phone) { $('#lookupError').textContent = t('err_fill_order_phone'); return; }
   try {
-    const r = await fetch('/api/public/orders/track?order_no=' + encodeURIComponent(orderNo) + '&phone=' + encodeURIComponent(phone), { credentials: 'same-origin' });
+    const r = await fetch('/api/public/orders/track', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({order_no:orderNo, phone}), credentials:'same-origin' });
     const body = await r.json();
     if (!r.ok) { $('#lookupError').textContent = body.error || t('err_order_not_found'); return; }
     renderResult(body.order);
@@ -66,7 +66,9 @@ function renderResult(order) {
 // Pre-fill from query string (linked from the order-success screen)
 (function initFromQuery() {
   const params = new URLSearchParams(location.search);
-  if (params.get('order_no')) $('#orderNoInput').value = params.get('order_no');
-  if (params.get('phone')) $('#phoneInput').value = params.get('phone');
-  if (params.get('order_no') && params.get('phone')) lookup();
+  const orderNo = params.get('order_no') || '';
+  if (orderNo) $('#orderNoInput').value = orderNo;
+  let savedPhone = '';
+  try { savedPhone = sessionStorage.getItem('zaabos_track_phone_'+orderNo) || ''; } catch(e) {}
+  if (savedPhone) { $('#phoneInput').value = savedPhone; lookup(); }
 })();

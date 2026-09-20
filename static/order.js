@@ -381,7 +381,8 @@ $('#checkoutSubmit').addEventListener('click', async () => {
     cart = []; updateCartFab();
     $('#successOrderNo').textContent = '#' + body.order_no;
     const trackPhone = payload.customer_phone || '';
-    $('#successTrackLink').href = '/track?order_no=' + encodeURIComponent(body.order_no) + '&phone=' + encodeURIComponent(trackPhone);
+    try { sessionStorage.setItem('zaabos_track_phone_'+body.order_no, trackPhone); } catch(e) {}
+    $('#successTrackLink').href = '/track?order_no=' + encodeURIComponent(body.order_no);
     openModal('#successModal');
   } catch (e) { $('#checkoutError').textContent = t('err_connect_failed'); }
   finally { btn.disabled = false; btn.textContent = originalLabel; }

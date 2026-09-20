@@ -354,10 +354,11 @@ function renderReportCards(s) {
     <div class="report-card"><div class="rc-label">${escapeHtml(t('label_total_expenses'))}</div><div class="rc-value">${fmtMoney(s.expense_total)}</div></div>
     <div class="report-card"><div class="rc-label">บิลเฉลี่ย</div><div class="rc-value">${fmtMoney(s.average_bill||0)}</div></div>
     <div class="report-card"><div class="rc-label">บิลค้างชำระ</div><div class="rc-value">${s.open_order_count||0} · ${fmtMoney(s.open_order_total||0)}</div></div>
+    <div class="report-card"><div class="rc-label">ค่าส่ง</div><div class="rc-value">${fmtMoney(s.delivery_fee||0)}</div></div>
     <div class="report-card rc-profit ${profit < 0 ? 'rc-loss' : ''}"><div class="rc-label">${escapeHtml(t('label_net_profit'))}</div><div class="rc-value">${fmtMoney(profit)}</div></div>
   `;
   const labels={cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'};
-  if (s.refund_total > 0) cards.insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
+  if (s.refund_total > 0) $('#reportCards').insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
 }
 
@@ -911,7 +912,7 @@ function orderCardHtml(o) {
     const editable = kitchenEligible && o.payment_status === 'unpaid' && o.status !== 'completed';
     const cb = editable && activeQty > 0 && !it.kitchen_sent_at
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
-    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}">+</button><button type="button" class="mini-cancel" data-cancel-item="${o.id}:${it.id}:${activeQty}">ยกเลิกรายการ</button></span>` : '';
+    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" data-cancel-item="${o.id}:${it.id}:${activeQty}">ยกเลิกรายการ</button></span>` : '';
     return `<li class="oc-item-row">
       <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
       ${sentBadge}
@@ -1019,7 +1020,16 @@ function wireOrderActionClicks(container) {
     const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, ff=e.target.dataset.fulfillment;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
     if (ff) { const [oid,status]=ff.split(':'); apiJson(`/api/orders/${oid}/fulfillment`,'PUT',{fulfillment_status:status}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
-    else if (iq) { const [oid,iid,qty]=iq.split(':'); apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:Number(qty)}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    else if (iq) {
+      const [oid,iid,qty,oldQty]=iq.split(':');
+      const target=Number(qty), previous=Number(oldQty);
+      if(target < previous){
+        criticalActionPayload('การลดจำนวนสินค้า').then(payload=>{
+          if(!payload) return; payload.quantity=target;
+          apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',payload).then(onOrderActionDone).catch(err=>toast(err.message,'err'));
+        });
+      } else { apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:target}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    }
     else if (ci) { const [oid,iid,qty]=ci.split(':'); cancelOrderItemCritical(oid,iid,qty); }
     else if (ai) { openAddItemsToOrder(parseInt(ai,10)); }
     else if (mv) { openMoveTable(parseInt(mv,10)); }
