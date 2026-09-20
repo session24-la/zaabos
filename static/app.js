@@ -186,7 +186,7 @@ function applyRoleVisibility() {
   $$('.tabs button[data-tab="branches"], .tabs button[data-tab="users"]').forEach(b => {
     b.classList.toggle('hidden', !isOwner);
   });
-  $$('.tabs button[data-tab="reports"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
+  $$('.tabs button[data-tab="reports"], .tabs button[data-tab="pricing"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
   $('#addTableBtn').classList.toggle('hidden', !isManagerPlus);
   $('#bulkAddTablesBtn').classList.toggle('hidden', !isManagerPlus);
   $('#addCategoryBtn').classList.toggle('hidden', !isManagerPlus);
@@ -236,6 +236,7 @@ function refreshCurrentTab(tab) {
   if (tab === 'orders') { loadOrders(); loadBoardData(); }
   else if (tab === 'tables') renderTables();
   else if (tab === 'menu') loadBootstrap().then(renderMenu); // re-fetch so stock counts (which change from orders placed elsewhere — staff or customer QR) are current whenever this tab is opened
+  else if (tab === 'pricing') loadPricing();
   else if (tab === 'operations') loadOperations();
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
@@ -1062,14 +1063,14 @@ let cpOrderId = null;
 function updateCpChange() {
   const ord = findOrderById(cpOrderId);
   if (!ord) return;
-  const tax = parseFloat($('#cpTax').value) || 0;
+  const tax = 0;
   const method = $('#cpMethod').value;
   const cash = method === 'cash' ? (parseFloat($('#cpCash').value) || 0) : 0;
   $('#cpCash').closest('label').classList.toggle('hidden', method !== 'cash');
-  const due = ord.total_amount + tax;
+  const manual = parseFloat($('#cpDiscount').value) || 0; const due = Math.max(0, ord.total_amount - manual) + tax;
   $('#cpChange').textContent = fmtMoney(cash > 0 ? Math.max(0, cash - due) : 0);
 }
-$('#cpTax').addEventListener('input', updateCpChange);
+$('#cpDiscount').addEventListener('input', updateCpChange);
 $('#cpCash').addEventListener('input', updateCpChange);
 $('#cpMethod').addEventListener('change', updateCpChange);
 
@@ -1078,7 +1079,7 @@ function openConfirmPaymentModal(orderId) {
   if (!ord) return;
   cpOrderId = orderId;
   $('#cpTotal').textContent = fmtMoney(ord.total_amount);
-  $('#cpTax').value = ord.tax_amount ? String(ord.tax_amount) : '';
+  $('#cpPromo').value = ''; $('#cpDiscount').value = ''; $('#cpDiscountReason').value = ''; $('#cpApprovalUser').value=''; $('#cpApprovalPass').value='';
   $('#cpCash').value = ord.cash_received ? String(ord.cash_received) : '';
   $('#cpError').textContent = '';
   $('#cpMethod').value = ord.payment_method || 'cash';
@@ -1091,7 +1092,7 @@ $('#cpSubmit').addEventListener('click', async () => {
   $('#cpError').textContent = '';
   const orderId = cpOrderId;
   const payload = { payment_status: 'paid', payment_method: $('#cpMethod').value };
-  const taxRaw = $('#cpTax').value.trim(); if (taxRaw) payload.tax_amount = parseFloat(taxRaw);
+  const promo=$('#cpPromo').value.trim(); if(promo) payload.promotion_code=promo; const disc=$('#cpDiscount').value.trim(); if(disc) payload.discount_amount=parseFloat(disc); const dr=$('#cpDiscountReason').value.trim(); if(dr) payload.discount_reason=dr; const au=$('#cpApprovalUser').value.trim(); const ap=$('#cpApprovalPass').value; if(au) payload.approval_username=au; if(ap) payload.approval_password=ap;
   const cashRaw = $('#cpCash').value.trim(); if (payload.payment_method === 'cash' && cashRaw) payload.cash_received = parseFloat(cashRaw);
   try {
     await apiJson('/api/orders/' + orderId + '/payment', 'PUT', payload);
@@ -1120,7 +1121,9 @@ function printReceipt(orderId) {
   const branch = (boot && boot.branches && boot.branches.find(b => Number(b.id) === Number(o.branch_id))) || null;
   const tax = Number(o.tax_amount || 0);
   const subtotal = Number(o.total_amount || 0);
-  const grandTotal = subtotal + tax;
+  const discount = Number(o.discount_amount || 0);
+  const service = Number(o.service_charge_amount || 0);
+  const grandTotal = Math.max(0, subtotal - discount) + service + tax;
   const cash = (o.cash_received != null && o.cash_received !== '') ? Number(o.cash_received) : null;
   const change = cash != null ? Math.max(0, cash - grandTotal) : null;
   const paymentNames = {cash:'Cash / ເງິນສົດ',qr:'QR',card:'Card',bank_transfer:'Bank transfer',other:'Other'};
@@ -1146,6 +1149,8 @@ function printReceipt(orderId) {
     <table class="rp-items"><tbody>${itemsRows}</tbody></table>
     <div class="rp-sep"></div>
     <div class="rp-row"><span>${escapeHtml(t('label_subtotal'))}</span><span>${fmtMoney(subtotal)}</span></div>
+    ${discount > 0 ? `<div class="rp-row"><span>ส่วนลด${o.discount_label?' · '+escapeHtml(o.discount_label):''}</span><span>−${fmtMoney(discount)}</span></div>` : ''}
+    ${service > 0 ? `<div class="rp-row"><span>Service charge</span><span>${fmtMoney(service)}</span></div>` : ''}
     ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
     <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
     ${o.payment_status === 'paid' ? `<div class="rp-paid">【 PAID · ຊຳລະແລ້ວ 】</div>` : ''}
@@ -1512,3 +1517,18 @@ $('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:c
 $('#cashInBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_in',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
 $('#cashOutBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_out',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
 $('#closeShiftBtn').onclick=()=>opsPost('/api/operations/shift/close',{branch_id:currentBranchId,counted_cash:Number($('#opsAmount').value||0),notes:$('#opsReason').value});
+
+
+// Round 14D pricing / promotions
+async function loadPricing(){
+  if(!currentBranchId) return;
+  try{
+    const st=await api('/api/pricing/settings?branch_id='+currentBranchId);
+    $('#pricingTax').value=st.tax_rate||0; $('#pricingService').value=st.service_charge_rate||0;
+    const promos=await api('/api/promotions');
+    $('#promotionsList').innerHTML=promos.length?promos.map(x=>`<div class="list-card"><div><b>${escapeHtml(x.code)}</b> · ${escapeHtml(x.name)}<br><small>${x.discount_type==='percent'?x.discount_value+'%':fmtMoney(x.discount_value)} · ขั้นต่ำ ${fmtMoney(x.min_spend||0)} ${x.active?'':'· ปิดแล้ว'}</small></div>${x.active?`<button class="icon-btn danger" data-disable-promo="${x.id}">×</button>`:''}</div>`).join(''):emptyState('🏷️','ยังไม่มีโปรโมชั่น');
+  }catch(e){toast(e.message,'err')}
+}
+$('#savePricingBtn').addEventListener('click',async()=>{try{await apiJson('/api/pricing/settings','PUT',{branch_id:currentBranchId,tax_rate:parseFloat($('#pricingTax').value)||0,service_charge_rate:parseFloat($('#pricingService').value)||0});toast('บันทึกอัตราแล้ว','ok');loadPricing()}catch(e){toast(e.message,'err')}});
+$('#addPromoBtn').addEventListener('click',async()=>{try{await apiJson('/api/promotions','POST',{branch_id:currentBranchId,code:$('#promoCode').value.trim(),name:$('#promoName').value.trim(),discount_type:$('#promoType').value,discount_value:parseFloat($('#promoValue').value)||0,min_spend:parseFloat($('#promoMin').value)||0});toast('สร้างโปรโมชั่นแล้ว','ok');$('#promoCode').value='';$('#promoName').value='';loadPricing()}catch(e){toast(e.message,'err')}});
+$('#promotionsList').addEventListener('click',async e=>{const b=e.target.closest('[data-disable-promo]');if(!b)return;if(!confirm('ปิดโปรโมชั่นนี้?'))return;try{await apiJson('/api/promotions/'+b.dataset.disablePromo,'DELETE');loadPricing()}catch(err){toast(err.message,'err')}});
