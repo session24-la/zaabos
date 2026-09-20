@@ -189,12 +189,26 @@ def create_tenant_indexes(conn):
     ):
         conn.execute(stmt)
 
+def ensure_schema_migrations(conn):
+    """Additive, idempotent column adds for installs that already have data —
+    executescript's CREATE TABLE IF NOT EXISTS only helps on a fresh DB, so any
+    new column on an existing table needs to be added here instead."""
+    if IS_POSTGRES:
+        conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS kitchen_sent_at TIMESTAMP')
+        conn.commit()
+    else:
+        cols = [r[1] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()]
+        if 'kitchen_sent_at' not in cols:
+            conn.execute('ALTER TABLE order_items ADD COLUMN kitchen_sent_at TEXT')
+            conn.commit()
+
 def init_db():
     if IS_POSTGRES:
         conn = PGConn(os.getenv('DATABASE_URL'))
         conn.executescript((BASE / 'schema_postgres.sql').read_text())
         ensure_default_tenant(conn)
         ensure_super_admin(conn)
+        ensure_schema_migrations(conn)
         conn.close()
         return
     conn = sqlite3.connect(DB)
@@ -203,6 +217,7 @@ def init_db():
     create_tenant_indexes(conn)
     ensure_default_tenant(conn)
     ensure_super_admin(conn)
+    ensure_schema_migrations(conn)
     conn.commit(); conn.close()
 
 # ---------- auth helpers (same pattern as CASHFLOW 24) ----------
@@ -1097,6 +1112,35 @@ def update_order_status(oid):
     log_action('update_order_status', detail=f'{oid} -> {status}')
     conn.commit()
     return jsonify(ok=True)
+
+@app.put('/api/orders/<int:oid>/send-to-kitchen')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def send_order_items_to_kitchen(oid):
+    """Flags the selected order_items as (re-)sent to the kitchen. Does not
+    change order/payment status — this is purely a notify/highlight action for
+    the kitchen display board, independent of payment and pricing."""
+    conn = db()
+    order = conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid, g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'), 404
+    d = request.get_json() or {}
+    item_ids = d.get('item_ids') or []
+    if not isinstance(item_ids, list) or not item_ids:
+        return jsonify(error='กรุณาเลือกรายการอาหารอย่างน้อย 1 รายการ'), 400
+    try:
+        item_ids = [int(x) for x in item_ids]
+    except (TypeError, ValueError):
+        return jsonify(error='รายการอาหารไม่ถูกต้อง'), 400
+    valid_ids = {r['id'] for r in conn.execute('SELECT id FROM order_items WHERE order_id=?', (oid,)).fetchall()}
+    item_ids = [i for i in item_ids if i in valid_ids]
+    if not item_ids:
+        return jsonify(error='รายการอาหารไม่ถูกต้อง'), 400
+    ts = now()
+    for iid in item_ids:
+        conn.execute('UPDATE order_items SET kitchen_sent_at=? WHERE id=?', (ts, iid))
+    log_action('send_order_items_to_kitchen', detail=f'{oid}: {item_ids}')
+    conn.commit()
+    return jsonify(ok=True, sent_at=ts, item_ids=item_ids)
 
 @app.put('/api/orders/<int:oid>/payment')
 @login_required

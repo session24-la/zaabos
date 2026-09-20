@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     unit_price REAL NOT NULL DEFAULT 0,
     line_total REAL NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT '',
+    kitchen_sent_at TEXT,
     FOREIGN KEY(order_id) REFERENCES orders(id),
     FOREIGN KEY(menu_item_id) REFERENCES menu_items(id)
 );

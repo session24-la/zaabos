@@ -310,6 +310,12 @@ const I18N = {
   cat_view_all_tile: { th: 'ดูเมนูทั้งหมด', lo: 'ເບິ່ງເມນູທັງໝົດ', zh: '查看全部菜单', en: 'View full menu' },
   cat_items_count: { th: '{n} รายการ', lo: '{n} ລາຍການ', zh: '{n} 项', en: '{n} items' },
   btn_back_to_categories: { th: '← กลับหมวดหมู่', lo: '← ກັບຄືນໝວດ', zh: '← 返回分类', en: '← Back to categories' },
+
+  // ---------- send-to-kitchen (Orders tab item selection, independent of payment/receipt) ----------
+  btn_send_to_kitchen: { th: 'ส่งไปครัว', lo: 'ສົ່ງໄປຄົວ', zh: '送去厨房', en: 'Send to kitchen' },
+  label_select_all: { th: 'เลือกทั้งหมด', lo: 'ເລືອກທັງໝົດ', zh: '全选', en: 'Select all' },
+  label_kitchen_sent_at: { th: 'ส่งครัวแล้วเมื่อ', lo: 'ສົ່ງຄົວແລ້ວເມື່ອ', zh: '已送厨房于', en: 'Sent to kitchen at' },
+  toast_sent_to_kitchen: { th: '🔔 ส่งรายการไปครัวแล้ว', lo: '🔔 ສົ່ງລາຍການໄປຄົວແລ້ວ', zh: '🔔 已送去厨房', en: '🔔 Sent to kitchen' },
 };
 
 function getLang() {

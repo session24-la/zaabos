@@ -351,7 +351,17 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .order-card .oc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .order-card .oc-no{font-weight:800;font-size:15px}
 .order-card .oc-meta{color:var(--text-muted);font-size:12.5px;margin-top:2px}
-.order-card .oc-items{margin-top:12px}
+.order-card .oc-items{margin-top:12px;list-style:none;padding:0}
+.oc-item-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px dashed var(--border)}
+.oc-item-row:first-child{border-top:0}
+.oc-item-label{display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer}
+.oc-item-label input[type="checkbox"]{width:auto;margin:0;flex:none}
+.oc-kitchen-sent-badge{font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);padding:2px 7px;border-radius:99px;white-space:nowrap;flex:none}
+.oc-kitchen-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)}
+.oc-select-all{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);cursor:pointer}
+.oc-select-all input{width:auto;margin:0}
+.btn-send-kitchen{border-color:var(--primary);color:var(--primary)}
+.btn-send-kitchen:disabled{opacity:.45;cursor:not-allowed}
 .status-track{display:flex;justify-content:space-between;margin-top:18px;position:relative}
 .status-track::before{content:"";position:absolute;top:13px;left:0;right:0;height:2px;background:var(--border)}
 .status-track .st-step{flex:1;text-align:center;position:relative;z-index:1}
@@ -375,6 +385,9 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .kitchen-ticket li:first-child{border-top:0}
 .kitchen-ticket li b{margin-right:4px}
 .kitchen-ticket .kt-opts,.kitchen-ticket .kt-notes{color:var(--text-muted);font-size:11.5px;margin-left:18px}
+.kitchen-ticket li.kt-item-highlight{background:var(--primary-soft);border-radius:8px;padding-left:8px;padding-right:8px;margin:2px -8px;border-top-color:transparent;animation:board-pulse 1.6s ease-in-out infinite}
+.kt-sent-badge{font-size:10.5px;font-weight:800;color:var(--primary);white-space:nowrap}
+.kitchen-ticket li.kt-item-sent .kt-sent-badge{color:var(--text-faint);font-weight:700}
 .kitchen-ticket .kt-actions{display:flex;gap:8px;margin-top:10px}
 .kitchen-ticket .kt-actions button{flex:1;border:0;border-radius:10px;padding:10px;font-weight:800;font-size:12.5px;color:#fff}
 .kitchen-ticket .kt-actions .btn-preparing{background:var(--status-preparing)}

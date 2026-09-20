@@ -99,14 +99,25 @@ async function loadBoard() {
   renderBoard(all);
 }
 
+const KITCHEN_HIGHLIGHT_MS = 3 * 60 * 1000; // how long a "sent to kitchen" flag stays pulsing before it fades to a plain timestamp
+
 function renderBoard(orders) {
   lastOrders = orders;
   const board = $('#board');
   if (!orders.length) { board.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="es-ic">👨‍🍳</span>${escapeHtml(t('empty_kitchen_queue'))}</div>`; return; }
   board.innerHTML = orders.map(o => {
-    const itemsHtml = o.items.map(it => `<li><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}
+    const itemsHtml = o.items.map(it => {
+      let liClass = '', sentBadge = '';
+      if (it.kitchen_sent_at) {
+        const age = Date.now() - new Date(it.kitchen_sent_at).getTime();
+        const clock = new Date(it.kitchen_sent_at).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' });
+        liClass = age >= 0 && age < KITCHEN_HIGHLIGHT_MS ? ' kt-item-highlight' : ' kt-item-sent';
+        sentBadge = `<span class="kt-sent-badge">🔔 ${clock}</span>`;
+      }
+      return `<li class="${liClass}"><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)} ${sentBadge}
       ${it.options.length ? `<div class="kt-opts">${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')}</div>` : ''}
-      ${it.notes ? `<div class="kt-notes">📝 ${escapeHtml(it.notes)}</div>` : ''}</li>`).join('');
+      ${it.notes ? `<div class="kt-notes">📝 ${escapeHtml(it.notes)}</div>` : ''}</li>`;
+    }).join('');
     const actions = (STATUS_ACTIONS[o.status] || []).map(a => `<button class="${a.cls}" data-set="${o.id}:${a.to}">${escapeHtml(t(a.labelKey))}</button>`).join('');
     return `<div class="kitchen-ticket ${o.status}">
       <div class="kt-head"><span class="kt-no">#${escapeHtml(o.order_no)}</span><span class="kt-time">${new Date(o.created_at).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' })}</span></div>

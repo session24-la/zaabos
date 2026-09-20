@@ -690,11 +690,27 @@ async function loadOrders() {
 $('#orderStatusFilter').addEventListener('change', loadOrders);
 $('#refreshOrdersBtn').addEventListener('click', () => { loadOrders(); loadBoardData(); });
 
+function fmtClock(iso) {
+  try { return new Date(iso).toLocaleTimeString(localeFor(currentLang), { hour: '2-digit', minute: '2-digit' }); }
+  catch (e) { return ''; }
+}
+
 function orderCardHtml(o) {
   const nextStatus = STATUS_FLOW[o.status];
-  const itemsHtml = o.items.map(it => `<li><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : ''}</li>`).join('');
+  const kitchenEligible = o.status !== 'cancelled';
+  const itemsHtml = o.items.map(it => {
+    const optsHtml = it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : '';
+    const sentBadge = it.kitchen_sent_at
+      ? `<span class="oc-kitchen-sent-badge" title="${escapeHtml(t('label_kitchen_sent_at'))} ${fmtClock(it.kitchen_sent_at)}">🔔 ${fmtClock(it.kitchen_sent_at)}</span>` : '';
+    const cb = kitchenEligible
+      ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
+    return `<li class="oc-item-row">
+      <label class="oc-item-label">${cb}<span><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}</span></label>
+      ${sentBadge}
+    </li>`;
+  }).join('');
   return `
-    <div class="order-card">
+    <div class="order-card" data-order-id="${o.id}">
       <div class="oc-head">
         <div>
           <div class="oc-no">#${escapeHtml(o.order_no)} — ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
@@ -713,6 +729,11 @@ function orderCardHtml(o) {
         ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">${escapeHtml(t('kt_btn_cancel'))}</button>` : ''}
         ${o.payment_status === 'unpaid' ? `<button class="ghost-btn" data-set-payment="${o.id}:paid">${escapeHtml(t('btn_mark_paid'))}</button>` : `<button class="ghost-btn" data-set-payment="${o.id}:unpaid">${escapeHtml(t('btn_unmark_paid'))}</button>`}
       </div>
+      ${kitchenEligible ? `
+      <div class="oc-kitchen-actions">
+        <label class="oc-select-all"><input type="checkbox" data-select-all-kitchen="${o.id}"> ${escapeHtml(t('label_select_all'))}</label>
+        <button class="ghost-btn btn-send-kitchen" data-send-kitchen="${o.id}" disabled>🔔 ${escapeHtml(t('btn_send_to_kitchen'))}</button>
+      </div>` : ''}
       <div class="oc-pay-actions">
         ${o.payment_status === 'unpaid' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
@@ -726,14 +747,46 @@ function renderOrdersList(orders) {
   list.innerHTML = orders.map(o => `<div style="margin-top:12px">${orderCardHtml(o)}</div>`).join('');
 }
 
+function updateSendKitchenBtnState(card) {
+  const anyChecked = !!card.querySelector('.oc-item-cb:checked');
+  const btn = card.querySelector('.btn-send-kitchen');
+  if (btn) btn.disabled = !anyChecked;
+  const cbs = card.querySelectorAll('.oc-item-cb');
+  const allChecked = cbs.length > 0 && Array.from(cbs).every(cb => cb.checked);
+  const selectAll = card.querySelector('[data-select-all-kitchen]');
+  if (selectAll) selectAll.checked = allChecked;
+}
+
+async function sendSelectedToKitchen(orderId, card) {
+  const item_ids = Array.from(card.querySelectorAll('.oc-item-cb:checked')).map(cb => parseInt(cb.dataset.itemId, 10));
+  if (!item_ids.length) return;
+  try {
+    await apiJson('/api/orders/' + orderId + '/send-to-kitchen', 'PUT', { item_ids });
+    toast(t('toast_sent_to_kitchen'), 'ok');
+    onOrderActionDone();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
 function wireOrderActionClicks(container) {
   container.addEventListener('click', (e) => {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
+    const sk = e.target.dataset.sendKitchen;
     if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (cp) { confirmPaymentDone(parseInt(cp, 10)); }
     else if (pr) { printReceipt(parseInt(pr, 10)); }
+    else if (sk) { const card = e.target.closest('.order-card'); if (card) sendSelectedToKitchen(parseInt(sk, 10), card); }
+  });
+  container.addEventListener('change', (e) => {
+    const card = e.target.closest('.order-card');
+    if (!card) return;
+    if (e.target.matches('[data-select-all-kitchen]')) {
+      card.querySelectorAll('.oc-item-cb').forEach(cb => { cb.checked = e.target.checked; });
+      updateSendKitchenBtnState(card);
+    } else if (e.target.matches('.oc-item-cb')) {
+      updateSendKitchenBtnState(card);
+    }
   });
 }
 wireOrderActionClicks($('#ordersList'));
