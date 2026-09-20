@@ -202,6 +202,17 @@
   <label><span data-i18n="label_description">รายละเอียด</span><textarea id="menuItemDesc" placeholder="คำอธิบายสั้น ๆ (ถ้ามี)" data-i18n-ph="placeholder_description"></textarea></label>
   <label><span data-i18n="label_category">หมวดหมู่</span><select id="menuItemCategory"></select></label>
   <label><span data-i18n="label_base_price">ราคาพื้นฐาน</span><input id="menuItemPrice" type="number" min="0" step="0.01"></label>
+  <label><span data-i18n="label_item_image">รูปภาพเมนู</span>
+    <div class="image-picker" id="menuItemImagePicker">
+      <div class="image-picker-preview hidden" id="menuItemImagePreviewWrap"><img id="menuItemImagePreview" alt=""></div>
+      <div class="image-picker-empty" id="menuItemImageEmpty">🖼️</div>
+      <input type="file" id="menuItemImageFile" accept="image/*" class="hidden">
+      <div class="image-picker-actions">
+        <button type="button" class="ghost-btn" id="menuItemImageChooseBtn" data-i18n="btn_choose_image">📷 เลือกรูปภาพ</button>
+        <button type="button" class="ghost-btn danger hidden" id="menuItemImageRemoveBtn" data-i18n="btn_remove_image">🗑️ ลบรูปภาพ</button>
+      </div>
+    </div>
+  </label>
   <div class="checkbox-row"><input type="checkbox" id="menuItemSoldOut"><label style="margin:0" for="menuItemSoldOut" data-i18n="label_sold_out_temp">หมดชั่วคราว (ของหมด)</label></div>
   <h3 style="margin-top:20px" data-i18n="label_option_groups_title">ตัวเลือกเพิ่มเติม (เช่น ขนาด, ความเผ็ด)</h3>
   <div id="optionGroupsBox"></div>

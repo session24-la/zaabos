@@ -5,8 +5,36 @@ let me = null;
 let boot = { branches: [], tables: [], categories: [], items: [] };
 let currentBranchId = null;
 let optGroupsDraft = []; // working copy while editing a menu item's option groups
+let menuItemImageDraft = null; // working copy of the menu item image (data:image/... URI, or null) while editing
 let cart = []; // staff take-order cart: {menu_item_id,name,unit_price,qty,selected_options:{gid:oid},optionLabels,notes}
 let pendingCartItem = null; // item being configured in the option picker
+
+// Resize/compress an <input type=file> image client-side into a small JPEG
+// data: URI, so it can ride along in the existing image_url text column with
+// no file storage/volume needed. Keeps typical photos well under ~150KB.
+function resizeImageFile(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    if (!file.type || !file.type.startsWith('image/')) { reject(new Error(t('err_image_invalid_type'))); return; }
+    if (file.size > 15 * 1024 * 1024) { reject(new Error(t('err_image_too_large'))); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height) { if (width > maxDim) { height = Math.round(height * maxDim / width); width = maxDim; } }
+        else if (height > maxDim) { width = Math.round(width * maxDim / height); height = maxDim; }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error(t('err_image_invalid_type')));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error(t('err_generic')));
+    reader.readAsDataURL(file);
+  });
+}
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
@@ -67,6 +95,7 @@ onLangChange(() => {
     $('#whoRole').textContent = t('role_' + me.role) || me.role;
     refreshCurrentTab();
   }
+  if ($('#menuItemModal').classList.contains('show')) renderMenuItemImagePreview();
 });
 
 // ===================== Auth =====================
@@ -417,6 +446,7 @@ function renderMenuItemsGrid() {
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
+      ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
       <div class="mc-top"><span class="mc-name">${escapeHtml(it.name)}</span></div>
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
       ${it.option_groups.length ? `<div class="hint">${escapeHtml(t('label_options_prefix'))}: ${it.option_groups.map(g => escapeHtml(g.name)).join(', ')}</div>` : ''}
@@ -455,15 +485,39 @@ function openMenuItemModal(id) {
     $('#menuItemPrice').value = it.base_price;
     $('#menuItemSoldOut').checked = !!it.sold_out;
     optGroupsDraft = JSON.parse(JSON.stringify(it.option_groups || []));
+    menuItemImageDraft = it.image_url || null;
   } else {
     $('#menuItemModalTitle').textContent = t('modal_add_menu_item_title');
     $('#menuItemId').value = ''; $('#menuItemName').value = ''; $('#menuItemDesc').value = '';
     $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false;
     optGroupsDraft = [];
+    menuItemImageDraft = null;
   }
   renderOptGroupsBox();
+  renderMenuItemImagePreview();
   openModal('#menuItemModal');
 }
+
+function renderMenuItemImagePreview() {
+  const has = !!menuItemImageDraft;
+  $('#menuItemImagePreviewWrap').classList.toggle('hidden', !has);
+  $('#menuItemImageEmpty').classList.toggle('hidden', has);
+  $('#menuItemImageRemoveBtn').classList.toggle('hidden', !has);
+  $('#menuItemImageChooseBtn').textContent = t(has ? 'btn_change_image' : 'btn_choose_image');
+  if (has) $('#menuItemImagePreview').src = menuItemImageDraft;
+}
+$('#menuItemImageChooseBtn').addEventListener('click', () => $('#menuItemImageFile').click());
+$('#menuItemImageFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  $('#menuItemError').textContent = '';
+  try {
+    menuItemImageDraft = await resizeImageFile(file, 900, 0.75);
+    renderMenuItemImagePreview();
+  } catch (err) { $('#menuItemError').textContent = err.message; }
+});
+$('#menuItemImageRemoveBtn').addEventListener('click', () => { menuItemImageDraft = null; renderMenuItemImagePreview(); });
 
 function renderOptGroupsBox() {
   const box = $('#optionGroupsBox');
@@ -511,6 +565,7 @@ $('#menuItemSave').addEventListener('click', async () => {
   const payload = {
     name, description: $('#menuItemDesc').value.trim(), category_id: $('#menuItemCategory').value || null,
     base_price: price, sold_out: $('#menuItemSoldOut').checked, option_groups: optGroupsDraft,
+    image_url: menuItemImageDraft,
   };
   try {
     if (id) await apiJson('/api/menu-items/' + id, 'PUT', payload);
@@ -713,6 +768,7 @@ function renderTakeOrderMenu() {
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick-item="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
+      ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
       <span class="mc-name">${escapeHtml(it.name)}</span>
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
     </div>`).join('');
@@ -730,10 +786,11 @@ function openItemOptionPicker(item) {
   $('#itemOptionTitle').textContent = item.name;
   $('#itemOptionNotes').value = ''; $('#itemOptionQty').textContent = '1'; $('#itemOptionError').textContent = '';
   const body = $('#itemOptionBody');
+  const photoHtml = item.image_url ? `<img class="item-modal-photo" src="${item.image_url}" alt="">` : '';
   if (!item.option_groups.length) {
-    body.innerHTML = `<p class="hint">${escapeHtml(t('hint_no_options'))}</p>`;
+    body.innerHTML = photoHtml + `<p class="hint">${escapeHtml(t('hint_no_options'))}</p>`;
   } else {
-    body.innerHTML = item.option_groups.map(g => `
+    body.innerHTML = photoHtml + item.option_groups.map(g => `
       <label style="margin:14px 0 4px">${escapeHtml(g.name)}${g.required ? ' <span style="color:var(--neg)">*</span>' : ''}</label>
       <div class="option-pick" data-group="${g.id}">
         ${g.options.map(o => `<label><input type="radio" name="grp-${g.id}" value="${o.id}" data-delta="${o.price_delta}">${escapeHtml(o.name)}${o.price_delta ? ` (+${fmtMoney(o.price_delta)})` : ''}</label>`).join('')}

@@ -75,6 +75,19 @@ DB = BASE / 'zaabos.db'
 SECRET_FILE = BASE / '.secret_key'
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
+app.config['MAX_CONTENT_LENGTH'] = 8 * 1024 * 1024  # 8MB — menu item photos are sent as data: URIs in the JSON body
+
+MAX_IMAGE_DATA_URI_LEN = 3 * 1024 * 1024  # ~3MB of base64 text (client resizes images well below this)
+
+def _valid_image_data_uri(s):
+    """Menu item photos are uploaded as data:image/... URIs (resized/compressed
+    client-side) so no file storage/volume is needed — same dual-DB row works
+    for SQLite and Postgres. Reject anything that isn't a reasonably-sized
+    image data URI to keep the database from bloating or storing garbage."""
+    if not s: return True  # empty/None is fine — means "no image"
+    if not isinstance(s, str) or not s.startswith('data:image/'): return False
+    if len(s) > MAX_IMAGE_DATA_URI_LEN: return False
+    return True
 
 
 def get_secret_key():
@@ -697,6 +710,8 @@ def add_menu_item():
         base_price = float(d.get('base_price') or 0)
     except (TypeError, ValueError):
         return jsonify(error='ราคาไม่ถูกต้อง'), 400
+    if not _valid_image_data_uri(d.get('image_url')):
+        return jsonify(error='รูปภาพไม่ถูกต้องหรือมีขนาดใหญ่เกินไป'), 400
     conn = db()
     cur = conn.execute('''INSERT INTO menu_items(tenant_id,branch_id,category_id,name,description,base_price,image_url,sort_order,created_at)
         VALUES(?,?,?,?,?,?,?,?,?)''',
@@ -743,6 +758,8 @@ def edit_menu_item(mid):
         base_price = float(d.get('base_price', old['base_price']))
     except (TypeError, ValueError):
         return jsonify(error='ราคาไม่ถูกต้อง'), 400
+    if 'image_url' in d and not _valid_image_data_uri(d.get('image_url')):
+        return jsonify(error='รูปภาพไม่ถูกต้องหรือมีขนาดใหญ่เกินไป'), 400
     conn.execute('''UPDATE menu_items SET name=?,description=?,base_price=?,category_id=?,image_url=?,
         sold_out=?,sort_order=? WHERE id=?''',
         ((d.get('name') or old['name']).strip(), d.get('description', old['description']), base_price,

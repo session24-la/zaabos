@@ -267,6 +267,17 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 .menu-card .mc-desc{color:var(--text-muted);font-size:12.5px;line-height:1.5}
 .menu-card .mc-price{font-weight:800;color:var(--primary);font-size:16px;margin-top:auto}
 .menu-card .mc-badge{position:absolute;top:12px;right:12px;background:var(--neg);color:#fff;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:99px}
+.menu-card .mc-photo{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px;margin:-2px 0 2px;background:var(--surface-2)}
+
+/* ===== Menu item image picker (admin form) ===== */
+.image-picker{display:flex;flex-direction:column;align-items:center;gap:10px;border:1px dashed var(--border);border-radius:14px;padding:16px;background:var(--surface-2)}
+.image-picker-preview{width:100%;max-width:220px}
+.image-picker-preview img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:12px;border:1px solid var(--border)}
+.image-picker-empty{font-size:36px;color:var(--text-muted);padding:14px 0}
+.image-picker-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+
+/* ===== Item photo in the item-option modal (customer + staff) ===== */
+.item-modal-photo{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:14px;margin-bottom:6px}
 .menu-card .mc-actions{display:flex;gap:6px;flex-wrap:wrap}
 .cat-chip{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:12px;border:1px solid var(--border);background:var(--surface);font-weight:700;font-size:13px;white-space:nowrap;cursor:pointer}
 .cat-chip.active{background:var(--primary);color:var(--primary-ink);border-color:var(--primary)}

@@ -110,6 +110,7 @@ function renderMenuGrid() {
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
+      ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
       <span class="mc-name">${escapeHtml(it.name)}</span>
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
@@ -130,8 +131,9 @@ function openItemModal(item) {
   $('#itemModalDesc').textContent = item.description || '';
   $('#itemNotes').value = ''; $('#itemQty').textContent = '1'; $('#itemError').textContent = '';
   const body = $('#itemModalBody');
-  if (!item.option_groups.length) body.innerHTML = '';
-  else body.innerHTML = item.option_groups.map(g => `
+  const photoHtml = item.image_url ? `<img class="item-modal-photo" src="${item.image_url}" alt="">` : '';
+  if (!item.option_groups.length) body.innerHTML = photoHtml;
+  else body.innerHTML = photoHtml + item.option_groups.map(g => `
     <label style="margin:14px 0 4px">${escapeHtml(g.name)}${g.required ? ' <span style="color:var(--neg)">*</span>' : ''}</label>
     <div class="option-pick" data-group="${g.id}">
       ${g.options.map(o => `<label><input type="radio" name="ig-${g.id}" value="${o.id}" data-delta="${o.price_delta}">${escapeHtml(o.name)}${o.price_delta ? ` (+${fmtMoney(o.price_delta)})` : ''}</label>`).join('')}
