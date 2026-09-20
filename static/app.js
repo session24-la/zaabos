@@ -8,6 +8,8 @@ let optGroupsDraft = []; // working copy while editing a menu item's option grou
 let menuItemImageDraft = null; // working copy of the menu item image (data:image/... URI, or null) while editing
 let cart = []; // staff take-order cart: {menu_item_id,name,unit_price,qty,selected_options:{gid:oid},optionLabels,notes}
 let pendingCartItem = null; // item being configured in the option picker
+let activeOrders = []; // live, non-terminal orders for the current branch (feeds the table board + side panel)
+let ordersPollTimer = null;
 
 // Resize/compress an <input type=file> image client-side into a small JPEG
 // data: URI, so it can ride along in the existing image_url text column with
@@ -160,6 +162,9 @@ async function afterLogin() {
   await loadBootstrap();
   renderBranchSelect();
   switchTab('orders');
+
+  if (ordersPollTimer) clearInterval(ordersPollTimer);
+  ordersPollTimer = setInterval(() => { if (me) loadBoardData(); }, 8000);
 }
 
 function applyRoleVisibility() {
@@ -214,7 +219,7 @@ function activeTab() {
 function refreshCurrentTab(tab) {
   if (!me) return;
   tab = tab || activeTab();
-  if (tab === 'orders') loadOrders();
+  if (tab === 'orders') { loadOrders(); loadBoardData(); }
   else if (tab === 'tables') renderTables();
   else if (tab === 'menu') renderMenu();
   else if (tab === 'branches') renderBranches();
@@ -683,16 +688,13 @@ async function loadOrders() {
   renderOrdersList(r.orders);
 }
 $('#orderStatusFilter').addEventListener('change', loadOrders);
-$('#refreshOrdersBtn').addEventListener('click', loadOrders);
+$('#refreshOrdersBtn').addEventListener('click', () => { loadOrders(); loadBoardData(); });
 
-function renderOrdersList(orders) {
-  const list = $('#ordersList');
-  if (!orders.length) { list.innerHTML = emptyState('🧾', t('empty_orders')); return; }
-  list.innerHTML = orders.map(o => {
-    const nextStatus = STATUS_FLOW[o.status];
-    const itemsHtml = o.items.map(it => `<li><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : ''}</li>`).join('');
-    return `
-    <div class="order-card" style="margin-top:12px">
+function orderCardHtml(o) {
+  const nextStatus = STATUS_FLOW[o.status];
+  const itemsHtml = o.items.map(it => `<li><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : ''}</li>`).join('');
+  return `
+    <div class="order-card">
       <div class="oc-head">
         <div>
           <div class="oc-no">#${escapeHtml(o.order_no)} — ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
@@ -711,14 +713,173 @@ function renderOrdersList(orders) {
         ${o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-set-status="${o.id}:cancelled">${escapeHtml(t('kt_btn_cancel'))}</button>` : ''}
         ${o.payment_status === 'unpaid' ? `<button class="ghost-btn" data-set-payment="${o.id}:paid">${escapeHtml(t('btn_mark_paid'))}</button>` : `<button class="ghost-btn" data-set-payment="${o.id}:unpaid">${escapeHtml(t('btn_unmark_paid'))}</button>`}
       </div>
+      <div class="oc-pay-actions">
+        ${o.payment_status === 'unpaid' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
+        <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
+      </div>
     </div>`;
+}
+
+function renderOrdersList(orders) {
+  const list = $('#ordersList');
+  if (!orders.length) { list.innerHTML = emptyState('🧾', t('empty_orders')); return; }
+  list.innerHTML = orders.map(o => `<div style="margin-top:12px">${orderCardHtml(o)}</div>`).join('');
+}
+
+function wireOrderActionClicks(container) {
+  container.addEventListener('click', (e) => {
+    const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
+    const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
+    if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
+    else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
+    else if (cp) { confirmPaymentDone(parseInt(cp, 10)); }
+    else if (pr) { printReceipt(parseInt(pr, 10)); }
+  });
+}
+wireOrderActionClicks($('#ordersList'));
+wireOrderActionClicks($('#orderDetailBody'));
+
+function onOrderActionDone() { loadOrders(); loadBoardData(); }
+
+async function confirmPaymentDone(orderId) {
+  try {
+    await apiJson('/api/orders/' + orderId + '/payment', 'PUT', { payment_status: 'paid' });
+    const ord = activeOrders.find(x => x.id === orderId) || (lastOrdersFlat.find(x => x.id === orderId));
+    if (ord && ord.status !== 'completed' && ord.status !== 'cancelled') {
+      await apiJson('/api/orders/' + orderId + '/status', 'PUT', { status: 'completed' });
+    }
+    toast(t('toast_payment_confirmed'), 'ok');
+    closeModals();
+    onOrderActionDone();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function printReceipt(orderId) {
+  const o = activeOrders.find(x => x.id === orderId) || lastOrdersFlat.find(x => x.id === orderId);
+  if (!o) return;
+  const shopName = (me && me.tenant && me.tenant.name) || 'ZaabOS';
+  const itemsRows = o.items.map(it => {
+    const optLine = it.options.length ? `<div class="hint" style="font-size:10.5px">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
+    return `<tr><td>${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${optLine}</td><td style="text-align:right;white-space:nowrap">${fmtMoney(it.line_total)}</td></tr>`;
+  }).join('');
+  $('#receiptPrintArea').innerHTML = `
+    <h3>${escapeHtml(shopName)}</h3>
+    <div class="rp-sub">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
+    <div class="rp-sub">${escapeHtml(o.customer_name)} · ${new Date(o.created_at).toLocaleString(localeFor(currentLang))}</div>
+    <div class="rp-line"></div>
+    <table>${itemsRows}</table>
+    <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(o.total_amount)}</span></div>
+    <div class="rp-thanks">${escapeHtml(t('receipt_thank_you'))} 🙏</div>`;
+  setTimeout(() => window.print(), 50);
+}
+
+// ===================== Live table board + side panel =====================
+
+let lastOrdersFlat = []; // most recent unfiltered branch order fetch (feeds board/panel + card lookups)
+const STATUS_PRIORITY = { received: 0, preparing: 1, ready: 2, served: 3 };
+
+async function loadBoardData() {
+  if (!currentBranchId) { activeOrders = []; renderTableBoard(); renderOtherOrders(); renderSidePanel(); return; }
+  try {
+    const qs = new URLSearchParams({ branch_id: currentBranchId });
+    const r = await api('/api/orders?' + qs.toString());
+    lastOrdersFlat = r.orders;
+    activeOrders = r.orders.filter(o => o.status !== 'completed' && o.status !== 'cancelled');
+  } catch (e) { return; }
+  renderTableBoard();
+  renderOtherOrders();
+  renderSidePanel();
+}
+
+function tableActiveOrders(tableId) {
+  return activeOrders.filter(o => o.order_type === 'dine_in' && o.table_id === tableId)
+    .sort((a, b) => a.id - b.id);
+}
+
+function renderTableBoard() {
+  const board = $('#tableBoard');
+  const tables = branchTables();
+  if (!tables.length) { board.innerHTML = emptyState('🍽️', t('empty_tables')); return; }
+  board.innerHTML = tables.map(tb => {
+    const orders = tableActiveOrders(tb.id);
+    if (!orders.length) {
+      return `<button type="button" class="board-tile" data-board-table="${tb.id}">
+        <div class="bt-name">${escapeHtml(tb.name)}</div>
+        <div class="bt-empty-lbl">${escapeHtml(t('board_table_empty'))}</div>
+      </button>`;
+    }
+    const worst = orders.reduce((w, o) => (STATUS_PRIORITY[o.status] < STATUS_PRIORITY[w.status] ? o : w), orders[0]);
+    const hasNew = orders.some(o => o.status === 'received');
+    const hasUnpaid = orders.some(o => o.payment_status === 'unpaid');
+    const itemCount = orders.reduce((s, o) => s + o.items.reduce((s2, it) => s2 + it.quantity, 0), 0);
+    const total = orders.reduce((s, o) => s + o.total_amount, 0);
+    return `<button type="button" class="board-tile status-${worst.status}" data-board-table="${tb.id}">
+      ${hasNew ? `<span class="bt-badge">${escapeHtml(t('board_badge_new'))}</span>` : ''}
+      <div class="bt-name">${escapeHtml(tb.name)}</div>
+      <div class="bt-meta">
+        <span class="pill ${worst.status}" style="margin:0"><span class="pill-dot ${worst.status}"></span>${escapeHtml(statusLabel(worst.status))}</span><br>
+        ${itemCount} ${escapeHtml(t('label_qty_short'))} · ${fmtMoney(total)}
+        ${hasUnpaid ? `<br><span class="bt-pay-dot"></span>${escapeHtml(t('board_awaiting_payment'))}` : ''}
+      </div>
+    </button>`;
   }).join('');
 }
-$('#ordersList').addEventListener('click', (e) => {
-  const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
-  if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(loadOrders).catch(err => toast(err.message, 'err')); }
-  else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(loadOrders).catch(err => toast(err.message, 'err')); }
+$('#tableBoard').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-board-table]');
+  if (!btn) return;
+  const tableId = parseInt(btn.dataset.boardTable, 10);
+  const tb = boot.tables.find(x => x.id === tableId);
+  const orders = tableActiveOrders(tableId);
+  if (!orders.length) { toast(t('board_table_empty'), ''); return; }
+  openOrderDetail(orders, tb ? tb.name : '');
 });
+
+function renderOtherOrders() {
+  const wrap = $('#otherOrdersWrap');
+  const list = $('#otherOrdersList');
+  const orders = activeOrders.filter(o => o.order_type !== 'dine_in').sort((a, b) => b.id - a.id);
+  if (!orders.length) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  list.innerHTML = orders.map(o => sidePanelRowHtml(o)).join('');
+}
+$('#otherOrdersList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-side-order]');
+  if (!btn) return;
+  const o = activeOrders.find(x => x.id === parseInt(btn.dataset.sideOrder, 10));
+  if (o) openOrderDetail([o], orderTypeLabel(o.order_type));
+});
+
+function sidePanelRowHtml(o) {
+  return `<button type="button" class="side-row" data-side-order="${o.id}">
+    <div class="sr-main">
+      <div class="sr-no">${o.status === 'received' ? '<span class="sr-new-dot"></span>' : ''}#${escapeHtml(o.order_no)}</div>
+      <div class="sr-meta">${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''} · ${escapeHtml(o.customer_name)}</div>
+    </div>
+    <div class="sr-right">
+      <span class="pill ${o.status}" style="margin:0"><span class="pill-dot ${o.status}"></span>${escapeHtml(statusLabel(o.status))}</span>
+      <div class="sr-amt">${fmtMoney(o.total_amount)}</div>
+    </div>
+  </button>`;
+}
+
+function renderSidePanel() {
+  const list = $('#sidePanelList');
+  const orders = [...activeOrders].sort((a, b) => b.id - a.id);
+  if (!orders.length) { list.innerHTML = `<p class="hint" style="margin:0">${escapeHtml(t('side_panel_empty'))}</p>`; return; }
+  list.innerHTML = orders.map(o => sidePanelRowHtml(o)).join('');
+}
+$('#sidePanelList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-side-order]');
+  if (!btn) return;
+  const o = activeOrders.find(x => x.id === parseInt(btn.dataset.sideOrder, 10));
+  if (o) openOrderDetail([o], o.table_name_snapshot || orderTypeLabel(o.order_type));
+});
+
+function openOrderDetail(orders, titleSuffix) {
+  $('#orderDetailTitle').textContent = t('order_detail_title') + (titleSuffix ? ' — ' + titleSuffix : '');
+  $('#orderDetailBody').innerHTML = orders.map(o => orderCardHtml(o)).join('');
+  openModal('#orderDetailModal');
+}
 
 // ===================== Staff take-order =====================
 
@@ -855,7 +1016,7 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); }
   try {
     const r = await apiJson('/api/orders', 'POST', payload);
-    closeModals(); toast(t('toast_order_saved', { no: r.order_no }), 'ok'); loadOrders();
+    closeModals(); toast(t('toast_order_saved', { no: r.order_no }), 'ok'); loadOrders(); loadBoardData();
   } catch (e) { $('#takeOrderError').textContent = e.message; }
 });
 

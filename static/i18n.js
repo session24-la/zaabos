@@ -289,6 +289,27 @@ const I18N = {
   kt_btn_ready: { th: '✅ พร้อมเสิร์ฟ', lo: '✅ ພ້ອມເສີບ', zh: '✅ 可以上菜', en: '✅ Ready to serve' },
   kt_btn_served: { th: '🍽️ เสิร์ฟแล้ว', lo: '🍽️ ເສີບແລ້ວ', zh: '🍽️ 已上菜', en: '🍽️ Served' },
   kt_btn_cancel: { th: '✕ ยกเลิก', lo: '✕ ຍົກເລີກ', zh: '✕ 取消', en: '✕ Cancel' },
+
+  // ---------- orders board (index.html + app.js) — live table status + side panel ----------
+  board_title: { th: 'ผังโต๊ะ', lo: 'ຜັງໂຕະ', zh: '桌位状态', en: 'Table board' },
+  board_table_empty: { th: 'ว่าง', lo: 'ຫວ່າງ', zh: '空闲', en: 'Empty' },
+  board_badge_new: { th: 'ใหม่', lo: 'ໃໝ່', zh: '新', en: 'NEW' },
+  board_awaiting_payment: { th: 'รอชำระเงิน', lo: 'ລໍຖ້າຈ່າຍເງິນ', zh: '待结账', en: 'Awaiting payment' },
+  side_panel_title: { th: 'ออเดอร์ที่กำลังดำเนินการ', lo: 'ອໍເດີທີ່ກຳລັງດຳເນີນການ', zh: '进行中的订单', en: 'Active orders' },
+  side_panel_empty: { th: 'ยังไม่มีออเดอร์ที่กำลังดำเนินการ', lo: 'ຍັງບໍ່ມີອໍເດີທີ່ກຳລັງດຳເນີນການ', zh: '暂无进行中的订单', en: 'No active orders right now' },
+  other_orders_title: { th: 'กลับบ้าน / เดลิเวอรี่', lo: 'ເອົາກັບບ້ານ / ສົ່ງເຖິງທີ່', zh: '外带 / 外送', en: 'Takeaway / delivery' },
+  order_detail_title: { th: 'รายละเอียดออเดอร์', lo: 'ລາຍລະອຽດອໍເດີ', zh: '订单详情', en: 'Order details' },
+  btn_confirm_payment_done: { th: '✅ ยืนยันชำระเงิน', lo: '✅ ຢືນຢັນຈ່າຍເງິນ', zh: '✅ 确认付款', en: '✅ Confirm payment' },
+  btn_print_receipt: { th: '🖨️ พิมพ์ใบเสร็จ', lo: '🖨️ ພິມໃບບິນ', zh: '🖨️ 打印收据', en: '🖨️ Print receipt' },
+  toast_payment_confirmed: { th: 'ยืนยันชำระเงินแล้ว', lo: 'ຢືນຢັນຈ່າຍເງິນແລ້ວ', zh: '已确认付款', en: 'Payment confirmed' },
+  receipt_title: { th: 'ใบเสร็จรับเงิน', lo: 'ໃບບິນຮັບເງິນ', zh: '收据', en: 'Receipt' },
+  receipt_thank_you: { th: 'ขอบคุณที่ใช้บริการ', lo: 'ຂອບໃຈທີ່ໃຊ້ບໍລິການ', zh: '感谢您的光临', en: 'Thank you for your order' },
+  label_qty_short: { th: 'จำนวน', lo: 'ຈຳນວນ', zh: '数量', en: 'Qty' },
+
+  // ---------- customer menu (order.html + order.js) — category drill-down ----------
+  cat_view_all_tile: { th: 'ดูเมนูทั้งหมด', lo: 'ເບິ່ງເມນູທັງໝົດ', zh: '查看全部菜单', en: 'View full menu' },
+  cat_items_count: { th: '{n} รายการ', lo: '{n} ລາຍການ', zh: '{n} 项', en: '{n} items' },
+  btn_back_to_categories: { th: '← กลับหมวดหมู่', lo: '← ກັບຄືນໝວດ', zh: '← 返回分类', en: '← Back to categories' },
 };
 
 function getLang() {

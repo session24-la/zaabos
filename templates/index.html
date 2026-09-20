@@ -59,6 +59,28 @@
   <section id="tab-orders" class="tab-panel">
     <div class="panel">
       <div class="panel-head">
+        <h2 data-i18n="board_title">ผังโต๊ะ</h2>
+        <div class="head-actions">
+          <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order">➕ รับออเดอร์ลูกค้า</button>
+          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
+        </div>
+      </div>
+      <div class="board-row">
+        <div class="board-panel">
+          <div class="table-board" id="tableBoard"></div>
+          <div class="other-orders-wrap" id="otherOrdersWrap">
+            <h3 data-i18n="other_orders_title">กลับบ้าน / เดลิเวอรี่</h3>
+            <div id="otherOrdersList"></div>
+          </div>
+        </div>
+        <aside class="side-panel" id="ordersSidePanel">
+          <h3 data-i18n="side_panel_title">ออเดอร์ที่กำลังดำเนินการ</h3>
+          <div id="sidePanelList"></div>
+        </aside>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
         <h2 data-i18n="orders_queue_title">คิวออเดอร์</h2>
         <div class="head-actions">
           <select id="orderStatusFilter">
@@ -70,8 +92,6 @@
             <option value="completed" data-i18n="status_completed">เสร็จสิ้น</option>
             <option value="cancelled" data-i18n="status_cancelled">ยกเลิก</option>
           </select>
-          <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order">➕ รับออเดอร์ลูกค้า</button>
-          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
         </div>
       </div>
       <div id="ordersList"></div>
@@ -279,6 +299,13 @@
   <div class="login-error" id="itemOptionError"></div>
   <button class="save" id="itemOptionAdd" data-i18n="btn_add_to_cart">เพิ่มลงตะกร้า</button>
 </div></div>
+
+<!-- Table / order detail (opened from board tiles + side panel) -->
+<div class="modal" id="orderDetailModal"><div class="sheet wide"><div class="sheet-head"><h2 id="orderDetailTitle" data-i18n="order_detail_title">รายละเอียดออเดอร์</h2><button data-close>×</button></div>
+  <div id="orderDetailBody"></div>
+</div></div>
+
+<div id="receiptPrintArea" class="receipt-print"></div>
 
 <div class="toast-wrap" id="toastWrap"></div>
 

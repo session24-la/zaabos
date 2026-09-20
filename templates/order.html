@@ -22,8 +22,17 @@
     <div class="oh-table hidden" id="ohTable"></div>
   </div>
   <main class="narrow" style="padding-top:16px">
-    <div class="cat-scroll" id="catScroll"></div>
-    <div class="menu-grid" id="menuGrid"></div>
+    <div id="categoriesView">
+      <div class="category-tiles" id="categoryTiles"></div>
+    </div>
+    <div id="itemsView" class="hidden">
+      <div class="items-view-head">
+        <button type="button" class="ivh-back" id="backToCatsBtn" data-i18n="btn_back_to_categories">← กลับหมวดหมู่</button>
+        <div class="ivh-title" id="itemsViewTitle"></div>
+      </div>
+      <div class="cat-scroll" id="catScroll"></div>
+      <div class="menu-grid" id="menuGrid"></div>
+    </div>
   </main>
   <button class="cart-fab hidden" id="cartFab" type="button">
     <span id="cartFabCount">0</span><span id="cartFabTotal">0</span>

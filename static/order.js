@@ -43,7 +43,13 @@ initLangSwitcher('#langSelect');
 applyI18n();
 onLangChange(() => {
   applyI18n();
-  if (menuData) { renderCategories(); renderMenuGrid(); updateCartFab(); }
+  if (menuData) {
+    renderCategoryTiles();
+    renderCategories();
+    renderMenuGrid();
+    updateCartFab();
+    updateItemsViewTitle();
+  }
 });
 
 function getTableTokenFromPath() {
@@ -83,9 +89,58 @@ function showMenu() {
     $('#ohTable').textContent = '📍 ' + menuData.table.name;
     $('#ohTable').classList.remove('hidden');
   }
+  renderCategoryTiles();
+  renderCategories();
+  showCategoriesStage();
+}
+
+// ===== Category drill-down: scan in -> shop name -> category tiles -> items =====
+// Small menus can still jump straight to "view all"; the cat-scroll chip row
+// inside the items view lets people switch categories without going back.
+let menuStage = 'categories';
+function showCategoriesStage() {
+  menuStage = 'categories';
+  $('#categoriesView').classList.remove('hidden');
+  $('#itemsView').classList.add('hidden');
+}
+function showItemsStage(catId, title) {
+  menuStage = 'items';
+  activeCat = catId || null;
+  $('#categoriesView').classList.add('hidden');
+  $('#itemsView').classList.remove('hidden');
   renderCategories();
   renderMenuGrid();
+  updateItemsViewTitle(title);
 }
+function updateItemsViewTitle(title) {
+  if (title === undefined) {
+    const c = activeCat ? menuData.categories.find(x => String(x.id) === String(activeCat)) : null;
+    title = c ? c.name : t('cat_all');
+  }
+  $('#itemsViewTitle').textContent = title;
+}
+function renderCategoryTiles() {
+  const el = $('#categoryTiles');
+  const counts = {};
+  menuData.items.forEach(it => { counts[it.category_id] = (counts[it.category_id] || 0) + 1; });
+  const allTile = `<div class="category-tile ct-all" data-cat-tile="">
+    <span class="ct-icon">🍽️</span><div class="ct-name">${escapeHtml(t('cat_view_all_tile'))}</div>
+    <div class="ct-count">${escapeHtml(t('cat_items_count', { n: menuData.items.length }))}</div>
+  </div>`;
+  const catTiles = menuData.categories.map(c => `<div class="category-tile" data-cat-tile="${c.id}">
+    <span class="ct-icon">${escapeHtml(c.icon || '🍜')}</span><div class="ct-name">${escapeHtml(c.name)}</div>
+    <div class="ct-count">${escapeHtml(t('cat_items_count', { n: counts[c.id] || 0 }))}</div>
+  </div>`).join('');
+  el.innerHTML = allTile + catTiles;
+}
+$('#categoryTiles').addEventListener('click', (e) => {
+  const tile = e.target.closest('[data-cat-tile]');
+  if (!tile) return;
+  const catId = tile.dataset.catTile || null;
+  const cat = catId ? menuData.categories.find(c => String(c.id) === String(catId)) : null;
+  showItemsStage(catId, cat ? cat.name : t('cat_view_all_tile'));
+});
+$('#backToCatsBtn').addEventListener('click', showCategoriesStage);
 
 let activeCat = null;
 function renderCategories() {
@@ -100,6 +155,7 @@ $('#catScroll').addEventListener('click', (e) => {
   activeCat = btn.dataset.cat || null;
   $$('#catScroll .cat-chip').forEach(b => b.classList.toggle('active', b === btn));
   renderMenuGrid();
+  updateItemsViewTitle();
 });
 
 function renderMenuGrid() {
