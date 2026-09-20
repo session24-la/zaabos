@@ -1403,6 +1403,30 @@ def cancel_order_item(oid,iid):
     log_action('cancel_order_item',detail=f'{oid}/{iid}: {qty}'); conn.commit()
     return jsonify(ok=True,total_amount=total,cancelled_quantity=new_cancel)
 
+@app.put('/api/orders/<int:oid>/items/<int:iid>/quantity')
+@login_required
+@role_required('owner','manager','staff')
+def update_order_item_quantity(oid,iid):
+    """Change the active quantity of an open order item and keep stock in sync."""
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ปิดแล้ว'),409
+    it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,oid)).fetchone()
+    if not it: return jsonify(error='ไม่พบรายการ'),404
+    d=request.get_json() or {}
+    try: new_active=int(d.get('quantity'))
+    except: return jsonify(error='จำนวนไม่ถูกต้อง'),400
+    if new_active < 1 or new_active > 99: return jsonify(error='จำนวนต้องอยู่ระหว่าง 1-99'),400
+    cancelled=int(it['cancelled_quantity'] or 0); old_active=max(0,int(it['quantity'])-cancelled)
+    delta=new_active-old_active
+    if delta>0: _decrement_stock(conn,it['menu_item_id'],delta)
+    elif delta<0: _restore_stock(conn,it['menu_item_id'],-delta)
+    new_total_qty=new_active+cancelled
+    conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(new_total_qty,new_total_qty*float(it['unit_price']),iid))
+    total=_recalculate_order_total(conn,oid)
+    log_action('update_order_item_quantity',detail=f'{oid}/{iid}: {old_active}->{new_active}')
+    conn.commit(); return jsonify(ok=True,total_amount=total,quantity=new_active)
+
 @app.put('/api/orders/<int:oid>/move-table')
 @login_required
 @role_required('owner','manager','staff')
