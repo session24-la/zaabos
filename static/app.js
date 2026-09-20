@@ -83,7 +83,10 @@ async function api(url, opts) {
     if (!silent) { me = null; showLogin(); }
     throw new Error((body && body.error) || t('err_please_login'));
   }
-  if (!r.ok) throw new Error((body && body.error) || t('err_generic'));
+  if (!r.ok) {
+    const fallback = r.status >= 500 ? 'ระบบบันทึกข้อมูลขัดข้อง กรุณาลองอีกครั้ง' : t('err_generic');
+    throw new Error((body && body.error) || fallback);
+  }
   return body;
 }
 function apiJson(url, method, data) {
@@ -1079,31 +1082,47 @@ function printReceipt(orderId) {
   const o = findOrderById(orderId);
   if (!o) return;
   const shopName = (me && me.tenant && me.tenant.name) || 'ZaabOS';
-  const itemCount = o.items.reduce((sum, it) => sum + it.quantity, 0);
-  const tax = o.tax_amount || 0;
-  const grandTotal = o.total_amount + tax;
+  const branch = (boot && boot.branches && boot.branches.find(b => Number(b.id) === Number(o.branch_id))) || null;
+  const tax = Number(o.tax_amount || 0);
+  const subtotal = Number(o.total_amount || 0);
+  const grandTotal = subtotal + tax;
   const cash = (o.cash_received != null && o.cash_received !== '') ? Number(o.cash_received) : null;
-  const change = (cash != null) ? Math.max(0, cash - grandTotal) : null;
-  const itemsRows = o.items.map(it => {
-    const optLine = it.options.length ? `<div class="hint" style="font-size:10.5px">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
-    return `<tr><td>${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${optLine}</td><td style="text-align:right;white-space:nowrap">${fmtMoney(it.line_total)}</td></tr>`;
+  const change = cash != null ? Math.max(0, cash - grandTotal) : null;
+  const paymentNames = {cash:'Cash / ເງິນສົດ',qr:'QR',card:'Card',bank_transfer:'Bank transfer',other:'Other'};
+  const paidAt = o.paid_at ? new Date(o.paid_at) : null;
+  const createdAt = o.created_at ? new Date(o.created_at) : new Date();
+  const activeItems = (o.items || []).filter(it => Number(it.quantity || 0) - Number(it.cancelled_quantity || 0) > 0);
+  const itemsRows = activeItems.map(it => {
+    const qty = Number(it.quantity || 0) - Number(it.cancelled_quantity || 0);
+    const amount = qty * Number(it.unit_price || 0);
+    const opts = (it.options || []).length ? `<div class="rp-item-sub">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(' / '))}</div>` : '';
+    const note = it.notes ? `<div class="rp-item-sub">${escapeHtml(it.notes)}</div>` : '';
+    return `<tr><td class="rp-qty">${qty}</td><td class="rp-item">${escapeHtml(it.item_name_snapshot)}${opts}${note}</td><td class="rp-price">${fmtMoney(amount)}</td></tr>`;
   }).join('');
+  const guest = o.guest_count != null ? o.guest_count : '-';
   $('#receiptPrintArea').innerHTML = `
-    <h3>${escapeHtml(shopName)}</h3>
-    <div class="rp-sub">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-    <div class="rp-sub">${escapeHtml(o.customer_name)}${o.guest_count ? ' · ' + escapeHtml(t('label_guest_count_short')) + ' ' + o.guest_count : ''}</div>
-    <div class="rp-sub">${new Date(o.created_at).toLocaleString(localeFor(currentLang))}</div>
-    ${o.created_by_name ? `<div class="rp-sub">${escapeHtml(t('label_order_taker'))}: ${escapeHtml(o.created_by_name)}</div>` : ''}
-    <div class="rp-line"></div>
-    <table>${itemsRows}</table>
-    <div class="rp-line"></div>
-    <div class="rp-row"><span>${escapeHtml(t('label_item_count'))}</span><span>${itemCount}</span></div>
-    <div class="rp-row"><span>${escapeHtml(t('label_subtotal'))}</span><span>${fmtMoney(o.total_amount)}</span></div>
+    <div class="rp-brand">${escapeHtml(shopName)}</div>
+    <div class="rp-brand-sub">RESTAURANT · POS</div>
+    ${branch ? `<div class="rp-center">${escapeHtml(branch.name || '')}</div>` : ''}
+    <div class="rp-sep"></div>
+    <div class="rp-meta"><span>${escapeHtml(t('label_table') || 'Table')}</span><b>${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b><span>${escapeHtml(t('label_guest_count_short') || 'Guests')}</span><b>${escapeHtml(String(guest))}</b></div>
+    <div class="rp-meta rp-order"><span>Order</span><b>#${escapeHtml(o.order_no)}</b></div>
+    <div class="rp-sep"></div>
+    <table class="rp-items"><tbody>${itemsRows}</tbody></table>
+    <div class="rp-sep"></div>
+    <div class="rp-row"><span>${escapeHtml(t('label_subtotal'))}</span><span>${fmtMoney(subtotal)}</span></div>
     ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
     <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
+    ${o.payment_status === 'paid' ? `<div class="rp-paid">【 PAID · ຊຳລະແລ້ວ 】</div>` : ''}
+    ${o.payment_method ? `<div class="rp-row"><span>Payment</span><span>${escapeHtml(paymentNames[o.payment_method] || o.payment_method)}</span></div>` : ''}
     ${cash != null ? `<div class="rp-row"><span>${escapeHtml(t('label_cash_received'))}</span><span>${fmtMoney(cash)}</span></div>` : ''}
     ${change != null ? `<div class="rp-row"><span>${escapeHtml(t('label_change'))}</span><span>${fmtMoney(change)}</span></div>` : ''}
-    <div class="rp-thanks">${escapeHtml(t('receipt_thank_you'))} 🙏</div>`;
+    <div class="rp-sep"></div>
+    <div class="rp-footrow"><span>Order time</span><span>${createdAt.toLocaleString(localeFor(currentLang))}</span></div>
+    ${paidAt ? `<div class="rp-footrow"><span>Paid time</span><span>${paidAt.toLocaleString(localeFor(currentLang))}</span></div>` : ''}
+    ${o.created_by_name ? `<div class="rp-footrow"><span>Cashier</span><span>${escapeHtml(o.created_by_name)}</span></div>` : ''}
+    <div class="rp-thanks">${escapeHtml(t('receipt_thank_you'))}</div>
+    <div class="rp-powered">ZaabOS</div>`;
   printElement($('#receiptPrintArea'));
 }
 
