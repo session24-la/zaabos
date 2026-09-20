@@ -580,9 +580,7 @@ def ensure_schema_migrations(conn):
     tenant_cols = {'plan_code': "TEXT NOT NULL DEFAULT 'starter'", 'subscription_status': "TEXT NOT NULL DEFAULT 'trialing'",
         'trial_ends_at':'TEXT','current_period_end':'TEXT','max_branches':'INTEGER NOT NULL DEFAULT 1',
         'max_users':'INTEGER NOT NULL DEFAULT 5','subscription_note':"TEXT NOT NULL DEFAULT ''"}
-    # Bootstrap runs before migrations, so Migration 26 owns these ALTERs.
-    # Check column existence first instead of relying on duplicate-column errors;
-    # this is safe for both normal upgrades and partially-upgraded databases.
+    # Migration 26 owns subscription-column upgrades for existing databases.
     if IS_POSTGRES:
         existing_tenant_cols = {r['column_name'] for r in conn.execute(
             "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='tenants'"
@@ -770,6 +768,17 @@ def apple_touch_icon_root():
     resp = send_from_directory(app.static_folder, 'zaabos-icon-192.png', mimetype='image/png')
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return resp
+
+@app.get('/sw.js')
+def service_worker():
+    resp=send_from_directory(app.static_folder,'sw.js',mimetype='application/javascript')
+    resp.headers['Service-Worker-Allowed']='/'
+    resp.headers['Cache-Control']='no-cache, no-store, must-revalidate'
+    return resp
+
+@app.get('/offline')
+def offline_page():
+    return render_template('offline.html')
 
 @app.get('/')
 def index():
@@ -2887,6 +2896,22 @@ def delete_expense(eid):
     log_action('delete_expense', detail=str(eid))
     conn.commit()
     return jsonify(ok=True)
+
+# ---------- Round 19 branded error pages ----------
+@app.errorhandler(404)
+def branded_not_found(err):
+    if request.path.startswith('/api/'): return jsonify(error='ไม่พบ API หรือข้อมูลที่ร้องขอ'),404
+    return render_template('error.html',code=404,title='ไม่พบหน้านี้',message='ลิงก์นี้อาจถูกย้าย ลบ หรือพิมพ์ไม่ถูกต้อง',action='กลับหน้า ZaabOS'),404
+
+@app.errorhandler(500)
+def branded_server_error(err):
+    if request.path.startswith('/api/'): return jsonify(error='ระบบขัดข้องชั่วคราว กรุณาลองใหม่'),500
+    return render_template('error.html',code=500,title='ระบบขัดข้องชั่วคราว',message='ZaabOS กำลังมีปัญหาในการประมวลผล กรุณาลองใหม่อีกครั้ง',action='ลองอีกครั้ง'),500
+
+@app.errorhandler(503)
+def branded_unavailable(err):
+    if request.path.startswith('/api/'): return jsonify(error='ระบบกำลังปรับปรุง กรุณาลองใหม่ภายหลัง'),503
+    return render_template('error.html',code=503,title='กำลังปรับปรุงระบบ',message='บริการบางส่วนยังไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้งในอีกสักครู่',action='ลองอีกครั้ง'),503
 
 # =====================================================================
 # App bootstrap
