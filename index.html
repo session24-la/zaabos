@@ -427,6 +427,14 @@
 </div></div>
 
 <!-- Confirm payment: optional tax + cash received, computes change before printing the receipt -->
+
+<div class="modal" id="reasonModal"><div class="sheet small"><div class="sheet-head"><h2 id="reasonModalTitle">เลือกเหตุผล</h2><button data-close>×</button></div>
+  <div class="reason-choice-grid" id="reasonChoices"></div>
+  <label><span>เหตุผลอื่น ๆ</span><input id="reasonCustom" maxlength="300" placeholder="พิมพ์เมื่อไม่มีเหตุผลที่ตรง"></label>
+  <div class="login-error" id="reasonError"></div>
+  <button class="save" id="reasonConfirmBtn" type="button">ยืนยันเหตุผล</button>
+</div></div>
+
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
   <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
   <label><span>Promotion Code (ถ้ามี)</span><input id="cpPromo" maxlength="40" placeholder="เช่น LUNCH10"></label>
