@@ -593,3 +593,22 @@ main{max-width:1180px;padding-top:14px}
 .reason-choice.active{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
 .kitchen-home-link{min-width:112px;text-align:center}
 @media(max-width:639px){.reason-choice-grid{grid-template-columns:1fr}}
+
+/* Round 14H.2 — primary navigation hierarchy */
+.pos-nav{max-width:760px}
+.pos-nav>button,.pos-nav>.nav-more-wrap>.nav-primary{
+  min-height:50px;
+  border-radius:14px;
+}
+.pos-nav .tab-lb{font-weight:700;letter-spacing:.01em}
+.pos-nav>button.active{
+  box-shadow:0 5px 16px rgba(255,126,45,.16);
+}
+@media (min-width:641px){
+  .pos-nav{grid-template-columns:1.08fr 1fr 1fr 1fr .92fr}
+  .pos-nav .nav-primary{font-size:13.5px}
+}
+@media (max-width:640px){
+  .pos-nav .tab-lb{font-size:10.5px;line-height:1.15}
+  .pos-nav .tab-ic{line-height:1}
+}
