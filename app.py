@@ -1871,6 +1871,21 @@ def staff_create_order():
     if order_type not in ('dine_in', 'takeaway', 'delivery'):
         return jsonify(error='ประเภทออเดอร์ไม่ถูกต้อง'), 400
     conn = db()
+    # Round 22.1 — initialize offline/idempotency metadata before order INSERT.
+    client_request_id = (d.get('client_request_id') or '').strip()[:100] or None
+    client_device_id = (d.get('client_device_id') or '').strip()[:100] or None
+    offline_created_at = (d.get('offline_created_at') or '').strip()[:80] or None
+
+    # Safe retry: return the same server order before stock/order mutation.
+    if client_request_id:
+        existing = conn.execute(
+            'SELECT id,order_no,total_amount FROM orders WHERE tenant_id=? AND client_request_id=?',
+            (g.tenant_id, client_request_id)
+        ).fetchone()
+        if existing:
+            return jsonify(ok=True, idempotent=True, order_id=existing['id'],
+                           order_no=existing['order_no'], total_amount=existing['total_amount'])
+
     branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'), 400
 
