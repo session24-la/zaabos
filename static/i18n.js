@@ -352,7 +352,7 @@ const I18N = {
   label_order_count: { th: 'จำนวนออเดอร์', lo: 'ຈຳນວນອໍເດີ', zh: '订单数', en: 'Orders' },
   label_guest_total: { th: 'จำนวนลูกค้ารวม', lo: 'ຈຳນວນລູກຄ້າລວມ', zh: '顾客总数', en: 'Total guests' },
   label_total_expenses: { th: 'รายจ่ายรวม', lo: 'ລາຍຈ່າຍລວມ', zh: '总支出', en: 'Total expenses' },
-  label_net_profit: { th: 'กำไรสุทธิ', lo: 'ກຳໄລສຸດທິ', zh: '净利润', en: 'Net profit' },
+  label_net_profit: { th: 'ยอดสุทธิหลังคืนเงินและรายจ่ายที่บันทึก', lo: 'ຍອດສຸດທິຫຼັງຄືນເງິນແລະລາຍຈ່າຍທີ່ບັນທຶກ', zh: '扣除退款和已记录支出后的净额', en: 'Net after refunds & recorded expenses' },
   label_top_items_title: { th: 'สินค้าขายดี', lo: 'ສິນຄ້າຂາຍດີ', zh: '热销商品', en: 'Best-selling items' },
   label_no_data: { th: 'ยังไม่มีข้อมูลในช่วงนี้', lo: 'ຍັງບໍ່ມີຂໍ້ມູນໃນຊ່ວງນີ້', zh: '此期间暂无数据', en: 'No data for this period yet' },
   section_expenses_title: { th: 'รายจ่าย', lo: 'ລາຍຈ່າຍ', zh: '支出', en: 'Expenses' },
