@@ -263,3 +263,5 @@ CREATE TABLE IF NOT EXISTS ingredients (id INTEGER PRIMARY KEY AUTOINCREMENT, te
 CREATE TABLE IF NOT EXISTS recipes (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, menu_item_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL, quantity REAL NOT NULL, created_at TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_recipe_menu_ingredient ON recipes(tenant_id,menu_item_id,ingredient_id);
 CREATE TABLE IF NOT EXISTS inventory_movements (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, ingredient_id INTEGER NOT NULL, movement_type TEXT NOT NULL, quantity REAL NOT NULL, reason TEXT NOT NULL DEFAULT '', order_id INTEGER, created_by_user_id INTEGER, created_at TEXT NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_order_items_order_active ON order_items(order_id,cancelled_quantity);

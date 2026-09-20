@@ -3,6 +3,7 @@ import sqlite3, os, functools, secrets, shutil, random, string
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # ---------- dual SQLite/Postgres support (same pattern as CASHFLOW 24) ----------
@@ -13,6 +14,23 @@ except ImportError:
     psycopg2 = None
 
 INTEGRITY_ERRORS = (sqlite3.IntegrityError,) + ((psycopg2.IntegrityError,) if psycopg2 else ())
+
+
+MONEY_QUANT = Decimal('0.01')
+def money_decimal(value=0):
+    """Canonical application money arithmetic. DB compatibility remains REAL/DOUBLE for now."""
+    try:
+        d = Decimal(str(0 if value in (None, '') else value))
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError('จำนวนเงินไม่ถูกต้อง')
+    if not d.is_finite(): raise ValueError('จำนวนเงินไม่ถูกต้อง')
+    return d.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
+
+def money_float(value=0):
+    return float(money_decimal(value))
+
+def money_sum(values):
+    return sum((money_decimal(v) for v in values), Decimal('0.00')).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
 class PGCursor:
@@ -539,6 +557,11 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_refunds_tenant_order ON refunds(tenant_id,order_id)')
     conn.commit()
     record_migration(conn, 23, 'round15_acceptance_hardening')
+    # Round 16 — production audit & financial safety
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_order_items_order_active ON order_items(order_id,cancelled_quantity)')
+    conn.commit()
+    record_migration(conn, 24, 'production_financial_safety')
+
 
 
 
@@ -1449,7 +1472,7 @@ def _restore_stock(conn, menu_item_id, qty):
 
 def _recalculate_order_total(conn, oid):
     row = conn.execute('SELECT COALESCE(SUM((quantity-COALESCE(cancelled_quantity,0))*unit_price),0) AS total FROM order_items WHERE order_id=?', (oid,)).fetchone()
-    total = max(0, float(row['total'] or 0))
+    total = money_float(max(0, float(row['total'] or 0)))
     conn.execute('UPDATE orders SET total_amount=?,updated_at=? WHERE id=?', (total, now(), oid))
     return total
 
@@ -1911,62 +1934,61 @@ def update_order_payment(oid):
     if d.get('payment_status')!='paid': return jsonify(error='ใช้ขั้นตอนคืนเงิน/เปิดบิลกลับสำหรับการย้อนการชำระ'),400
     if order['status']=='cancelled' or order['payment_status']=='paid': return jsonify(error='บิลนี้ไม่สามารถชำระซ้ำได้'),409
     def money(v, default=0):
-        if v in (None,''): return float(default)
-        x=float(v)
-        if x<0 or x>1000000000: raise ValueError('จำนวนเงินไม่ถูกต้อง')
+        x=money_decimal(default if v in (None,'') else v)
+        if x < 0 or x > Decimal('1000000000'): raise ValueError('จำนวนเงินไม่ถูกต้อง')
         return x
     try:
-        subtotal=float(order['total_amount'] or 0); delivery=float(order['delivery_fee'] or 0)
+        subtotal=money_decimal(order['total_amount']); delivery=money_decimal(order['delivery_fee'])
         settings=_pricing_settings(conn,order['branch_id']); discount=0.0; label=''; promotion_id=None
         code=(d.get('promotion_code') or '').strip()
         if code:
             promo=_active_promotion(conn,code,order['branch_id'],subtotal); promotion_id=promo['id']; label=promo['name']
-            discount=(subtotal*float(promo['discount_value'])/100) if promo['discount_type']=='percent' else float(promo['discount_value'])
-            if promo['max_discount'] is not None: discount=min(discount,float(promo['max_discount']))
+            discount=(subtotal*money_decimal(promo['discount_value'])/Decimal('100')) if promo['discount_type']=='percent' else money_decimal(promo['discount_value'])
+            if promo['max_discount'] is not None: discount=min(discount,money_decimal(promo['max_discount']))
         manual=money(d.get('discount_amount'),0)
         if manual>0:
             approved_by,err=_critical_approval(conn,d)
             if err:return err
             discount+=manual; label=(d.get('discount_reason') or 'ส่วนลดพิเศษ')[:120]
             _record_critical(conn,'discount',order['branch_id'],'order',oid,label,approved_by,f'manual_discount={manual}')
-        discount=min(discount,subtotal); base=max(0,subtotal-discount)
-        service=base*float(settings.get('service_charge_rate') or 0)/100
-        tax=(base+service)*float(settings.get('tax_rate') or 0)/100
-        due=round(base+service+tax+delivery,2)
+        discount=min(money_decimal(discount),subtotal); base=max(Decimal('0.00'),subtotal-discount)
+        service=money_decimal(base*Decimal(str(settings.get('service_charge_rate') or 0))/Decimal('100'))
+        tax=money_decimal((base+service)*Decimal(str(settings.get('tax_rate') or 0))/Decimal('100'))
+        due=money_decimal(base+service+tax+delivery)
         parts=d.get('payments')
         if not parts:
             parts=[{'method':d.get('payment_method'),'amount':due,'cash_received':d.get('cash_received'),'reference':d.get('reference')}]
         if not isinstance(parts,list) or not parts: raise ValueError('กรุณาระบุการชำระเงิน')
-        normalized=[]; total=0.0; cash_received_total=0.0
+        normalized=[]; total=Decimal('0.00'); cash_received_total=Decimal('0.00')
         # If the first part omits amount, it means "remaining balance".
-        explicit_total=sum(round(money(p.get('amount')),2) for p in parts[1:]) if len(parts)>1 else 0.0
+        explicit_total=money_sum(money(p.get('amount')) for p in parts[1:]) if len(parts)>1 else Decimal('0.00')
         for idx,p in enumerate(parts):
             method=(p.get('method') or '').strip()
             if method not in PAYMENT_METHODS: raise ValueError('วิธีชำระเงินไม่ถูกต้อง')
             raw=p.get('amount')
-            amount=round(max(0,due-explicit_total),2) if idx==0 and len(parts)>1 and raw in (None,'',0,0.0) else round(money(raw),2)
+            amount=money_decimal(max(Decimal('0.00'),due-explicit_total)) if idx==0 and len(parts)>1 and raw in (None,'',0,0.0) else money(raw)
             if amount<=0: raise ValueError('ยอดแต่ละช่องทางต้องมากกว่า 0')
             cr=money(p.get('cash_received'),amount) if method=='cash' else None
             if method=='cash' and cr<amount: raise ValueError('เงินสดที่รับมาต้องไม่น้อยกว่ายอดเงินสด')
             normalized.append((method,amount,cr,(p.get('reference') or '')[:120]))
-            total=round(total+amount,2)
+            total=money_decimal(total+amount)
             if cr: cash_received_total+=cr
-        if abs(total-due)>0.01: raise ValueError(f'ยอดชำระรวมต้องเท่ากับ {due:.2f}')
+        if total != due: raise ValueError(f'ยอดชำระรวมต้องเท่ากับ {due:.2f}')
     except (ValueError,TypeError) as e:return jsonify(error=str(e)),400
     ts=now()
     claimed=conn.execute("""UPDATE orders SET payment_status='paid',payment_method=?,tax_amount=?,service_charge_amount=?,discount_amount=?,discount_label=?,promotion_id=?,cash_received=?,paid_at=?,updated_at=?,status='completed'
         WHERE id=? AND tenant_id=? AND payment_status='unpaid' AND status<>'cancelled'""",
-        ('split' if len(normalized)>1 else normalized[0][0],tax,service,discount,label,promotion_id,cash_received_total or None,ts,ts,oid,g.tenant_id))
+        ('split' if len(normalized)>1 else normalized[0][0],money_float(tax),money_float(service),money_float(discount),label,promotion_id,money_float(cash_received_total) if cash_received_total else None,ts,ts,oid,g.tenant_id))
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='บิลถูกเปลี่ยนจากอุปกรณ์อื่น กรุณารีเฟรช'),409
     try:
         for method,amount,cr,ref in normalized:
             conn.execute("""INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at)
-                            VALUES(?,?,?,?,?,?,?,?,?)""",(g.tenant_id,order['branch_id'],oid,amount,method,cr,ref,g.user['id'],ts))
+                            VALUES(?,?,?,?,?,?,?,?,?)""",(g.tenant_id,order['branch_id'],oid,money_float(amount),method,money_float(cr) if cr is not None else None,ref,g.user['id'],ts))
         log_action('payment_completed',detail=f'{oid}: split={len(normalized)} due={due}'); conn.commit()
     except Exception:
         conn.rollback(); app.logger.exception('payment 2.0 failed'); return jsonify(error='บันทึกการชำระเงินไม่สำเร็จ'),500
-    change=sum(max(0,(cr or 0)-amount) for method,amount,cr,_ in normalized if method=='cash')
-    return jsonify(ok=True,amount=due,payments=[{'method':x[0],'amount':x[1]} for x in normalized],change=change)
+    change=money_sum(max(Decimal('0.00'),(cr or Decimal('0.00'))-amount) for method,amount,cr,_ in normalized if method=='cash')
+    return jsonify(ok=True,amount=money_float(due),payments=[{'method':x[0],'amount':money_float(x[1])} for x in normalized],change=money_float(change))
 
 @app.post('/api/orders/<int:oid>/reopen')
 @login_required
@@ -2143,12 +2165,12 @@ def refund_order(oid):
     if not order or order['payment_status']!='paid': return jsonify(error='คืนเงินได้เฉพาะบิลที่ชำระแล้ว'),409
     payments=conn.execute('SELECT * FROM payments WHERE order_id=? AND tenant_id=? AND reversed_at IS NULL ORDER BY id',(oid,g.tenant_id)).fetchall()
     if not payments:return jsonify(error='ไม่พบข้อมูลการชำระเงิน'),409
-    paid=sum(float(p['amount']) for p in payments)
-    refunded=float(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE order_id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()['t'] or 0)
+    paid=money_sum(p['amount'] for p in payments)
+    refunded=money_decimal(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE order_id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()['t'] or 0)
     d=request.get_json() or {}; reason=(d.get('reason') or '').strip()[:300]
-    try: amount=float(d.get('amount') or (paid-refunded))
+    try: amount=money_decimal(d.get('amount') if d.get('amount') not in (None,'') else (paid-refunded))
     except:return jsonify(error='ยอดคืนเงินไม่ถูกต้อง'),400
-    if len(reason)<2 or amount<=0 or amount>paid-refunded+0.01:return jsonify(error='เหตุผลหรือยอดคืนเงินไม่ถูกต้อง'),400
+    if len(reason)<2 or amount<=0 or amount>(paid-refunded):return jsonify(error='เหตุผลหรือยอดคืนเงินไม่ถูกต้อง'),400
     approved_by,err=_critical_approval(conn,d)
     if err:return err
     cash_active=any(p['payment_method']=='cash' for p in payments)
@@ -2158,19 +2180,19 @@ def refund_order(oid):
     left=amount; ts=now()
     try:
         for p in payments:
-            if left<=0.005: break
-            already=float(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE tenant_id=? AND payment_id=?',(g.tenant_id,p['id'])).fetchone()['t'] or 0)
-            available=max(0,float(p['amount'])-already)
+            if left<=Decimal('0.00'): break
+            already=money_decimal(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE tenant_id=? AND payment_id=?',(g.tenant_id,p['id'])).fetchone()['t'] or 0)
+            available=max(Decimal('0.00'),money_decimal(p['amount'])-already)
             part=min(left,available)
             if part<=0: continue
             conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at,shift_id) VALUES(?,?,?,?,?,?,?,?,?)',
-                         (g.tenant_id,order['branch_id'],oid,p['id'],part,reason,g.user['id'],ts,sh['id'] if sh and p['payment_method']=='cash' else None))
+                         (g.tenant_id,order['branch_id'],oid,p['id'],money_float(part),reason,g.user['id'],ts,sh['id'] if sh and p['payment_method']=='cash' else None))
             left-=part
         _record_critical(conn,'refund',order['branch_id'],'order',oid,reason,approved_by,f'amount={amount}')
         log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}'); conn.commit()
     except Exception:
         conn.rollback(); app.logger.exception('partial refund failed'); return jsonify(error='คืนเงินไม่สำเร็จ'),500
-    return jsonify(ok=True,amount=amount,total_refunded=refunded+amount,remaining_refundable=max(0,paid-refunded-amount))
+    return jsonify(ok=True,amount=money_float(amount),total_refunded=money_float(refunded+amount),remaining_refundable=money_float(max(Decimal('0.00'),paid-refunded-amount)))
 
 @app.post('/api/orders/<int:source_id>/merge')
 @login_required
@@ -2181,7 +2203,8 @@ def merge_orders(source_id):
     try: target_id=int(d.get('target_order_id'))
     except: return jsonify(error='กรุณาเลือกบิลปลายทาง'),400
     if target_id==source_id: return jsonify(error='ไม่สามารถรวมบิลเดียวกันได้'),400
-    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(source_id,g.tenant_id)).fetchone()
+    lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''
+    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(source_id,g.tenant_id)).fetchone()
     target=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(target_id,g.tenant_id)).fetchone()
     if not source or not target: return jsonify(error='ไม่พบบิลต้นทางหรือปลายทาง'),404
     if source['branch_id']!=target['branch_id']: return jsonify(error='รวมบิลข้ามสาขาไม่ได้'),409
@@ -2214,7 +2237,7 @@ def split_order(source_id):
         except (TypeError,ValueError,AttributeError): return jsonify(error='รายการหรือจำนวนไม่ถูกต้อง'),400
         if iid in seen: return jsonify(error='มีรายการซ้ำ'),400
         seen.add(iid)
-        it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,source_id)).fetchone()
+        it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?'+lock_suffix,(iid,source_id)).fetchone()
         if not it: return jsonify(error='ไม่พบรายการในบิลต้นทาง'),404
         active=max(0,int(it['quantity'] or 0)-int(it['cancelled_quantity'] or 0))
         if qty<1 or qty>active: return jsonify(error='จำนวนที่แยกไม่ถูกต้อง'),400
@@ -2439,7 +2462,9 @@ def reports_summary():
     guests = row['guests'] or 0
     total_sales = subtotal - discount + service + tax + delivery
 
-    ti_q = '''SELECT oi.item_name_snapshot AS name, SUM(oi.quantity) AS qty, SUM(oi.line_total) AS revenue
+    ti_q = '''SELECT oi.item_name_snapshot AS name,
+                     SUM(oi.quantity-COALESCE(oi.cancelled_quantity,0)) AS qty,
+                     SUM((oi.quantity-COALESCE(oi.cancelled_quantity,0))*oi.unit_price) AS revenue
               FROM order_items oi JOIN orders o ON o.id=oi.order_id
               WHERE o.tenant_id=? AND o.payment_status='paid' AND o.status!='cancelled' AND COALESCE(o.paid_at,o.created_at)>=? AND COALESCE(o.paid_at,o.created_at)<?'''
     ti_args = [g.tenant_id, range_start, range_end]
@@ -2475,7 +2500,7 @@ def reports_summary():
         order_count=order_count, subtotal=subtotal, discount=discount, service_charge=service, tax=tax, delivery_fee=delivery, guests=guests, total_sales=total_sales,
         top_items=top_items,
         expense_total=expense_total, expense_by_category=expense_by_category,
-        net_profit=total_sales - refund_total - expense_total, payment_breakdown=payment_breakdown,
+        net_profit=total_sales - refund_total - expense_total, net_after_recorded_expenses=total_sales - refund_total - expense_total, payment_breakdown=payment_breakdown,
         refund_total=refund_total, refund_count=refund_row['count'] or 0, net_sales=total_sales-refund_total,
         open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
         average_bill=(total_sales / order_count) if order_count else 0,
@@ -2483,53 +2508,15 @@ def reports_summary():
 
 @app.get('/api/daily-closing')
 @login_required
-@role_required('owner', 'manager')
+@role_required('owner','manager')
 def get_daily_closing():
-    err = require_tenant()
-    if err: return err
-    conn=db(); branch_id=request.args.get('branch_id'); closing_date=(request.args.get('date') or restaurant_today())[:10]
-    if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
-    branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
-    if not branch: return jsonify(error='ไม่พบสาขา'),404
-    row=conn.execute('SELECT * FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
-    close_start, close_end = local_date_bounds_utc(closing_date)
-    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND reversed_at IS NULL AND paid_at>=? AND paid_at<?",(g.tenant_id,branch_id,close_start,close_end)).fetchone()['total'] or 0
-    return jsonify(closing=dict(row) if row else None,cash_sales=cash)
+    return jsonify(error='Daily Closing เดิมถูกยกเลิกแล้ว กรุณาใช้ กะ & เงินสด (Shift/Cash) ซึ่งเป็นแหล่งข้อมูลหลัก'),410
 
 @app.post('/api/daily-closing')
 @login_required
-@role_required('owner', 'manager')
+@role_required('owner','manager')
 def save_daily_closing():
-    err=require_tenant()
-    if err: return err
-    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id'); closing_date=(d.get('closing_date') or restaurant_today())[:10]
-    branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
-    if not branch: return jsonify(error='ไม่พบสาขา'),404
-    def num(k):
-        try: v=float(d.get(k,0) or 0)
-        except: raise ValueError(f'{k} ไม่ถูกต้อง')
-        if v < 0 or v > 100000000000: raise ValueError(f'{k} ไม่ถูกต้อง')
-        return v
-    try: opening=num('opening_cash'); cash_out=num('cash_out'); counted=num('counted_cash')
-    except ValueError as e: return jsonify(error=str(e)),400
-    close_start, close_end = local_date_bounds_utc(closing_date)
-    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND reversed_at IS NULL AND paid_at>=? AND paid_at<?",(g.tenant_id,branch_id,close_start,close_end)).fetchone()['total'] or 0
-    expected=opening+float(cash)-cash_out; difference=counted-expected; ts=now(); notes=(d.get('notes') or '')[:500]
-    if IS_POSTGRES:
-        conn.execute('''INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (tenant_id,branch_id,closing_date) DO UPDATE SET
-            opening_cash=EXCLUDED.opening_cash,cash_out=EXCLUDED.cash_out,expected_cash=EXCLUDED.expected_cash,
-            counted_cash=EXCLUDED.counted_cash,difference=EXCLUDED.difference,notes=EXCLUDED.notes,
-            closed_by_user_id=EXCLUDED.closed_by_user_id,closed_at=EXCLUDED.closed_at''',
-            (g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
-    else:
-        old=conn.execute('SELECT id FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
-        if old:
-            conn.execute('UPDATE daily_closings SET opening_cash=?,cash_out=?,expected_cash=?,counted_cash=?,difference=?,notes=?,closed_by_user_id=?,closed_at=? WHERE id=?',(opening,cash_out,expected,counted,difference,notes,g.user['id'],ts,old['id']))
-        else:
-            conn.execute('INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
-    log_action('daily_closing',detail=f'{branch_id} {closing_date}: expected={expected} counted={counted} difference={difference}')
-    conn.commit(); return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=difference,cash_sales=cash)
+    return jsonify(error='Daily Closing เดิมถูกยกเลิกแล้ว กรุณาใช้ กะ & เงินสด (Shift/Cash) ซึ่งเป็นแหล่งข้อมูลหลัก'),410
 
 # ---------- Round 14A: shifts / cash drawer / critical operations ----------
 @app.get('/api/operations/shift')
@@ -2592,7 +2579,7 @@ def close_shift():
     mv=conn.execute("SELECT COALESCE(SUM(CASE WHEN movement_type='cash_in' THEN amount ELSE -amount END),0) AS total FROM cash_movements WHERE tenant_id=? AND shift_id=?",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
     cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
     cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL AND paid_at<?",(g.tenant_id,sh['id'],sh['opened_at'])).fetchone()['total'] or 0
-    expected=float(sh['opening_cash'])+float(cash_sales)+float(mv)-float(cash_refunds)-float(cash_reversals); diff=counted-expected; ts=now()
+    expected=money_float(money_decimal(sh['opening_cash'])+money_decimal(cash_sales)+money_decimal(mv)-money_decimal(cash_refunds)-money_decimal(cash_reversals)); counted=money_float(counted); diff=money_float(money_decimal(counted)-money_decimal(expected)); ts=now()
     claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],sh['id'],g.tenant_id))
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='กะนี้ถูกปิดจากอุปกรณ์อื่นแล้ว'),409
     log_action('shift_closed',detail=f'branch={branch_id} expected={expected} counted={counted} diff={diff}'); conn.commit()
