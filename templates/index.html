@@ -148,43 +148,43 @@
 
   <!-- ===== Reports tab (owner/manager) ===== -->
   <section id="tab-reports" class="tab-panel hidden">
-    <div class="panel">
-      <div class="panel-head">
-        <h2 data-i18n="reports_title">สรุปยอดขาย &amp; รายรับ-รายจ่าย</h2>
+    <div class="panel report-dashboard">
+      <div class="panel-head report-title-row">
+        <div><h2>ภาพรวมร้าน</h2><div class="muted">ยอดขาย การรับเงิน และสินค้าขายดี</div></div>
       </div>
       <div class="report-presets" id="reportPresets">
-        <button type="button" class="ghost-btn" data-preset="today" data-i18n="preset_today">วันนี้</button>
-        <button type="button" class="ghost-btn" data-preset="yesterday" data-i18n="preset_yesterday">เมื่อวาน</button>
-        <button type="button" class="ghost-btn" data-preset="7d" data-i18n="preset_last_7_days">7 วันที่ผ่านมา</button>
-        <button type="button" class="ghost-btn" data-preset="month" data-i18n="preset_this_month">เดือนนี้</button>
-        <button type="button" class="ghost-btn" data-preset="year" data-i18n="preset_this_year">ปีนี้</button>
+        <button type="button" class="ghost-btn" data-preset="today">วันนี้</button>
+        <button type="button" class="ghost-btn" data-preset="yesterday">เมื่อวาน</button>
+        <button type="button" class="ghost-btn" data-preset="7d">7 วันที่ผ่านมา</button>
+        <button type="button" class="ghost-btn" data-preset="month">เดือนนี้</button>
+        <button type="button" class="ghost-btn" data-preset="year">ปีนี้</button>
       </div>
-      <div class="report-date-range">
-        <label style="margin:0"><span data-i18n="label_from_date">จากวันที่</span><input type="date" id="reportFromDate"></label>
-        <label style="margin:0"><span data-i18n="label_to_date">ถึงวันที่</span><input type="date" id="reportToDate"></label>
-        <button class="ghost-btn primary" id="reportApplyBtn" data-i18n="btn_apply_filter">ดูรายงาน</button>
+      <details class="report-custom-range">
+        <summary>เลือกช่วงวันที่เอง</summary>
+        <div class="report-date-range">
+          <label><span>จากวันที่</span><input type="date" id="reportFromDate"></label>
+          <label><span>ถึงวันที่</span><input type="date" id="reportToDate"></label>
+          <button class="ghost-btn primary" id="reportApplyBtn">ดูรายงาน</button>
+        </div>
+      </details>
+      <div class="report-cards report-summary-cards" id="reportCards"></div>
+      <div class="report-two-col">
+        <section class="report-section">
+          <div class="section-kicker">ยอดขายตามสินค้า</div>
+          <h3>สินค้าขายดี</h3>
+          <div id="reportTopItems"></div>
+        </section>
+        <section class="report-section">
+          <div class="section-kicker">การชำระเงิน</div>
+          <h3>ช่องทางรับเงิน</h3>
+          <div class="report-cards payment-cards" id="paymentBreakdown"></div>
+        </section>
       </div>
-      <div class="report-cards" id="reportCards"></div>
-      <h3>ช่องทางรับเงิน</h3><div class="report-cards" id="paymentBreakdown"></div>
-      <h3 data-i18n="label_top_items_title">สินค้าขายดี</h3>
-      <div id="reportTopItems"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>ปิดยอดเงินสดประจำวัน</h2><button class="ghost-btn" id="loadClosingBtn">โหลดวันนี้</button></div>
-      <div class="report-date-range">
-        <label><span>วันที่</span><input type="date" id="closingDate"></label>
-        <label><span>เงินสดตั้งต้น</span><input type="number" id="openingCash" min="0" step="1" value="0"></label>
-        <label><span>เงินสดนำออก/จ่ายออก</span><input type="number" id="cashOut" min="0" step="1" value="0"></label>
-        <label><span>เงินสดนับจริง</span><input type="number" id="countedCash" min="0" step="1" value="0"></label>
-      </div>
-      <label><span>หมายเหตุ</span><input id="closingNotes" maxlength="500"></label>
-      <div class="hint" id="closingPreview">ยอดขายเงินสดวันนี้: —</div>
-      <button class="save" id="saveClosingBtn">ปิดยอด / บันทึก</button>
     </div>
     <div class="panel">
       <div class="panel-head">
-        <h2 data-i18n="section_expenses_title">รายจ่าย</h2>
-        <button class="ghost-btn primary" id="addExpenseBtn" data-i18n="btn_add_expense">➕ เพิ่มรายจ่าย</button>
+        <div><h2>รายจ่าย</h2><div class="muted">ค่าใช้จ่ายที่บันทึกไว้ในช่วงรายงาน</div></div>
+        <button class="ghost-btn primary" id="addExpenseBtn">➕ เพิ่มรายจ่าย</button>
       </div>
       <div id="expensesList"></div>
     </div>
@@ -192,45 +192,58 @@
 
   <!-- ===== Branches tab ===== -->
 
-  <!-- ===== Operations tab (Round 14A/14C) ===== -->
+  <!-- ===== Operations tab ===== -->
   <section id="tab-operations" class="tab-panel hidden">
-    <div class="panel">
-      <div class="panel-head"><h2>กะ &amp; เงินสด</h2><button class="ghost-btn" id="refreshOpsBtn" type="button">รีเฟรช</button></div>
-      <div id="shiftStatus" class="report-grid"></div>
-      <div class="form-grid" style="margin-top:14px">
-        <label><span>จำนวนเงิน</span><input id="opsAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
-        <label><span>เหตุผล / หมายเหตุ</span><input id="opsReason" maxlength="300" placeholder="ระบุเหตุผล"></label>
+    <div class="panel shift-workspace">
+      <div class="panel-head">
+        <div><h2>กะ &amp; เงินสด</h2><div class="muted">เปิดกะครั้งเดียว ระบบคำนวณยอดขายเงินสดและเงินในลิ้นชักให้</div></div>
+        <button class="ghost-btn" id="refreshOpsBtn" type="button">รีเฟรช</button>
       </div>
-      <div class="head-actions" style="margin:12px 0;flex-wrap:wrap">
-        <button class="save" id="openShiftBtn" type="button">เปิดกะ</button>
-        <button class="ghost-btn" id="cashInBtn" type="button">เงินเข้า</button>
-        <button class="ghost-btn" id="cashOutBtn" type="button">เงินออก</button>
-        <button class="danger-btn" id="closeShiftBtn" type="button">ปิดกะ</button>
-      </div>
-      <h3>รายการเงินสด</h3><div id="cashMovementList"></div>
-      <h3 style="margin-top:18px">Critical Operations</h3><div id="criticalOpsList"></div>
+      <div id="shiftStatus" class="shift-summary-grid"></div>
+      <div id="shiftActionArea" class="shift-action-area"></div>
+      <details class="cash-tools">
+        <summary>เงินเข้า / เงินออกจากลิ้นชัก</summary>
+        <div class="form-grid compact-form">
+          <label><span>จำนวนเงิน</span><input id="opsAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+          <label><span>เหตุผล / หมายเหตุ</span><input id="opsReason" maxlength="300" placeholder="เช่น เติมเงินทอน / ซื้อของฉุกเฉิน"></label>
+        </div>
+        <div class="head-actions">
+          <button class="ghost-btn" id="cashInBtn" type="button">+ เงินเข้า</button>
+          <button class="ghost-btn" id="cashOutBtn" type="button">− เงินออก</button>
+        </div>
+      </details>
+      <div class="section-divider"></div>
+      <h3>รายการเงินสดในกะนี้</h3><div id="cashMovementList"></div>
+      <details class="audit-details"><summary>ประวัติการอนุมัติ / Critical Operations</summary><div id="criticalOpsList"></div></details>
     </div>
   </section>
 
-  <!-- ===== Pricing tab (Round 14D) ===== -->
+  <!-- ===== Pricing & promotions ===== -->
   <section id="tab-pricing" class="tab-panel hidden">
-    <div class="panel">
-      <div class="panel-head"><h2>ราคา &amp; โปรโมชั่น</h2></div>
-      <div class="form-grid">
-        <label><span>Tax (%)</span><input id="pricingTax" type="number" min="0" max="100" step="0.01" value="0"></label>
-        <label><span>Service Charge (%)</span><input id="pricingService" type="number" min="0" max="100" step="0.01" value="0"></label>
+    <div class="pricing-layout">
+      <div class="panel pricing-card">
+        <div class="panel-head"><div><h2>ภาษี &amp; Service Charge</h2><div class="muted">ใช้กับบิลตอนชำระเงิน</div></div></div>
+        <div class="form-grid">
+          <label><span>Tax (%)</span><input id="pricingTax" type="number" min="0" max="100" step="0.01" value="0"></label>
+          <label><span>Service Charge (%)</span><input id="pricingService" type="number" min="0" max="100" step="0.01" value="0"></label>
+        </div>
+        <button class="save compact-save" id="savePricingBtn" type="button">บันทึกอัตรา</button>
       </div>
-      <button class="save" id="savePricingBtn" type="button" style="margin-top:10px">บันทึกอัตรา</button>
-      <h3 style="margin-top:20px">โปรโมชั่น</h3>
-      <div class="form-grid">
-        <label><span>Code</span><input id="promoCode" maxlength="40" placeholder="เช่น LUNCH10"></label>
-        <label><span>ชื่อโปรโมชั่น</span><input id="promoName" maxlength="120"></label>
-        <label><span>ประเภท</span><select id="promoType"><option value="percent">เปอร์เซ็นต์ (%)</option><option value="fixed">จำนวนเงิน</option></select></label>
-        <label><span>มูลค่าส่วนลด</span><input id="promoValue" type="number" min="0" step="0.01"></label>
-        <label><span>ยอดขั้นต่ำ</span><input id="promoMin" type="number" min="0" step="0.01" value="0"></label>
+      <div class="panel pricing-card">
+        <div class="panel-head"><div><h2>โปรโมชั่น</h2><div class="muted">สร้างโค้ด แล้วใส่โค้ดนี้ในหน้าชำระเงินเพื่อใช้ส่วนลด</div></div></div>
+        <div id="promotionsList" class="promo-list"></div>
+        <details class="promo-create">
+          <summary>+ สร้างโปรโมชั่นใหม่</summary>
+          <div class="form-grid compact-form">
+            <label><span>Code</span><input id="promoCode" maxlength="40" placeholder="เช่น LUNCH10"></label>
+            <label><span>ชื่อโปรโมชั่น</span><input id="promoName" maxlength="120" placeholder="เช่น Lunch 10%"></label>
+            <label><span>ประเภท</span><select id="promoType"><option value="percent">เปอร์เซ็นต์ (%)</option><option value="fixed">จำนวนเงิน</option></select></label>
+            <label><span>มูลค่าส่วนลด</span><input id="promoValue" type="number" min="0" step="0.01"></label>
+            <label><span>ยอดขั้นต่ำ</span><input id="promoMin" type="number" min="0" step="0.01" value="0"></label>
+          </div>
+          <button class="save compact-save" id="addPromoBtn" type="button">สร้างโปรโมชั่น</button>
+        </details>
       </div>
-      <button class="save" id="addPromoBtn" type="button" style="margin-top:10px">สร้างโปรโมชั่น</button>
-      <div id="promotionsList" style="margin-top:14px"></div>
     </div>
   </section>
 
