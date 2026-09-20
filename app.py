@@ -405,6 +405,28 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_promotions_tenant_code ON promotions(tenant_id,code)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_promotions_tenant_branch ON promotions(tenant_id,branch_id,active)')
     conn.commit()
+    # Round 14E: fulfilment workflow for takeaway/delivery/pre-orders.
+    if IS_POSTGRES:
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS scheduled_for TEXT')
+        conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_status TEXT NOT NULL DEFAULT 'pending'")
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee DOUBLE PRECISION NOT NULL DEFAULT 0')
+        conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'pending'")
+        conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_name TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_phone TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_note TEXT NOT NULL DEFAULT ''")
+    else:
+        o18=[r[1] for r in conn.execute('PRAGMA table_info(orders)').fetchall()]
+        if 'scheduled_for' not in o18: conn.execute('ALTER TABLE orders ADD COLUMN scheduled_for TEXT')
+        if 'fulfillment_status' not in o18: conn.execute("ALTER TABLE orders ADD COLUMN fulfillment_status TEXT NOT NULL DEFAULT 'pending'")
+        if 'delivery_fee' not in o18: conn.execute('ALTER TABLE orders ADD COLUMN delivery_fee REAL NOT NULL DEFAULT 0')
+        if 'delivery_status' not in o18: conn.execute("ALTER TABLE orders ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'pending'")
+        if 'driver_name' not in o18: conn.execute("ALTER TABLE orders ADD COLUMN driver_name TEXT NOT NULL DEFAULT ''")
+        if 'driver_phone' not in o18: conn.execute("ALTER TABLE orders ADD COLUMN driver_phone TEXT NOT NULL DEFAULT ''")
+        if 'delivery_note' not in o18: conn.execute("ALTER TABLE orders ADD COLUMN delivery_note TEXT NOT NULL DEFAULT ''")
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_orders_tenant_branch_scheduled ON orders(tenant_id,branch_id,scheduled_for)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_orders_tenant_delivery_status ON orders(tenant_id,delivery_status)')
+    conn.commit()
+    record_migration(conn, 18, 'fulfillment_delivery_preorder')
     record_migration(conn, 17, 'pricing_promotions_service_tax')
 
 def init_db():
@@ -1336,6 +1358,18 @@ def public_tables():
     rows = conn.execute('SELECT id,name FROM dining_tables WHERE branch_id=? AND active=1 ORDER BY id', (branch_id,)).fetchall()
     return jsonify(tables=[dict(x) for x in rows])
 
+def _fulfillment_fields(d, order_type, public=False):
+    scheduled=(d.get('scheduled_for') or '').strip()[:40] or None
+    # ISO-like datetime-local value; deliberately keep timezone interpretation at the branch/UI layer.
+    if scheduled and ('T' not in scheduled or len(scheduled) < 16):
+        raise ValueError('วันเวลารับ/จัดส่งล่วงหน้าไม่ถูกต้อง')
+    try:
+        fee=float(d.get('delivery_fee') or 0) if (order_type=='delivery' and not public) else 0.0
+    except (TypeError,ValueError):
+        raise ValueError('ค่าจัดส่งไม่ถูกต้อง')
+    if fee < 0 or fee > 100000000: raise ValueError('ค่าจัดส่งไม่ถูกต้อง')
+    return scheduled, fee
+
 @app.post('/api/public/orders')
 def public_create_order():
     d = request.get_json() or {}
@@ -1386,6 +1420,7 @@ def public_create_order():
         return jsonify(error='เบอร์โทรไม่ถูกต้อง'), 400
 
     try:
+        scheduled_for, delivery_fee = _fulfillment_fields(d, order_type, public=True)
         prepared_items, total = _validate_and_price_cart(conn, tenant_id, branch_id, d.get('cart') or [])
     except ValueError as e:
         return jsonify(error=str(e)), 400
@@ -1393,10 +1428,10 @@ def public_create_order():
     try:
         order_no, cur = insert_order_row(conn, tenant_id,
             '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
-            customer_name,customer_phone,customer_address,total_amount,notes,placed_by,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            customer_name,customer_phone,customer_address,total_amount,scheduled_for,delivery_fee,notes,placed_by,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             lambda order_no: (tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
-             customer_address, total, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
+             customer_address, total, scheduled_for, delivery_fee, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
         order_id = cur.lastrowid
         if not order_id:
             raise RuntimeError('public order insert did not return an id')
@@ -1517,6 +1552,7 @@ def staff_create_order():
         guest_count = None
 
     try:
+        scheduled_for, delivery_fee = _fulfillment_fields(d, order_type, public=False)
         prepared_items, total = _validate_and_price_cart(conn, g.tenant_id, branch_id, d.get('cart') or [])
     except ValueError as e:
         return jsonify(error=str(e)), 400
@@ -1524,10 +1560,10 @@ def staff_create_order():
     try:
         order_no, cur = insert_order_row(conn, g.tenant_id,
             '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
-            customer_name,customer_phone,customer_address,total_amount,guest_count,notes,placed_by,created_by_user_id,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            customer_name,customer_phone,customer_address,total_amount,guest_count,scheduled_for,delivery_fee,notes,placed_by,created_by_user_id,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             lambda order_no: (g.tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
-             customer_address, total, guest_count, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
+             customer_address, total, guest_count, scheduled_for, delivery_fee, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
         order_id = cur.lastrowid
         if not order_id:
             raise RuntimeError('order insert did not return an id')
@@ -1687,6 +1723,27 @@ def disable_promotion(pid):
     if not row: return jsonify(error='ไม่พบโปรโมชั่น'),404
     conn.execute('UPDATE promotions SET active=0 WHERE id=? AND tenant_id=?',(pid,g.tenant_id)); conn.commit(); return jsonify(ok=True)
 
+@app.put('/api/orders/<int:oid>/fulfillment')
+@login_required
+@role_required('owner','manager','staff')
+def update_order_fulfillment(oid):
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    d=request.get_json() or {}
+    allowed={'pending','confirmed','ready','out_for_delivery','delivered','picked_up','cancelled'}
+    status=(d.get('fulfillment_status') or '').strip()
+    if status not in allowed: return jsonify(error='สถานะรับ/จัดส่งไม่ถูกต้อง'),400
+    if order['order_type']=='dine_in': return jsonify(error='ออเดอร์ทานที่ร้านไม่ใช้สถานะจัดส่ง'),409
+    if status=='out_for_delivery' and order['order_type']!='delivery': return jsonify(error='สถานะกำลังจัดส่งใช้ได้เฉพาะเดลิเวอรี่'),400
+    driver_name=(d.get('driver_name') or order['driver_name'] or '').strip()[:100]
+    driver_phone=(d.get('driver_phone') or order['driver_phone'] or '').strip()[:50]
+    note=(d.get('delivery_note') or order['delivery_note'] or '').strip()[:300]
+    delivery_status=status if order['order_type']=='delivery' else order['delivery_status']
+    conn.execute('UPDATE orders SET fulfillment_status=?,delivery_status=?,driver_name=?,driver_phone=?,delivery_note=?,updated_at=? WHERE id=? AND tenant_id=?',
+                 (status,delivery_status,driver_name,driver_phone,note,now(),oid,g.tenant_id))
+    log_action('update_fulfillment',detail=f'{oid}: {status}')
+    conn.commit(); return jsonify(ok=True,status=status)
+
 @app.put('/api/orders/<int:oid>/payment')
 @login_required
 @role_required('owner', 'manager', 'staff')
@@ -1713,7 +1770,7 @@ def update_order_payment(oid):
         return v
     try:
         cash=money('cash_received')
-        subtotal=float(order['total_amount'] or 0); settings=_pricing_settings(conn,order['branch_id'])
+        subtotal=float(order['total_amount'] or 0); delivery_fee=float(order['delivery_fee'] or 0); settings=_pricing_settings(conn,order['branch_id'])
         discount=0.0; discount_label=''; promotion_id=None
         promo_code=(d.get('promotion_code') or '').strip()
         if promo_code:
@@ -1729,7 +1786,7 @@ def update_order_payment(oid):
         discount=min(discount,subtotal); after_discount=max(0,subtotal-discount)
         service=after_discount*float(settings.get('service_charge_rate') or 0)/100.0
         tax=(after_discount+service)*float(settings.get('tax_rate') or 0)/100.0
-        due=after_discount+service+tax
+        due=after_discount+service+tax+delivery_fee
     except ValueError as e: return jsonify(error=str(e)),400
     if method == 'cash' and (cash is None or cash < due):
         return jsonify(error='จำนวนเงินสดที่รับมาต้องไม่น้อยกว่ายอดชำระ'), 400
