@@ -1,4 +1,13 @@
 'use strict';
+// A future optional UI control must not blank the whole SPA on startup.
+window.addEventListener('error', () => {
+  const login = document.querySelector('#loginView');
+  const root = document.querySelector('#appRoot');
+  if (login && root && login.classList.contains('hidden') && root.classList.contains('hidden')) {
+    login.classList.remove('hidden');
+  }
+});
+
 /* ZaabOS admin/staff SPA. Vanilla JS, no build step — same approach as CASHFLOW24. */
 
 let me = null;
