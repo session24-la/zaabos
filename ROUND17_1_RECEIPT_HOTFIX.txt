@@ -1,0 +1,8 @@
+ZaabOS Round 17.1 — Receipt Alignment Hotfix
+
+Changed only static/style.css.
+
+- Moves the receipt price/amount column about 3 mm to the left.
+- Adds a safer right printable margin for 80 mm thermal printers.
+- Applies the same alignment to item prices, subtotal/discount/tax/service rows, payment rows, and grand total.
+- No database, payment, order, kitchen, inventory, or migration changes.
