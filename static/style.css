@@ -612,3 +612,53 @@ main{max-width:1180px;padding-top:14px}
   .pos-nav .tab-lb{font-size:10.5px;line-height:1.15}
   .pos-nav .tab-ic{line-height:1}
 }
+
+
+/* ===== Round 14I.2 — workspace information architecture + layout polish ===== */
+/* Four primary workspaces: POS, Menu, History, More. Kitchen is contextual from History. */
+@media (min-width:641px){
+  .pos-nav{grid-template-columns:1.08fr 1fr 1fr .92fr;max-width:620px}
+}
+@media (max-width:760px){
+  .pos-nav{grid-template-columns:repeat(4,1fr)}
+}
+
+/* Reading/management screens should not stretch edge-to-edge on large displays. */
+#tab-history{max-width:940px;margin-inline:auto}
+#tab-reports,#tab-operations,#tab-pricing,#tab-branches,#tab-users,#tab-tenants,#tab-tables{max-width:980px;margin-inline:auto}
+#tab-menu{max-width:1080px;margin-inline:auto}
+#tab-history .panel,#tab-reports .panel,#tab-operations .panel,#tab-pricing .panel,#tab-branches .panel,#tab-users .panel,#tab-tenants .panel,#tab-tables .panel,#tab-menu .panel{
+  border-radius:18px;
+}
+.history-panel{padding:20px 22px}
+#ordersList{display:grid;grid-template-columns:1fr;gap:12px}
+#ordersList>.order-card{margin:0;padding:16px 18px;border-radius:15px;box-shadow:none}
+.history-head{padding-bottom:14px;border-bottom:1px solid var(--border)}
+.history-kitchen-btn{white-space:nowrap}
+
+/* Reports: compact dashboard rhythm instead of one long full-width sheet. */
+#tab-reports>.panel{padding:20px 22px}
+#tab-reports .report-presets{margin:12px 0 10px}
+#tab-reports .report-date-range{padding:12px;background:var(--surface-2);border-radius:13px;margin-bottom:14px}
+#tab-reports .report-cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+#tab-reports .report-card{min-width:0;padding:13px;border:1px solid var(--border);box-shadow:none}
+#tab-reports .report-card .rc-value{font-size:18px}
+#tab-reports h3{margin-top:18px}
+
+/* Kitchen boot screen prevents the login card from flashing during session detection. */
+.kitchen-boot{position:fixed;inset:0;display:grid;place-items:center;background:var(--bg);z-index:100}
+.kitchen-boot.hidden{display:none}
+.kitchen-boot-card{display:grid;justify-items:center;gap:16px}
+.kitchen-boot-dot{width:26px;height:26px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:kitchenBootSpin .7s linear infinite}
+@keyframes kitchenBootSpin{to{transform:rotate(360deg)}}
+
+@media(max-width:760px){
+  #tab-history,#tab-reports,#tab-operations,#tab-pricing,#tab-branches,#tab-users,#tab-tenants,#tab-tables,#tab-menu{max-width:none}
+  .history-panel,#tab-reports>.panel{padding:14px}
+  .history-head{align-items:stretch}
+  .history-head .head-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .history-head #orderStatusFilter{grid-column:1/-1;width:100%}
+  #tab-reports .report-cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #tab-reports .report-date-range{display:grid;grid-template-columns:1fr 1fr;align-items:end}
+  #tab-reports .report-date-range button{grid-column:1/-1}
+}

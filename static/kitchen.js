@@ -52,8 +52,9 @@ async function api(url, opts) {
 }
 function apiJson(url, method, data) { return api(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data || {}) }); }
 
-function showLogin() { $('#boardView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); if (pollTimer) clearInterval(pollTimer); }
-function showBoard() { $('#loginView').classList.add('hidden'); $('#boardView').classList.remove('hidden'); }
+function hideKitchenBoot(){ const el=$('#kitchenBootView'); if(el) el.classList.add('hidden'); }
+function showLogin() { hideKitchenBoot(); $('#boardView').classList.add('hidden'); $('#loginView').classList.remove('hidden'); if (pollTimer) clearInterval(pollTimer); }
+function showBoard() { hideKitchenBoot(); $('#loginView').classList.add('hidden'); $('#boardView').classList.remove('hidden'); }
 
 // ===================== i18n wiring =====================
 

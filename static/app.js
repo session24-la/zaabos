@@ -247,7 +247,7 @@ $('#moreNavBtn').addEventListener('click', (e) => {
   $('#moreNavBtn').setAttribute('aria-expanded', String(!open));
 });
 document.addEventListener('click', (e) => { if (!e.target.closest('.nav-more-wrap')) { $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded','false'); } });
-$('#kitchenNavBtn').addEventListener('click', () => { window.location.href='/kitchen'; });
+$('#historyKitchenBtn').addEventListener('click', () => { window.location.href='/kitchen'; });
 
 function switchTab(tab) {
   $$('#mainTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
