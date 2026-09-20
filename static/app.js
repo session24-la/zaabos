@@ -9,6 +9,7 @@ function zaabosTime(value) {
   if (Number.isNaN(d.getTime())) return '';
   return new Intl.DateTimeFormat(localeFor(currentLang), {timeZone: ZAABOS_RESTAURANT_TZ, hour:'2-digit', minute:'2-digit'}).format(d);
 }
+function formatDateTime(value) { return zaabosDateTime(value); }
 
 'use strict';
 // A future optional UI control must not blank the whole SPA on startup.
@@ -614,7 +615,12 @@ $('#qrOverviewBtn').addEventListener('click', () => {
 
 // ===================== Menu (categories + items) =====================
 
+let selectedMenuCategoryId = null;
+
 function renderMenu() {
+  const cats=branchCategories();
+  if(selectedMenuCategoryId!=null && !cats.some(c=>Number(c.id)===Number(selectedMenuCategoryId))) selectedMenuCategoryId=null;
+  if(selectedMenuCategoryId==null && cats.length) selectedMenuCategoryId=cats[0].id;
   renderCategoriesList();
   renderMenuItemsGrid();
   fillCategorySelect();
@@ -623,27 +629,34 @@ function renderCategoriesList() {
   const cats = branchCategories();
   const list = $('#categoriesList');
   if (!cats.length) { list.innerHTML = emptyState('🍜', t('empty_categories')); return; }
-  list.innerHTML = cats.map(c => `
-    <div class="row">
-      <div style="display:flex;align-items:center;gap:12px">
-        <span class="avatar-badge">${escapeHtml(c.icon || '🍜')}</span>
-        <div style="font-weight:700">${escapeHtml(c.name)}</div>
+  list.innerHTML = cats.map((c,i) => {
+    const count=branchItems().filter(x=>Number(x.category_id)===Number(c.id)).length;
+    const active=Number(selectedMenuCategoryId)===Number(c.id);
+    return `<div class="menu-category-row ${active?'active':''}" data-select-cat="${c.id}">
+      <button class="menu-category-main" type="button" data-select-cat="${c.id}">
+        <span class="menu-category-icon">${escapeHtml(c.icon || '🍜')}</span>
+        <span class="menu-category-copy"><b>${escapeHtml(c.name)}</b><small>${count} รายการ</small></span>
+      </button>
+      <div class="menu-category-tools">
+        <button class="icon-btn" data-edit-cat="${c.id}" title="แก้ไข">✎</button>
+        <button class="icon-btn danger" data-del-cat="${c.id}" title="ลบ">×</button>
       </div>
-      <div class="row-right">
-        <button class="icon-btn" data-edit-cat="${c.id}">✏️</button>
-        <button class="icon-btn danger" data-del-cat="${c.id}">🗑️</button>
-      </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 $('#categoriesList').addEventListener('click', (e) => {
-  const editId = e.target.dataset.editCat, delId = e.target.dataset.delCat;
+  const editBtn=e.target.closest('[data-edit-cat]'), delBtn=e.target.closest('[data-del-cat]');
+  const editId = editBtn && editBtn.dataset.editCat, delId = delBtn && delBtn.dataset.delCat;
   if (editId) {
     const c = boot.categories.find(x => x.id === parseInt(editId, 10));
     $('#categoryModalTitle').textContent = t('modal_edit_category_title'); $('#categoryId').value = c.id; $('#categoryIcon').value = c.icon; $('#categoryName').value = c.name; $('#categoryError').textContent = '';
     openModal('#categoryModal');
   } else if (delId) {
     if (!confirm(t('confirm_delete_category'))) return;
-    apiJson('/api/menu-categories/' + delId, 'DELETE').then(async () => { await loadBootstrap(); renderMenu(); toast(t('toast_deleted'), 'ok'); }).catch(e => toast(e.message, 'err'));
+    apiJson('/api/menu-categories/' + delId, 'DELETE').then(async () => { if(Number(selectedMenuCategoryId)===Number(delId)) selectedMenuCategoryId=null; await loadBootstrap(); renderMenu(); toast(t('toast_deleted'), 'ok'); }).catch(e => toast(e.message, 'err'));
+  } else {
+    const pick=e.target.closest('[data-select-cat]');
+    if(pick){selectedMenuCategoryId=Number(pick.dataset.selectCat);renderCategoriesList();renderMenuItemsGrid();}
   }
 });
 $('#addCategoryBtn').addEventListener('click', () => {
@@ -668,27 +681,31 @@ function fillCategorySelect() {
 }
 
 function renderMenuItemsGrid() {
-  const items = branchItems();
+  const allItems = branchItems();
+  const cat=branchCategories().find(c=>Number(c.id)===Number(selectedMenuCategoryId));
+  const items = selectedMenuCategoryId==null ? allItems : allItems.filter(it=>Number(it.category_id)===Number(selectedMenuCategoryId));
   const grid = $('#menuItemsGrid');
-  if (!items.length) { grid.innerHTML = emptyState('📋', t('empty_menu_items')); return; }
+  const title=$('#menuWorkspaceTitle'), count=$('#menuWorkspaceCount');
+  if(title) title.textContent=cat ? `${cat.icon||'🍜'} ${cat.name}` : 'เมนูทั้งหมด';
+  if(count) count.textContent=`${items.length} รายการ`;
+  if (!items.length) { grid.innerHTML = emptyState('📋', cat ? 'ยังไม่มีรายการในหมวดหมู่นี้' : t('empty_menu_items')); return; }
   grid.innerHTML = items.map(it => {
     const low = it.track_stock && it.stock_qty != null && it.stock_qty <= it.low_stock_threshold;
-    return `
-    <div class="menu-card ${it.sold_out ? 'sold-out' : ''}">
-      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : (low ? `<span class="mc-badge-stock">${escapeHtml(it.stock_qty <= 0 ? t('badge_out_of_stock') : t('badge_low_stock'))}</span>` : '')}
-      ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
-      <div class="mc-top"><span class="mc-name">${escapeHtml(it.name)}</span></div>
-      ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
-      ${it.option_groups.length ? `<div class="hint">${escapeHtml(t('label_options_prefix'))}: ${it.option_groups.map(g => escapeHtml(g.name)).join(', ')}</div>` : ''}
-      ${it.track_stock ? `<div class="mc-stock-info">📦 ${escapeHtml(t('label_stock_qty'))}: ${it.stock_qty != null ? it.stock_qty : 0}</div>` : ''}
-      <div class="mc-price">${fmtMoney(it.base_price)}</div>
-      <div class="mc-actions">
-        <button class="ghost-btn" data-edit-item="${it.id}">${escapeHtml(t('btn_edit'))}</button>
-        ${it.track_stock ? `<button class="ghost-btn" data-adjust-stock="${it.id}">${escapeHtml(t('btn_adjust_stock'))}</button>` : ''}
-        <button class="ghost-btn" data-toggle-soldout="${it.id}">${escapeHtml(it.sold_out ? t('btn_mark_available') : t('btn_mark_sold_out'))}</button>
-        <button class="ghost-btn" data-del-item="${it.id}">🗑️</button>
+    return `<article class="menu-card menu-manager-card ${it.sold_out ? 'sold-out' : ''}">
+      <div class="menu-card-media">${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="${escapeHtml(it.name)}">` : `<div class="menu-photo-placeholder">🍽️</div>`}
+      ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : (low ? `<span class="mc-badge-stock">${escapeHtml(it.stock_qty <= 0 ? t('badge_out_of_stock') : t('badge_low_stock'))}</span>` : '')}</div>
+      <div class="menu-card-body">
+        <div class="mc-top"><span class="mc-name">${escapeHtml(it.name)}</span><strong class="mc-price">${fmtMoney(it.base_price)}</strong></div>
+        ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
+        <div class="menu-card-meta">${it.option_groups.length ? `<span>ตัวเลือก ${it.option_groups.length}</span>` : ''}${it.track_stock ? `<span>📦 ${it.stock_qty != null ? it.stock_qty : 0}</span>` : ''}</div>
+        <div class="mc-actions">
+          <button class="ghost-btn" data-edit-item="${it.id}">${escapeHtml(t('btn_edit'))}</button>
+          ${it.track_stock ? `<button class="ghost-btn" data-adjust-stock="${it.id}">${escapeHtml(t('btn_adjust_stock'))}</button>` : ''}
+          <button class="ghost-btn" data-toggle-soldout="${it.id}">${escapeHtml(it.sold_out ? t('btn_mark_available') : t('btn_mark_sold_out'))}</button>
+          <button class="icon-btn danger" data-del-item="${it.id}">🗑️</button>
+        </div>
       </div>
-    </div>`;
+    </article>`;
   }).join('');
 }
 $('#menuItemsGrid').addEventListener('click', (e) => {
@@ -710,7 +727,10 @@ $('#menuItemsGrid').addEventListener('click', (e) => {
   }
 });
 
-$('#addMenuItemBtn').addEventListener('click', () => openMenuItemModal(null));
+$('#addMenuItemBtn').addEventListener('click', () => {
+  openMenuItemModal(null);
+  if(selectedMenuCategoryId!=null) $('#menuItemCategory').value=String(selectedMenuCategoryId);
+});
 
 function openMenuItemModal(id) {
   fillCategorySelect();
@@ -1254,7 +1274,13 @@ $('#cpSubmit').addEventListener('click', async () => {
     toast(t('toast_payment_confirmed'), 'ok');
     closeModals();
     cpOrderId = null;
-    onOrderActionDone();
+    // Pull the paid order back from the server before printing so the receipt
+    // contains the authoritative paid time, discounts, tax and payment method.
+    const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId));
+    lastOrdersFlat=fresh.orders||[];
+    activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');
+    renderTableBoard(); renderOtherOrders(); renderSidePanel();
+    printReceipt(orderId);
   } catch (e) { $('#cpError').textContent = e.message; }
 });
 
@@ -1704,7 +1730,7 @@ async function loadOperations(){
       $('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:currentBranchId,opening_cash:Number($('#shiftOpeningCash').value||0),notes:$('#shiftOpenNote').value});
     }
     $('#cashMovementList').innerHTML=data.movements.length?data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(formatDateTime(m.created_at))}</div></div><strong>${m.movement_type==='cash_in'?'+':'−'}${fmtMoney(m.amount)}</strong></div>`).join(''):emptyState('💵','ยังไม่มีรายการเงินสดในกะนี้');
-    if(currentUser && ['owner','manager'].includes(currentUser.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('🛡️','ยังไม่มีรายการอนุมัติ');}
+    if(me && ['owner','manager'].includes(me.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('🛡️','ยังไม่มีรายการอนุมัติ');}
   }catch(e){toast(e.message,'err')}
 }
 async function opsPost(url,payload){try{const r=await apiJson(url,'POST',payload);if(r.expected_cash!=null)toast(`ปิดกะแล้ว · ควรมี ${fmtMoney(r.expected_cash)} · ต่าง ${fmtMoney(r.difference)}`,'ok');else toast('บันทึกแล้ว','ok');$('#opsAmount').value='';$('#opsReason').value='';loadOperations();}catch(e){toast(e.message,'err')}}
