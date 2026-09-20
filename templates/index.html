@@ -275,6 +275,7 @@
     <label><span data-i18n="label_table">โต๊ะ</span><select id="takeOrderTable"></select></label>
   </div>
   <label><span data-i18n="label_customer_name">ชื่อลูกค้า</span><input id="takeOrderCustomerName" placeholder="ลูกค้า" data-i18n-ph="placeholder_customer_name"></label>
+  <label><span data-i18n="label_guest_count">จำนวนลูกค้า (คน)</span><input id="takeOrderGuestCount" type="number" min="1" max="200" inputmode="numeric" placeholder="เช่น 4" data-i18n-ph="placeholder_guest_count"></label>
   <div id="takeOrderDeliveryFields" class="hidden">
     <label><span data-i18n="label_phone">เบอร์โทร</span><input id="takeOrderPhone" inputmode="numeric"></label>
     <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress"></textarea></label>
@@ -300,12 +301,23 @@
   <button class="save" id="itemOptionAdd" data-i18n="btn_add_to_cart">เพิ่มลงตะกร้า</button>
 </div></div>
 
+<!-- Confirm payment: optional tax + cash received, computes change before printing the receipt -->
+<div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
+  <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
+  <label><span data-i18n="label_tax_amount">ภาษี (ถ้ามี)</span><input id="cpTax" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+  <label><span data-i18n="label_cash_received">รับเงินมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+  <div class="row" style="margin-top:6px"><span data-i18n="label_change">เงินทอน</span><b id="cpChange">0</b></div>
+  <div class="login-error" id="cpError"></div>
+  <button class="save btn-confirm-pay" id="cpSubmit" data-i18n="btn_confirm_payment_done">✅ ยืนยันชำระเงินแล้ว</button>
+</div></div>
+
 <!-- Table / order detail (opened from board tiles + side panel) -->
 <div class="modal" id="orderDetailModal"><div class="sheet wide"><div class="sheet-head"><h2 id="orderDetailTitle" data-i18n="order_detail_title">รายละเอียดออเดอร์</h2><button data-close>×</button></div>
   <div id="orderDetailBody"></div>
 </div></div>
 
 <div id="receiptPrintArea" class="receipt-print"></div>
+<div id="kitchenTicketPrintArea" class="kitchen-ticket-print"></div>
 
 <div class="toast-wrap" id="toastWrap"></div>
 

@@ -763,6 +763,7 @@ async function sendSelectedToKitchen(orderId, card) {
   try {
     await apiJson('/api/orders/' + orderId + '/send-to-kitchen', 'PUT', { item_ids });
     toast(t('toast_sent_to_kitchen'), 'ok');
+    printKitchenTicket(orderId, item_ids);
     onOrderActionDone();
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -774,7 +775,7 @@ function wireOrderActionClicks(container) {
     const sk = e.target.dataset.sendKitchen;
     if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
-    else if (cp) { confirmPaymentDone(parseInt(cp, 10)); }
+    else if (cp) { openConfirmPaymentModal(parseInt(cp, 10)); }
     else if (pr) { printReceipt(parseInt(pr, 10)); }
     else if (sk) { const card = e.target.closest('.order-card'); if (card) sendSelectedToKitchen(parseInt(sk, 10), card); }
   });
@@ -794,23 +795,75 @@ wireOrderActionClicks($('#orderDetailBody'));
 
 function onOrderActionDone() { loadOrders(); loadBoardData(); }
 
-async function confirmPaymentDone(orderId) {
+function findOrderById(orderId) {
+  return activeOrders.find(x => x.id === orderId) || lastOrdersFlat.find(x => x.id === orderId);
+}
+
+let cpOrderId = null;
+
+function updateCpChange() {
+  const ord = findOrderById(cpOrderId);
+  if (!ord) return;
+  const tax = parseFloat($('#cpTax').value) || 0;
+  const cash = parseFloat($('#cpCash').value) || 0;
+  const due = ord.total_amount + tax;
+  $('#cpChange').textContent = fmtMoney(cash > 0 ? Math.max(0, cash - due) : 0);
+}
+$('#cpTax').addEventListener('input', updateCpChange);
+$('#cpCash').addEventListener('input', updateCpChange);
+
+function openConfirmPaymentModal(orderId) {
+  const ord = findOrderById(orderId);
+  if (!ord) return;
+  cpOrderId = orderId;
+  $('#cpTotal').textContent = fmtMoney(ord.total_amount);
+  $('#cpTax').value = ord.tax_amount ? String(ord.tax_amount) : '';
+  $('#cpCash').value = ord.cash_received ? String(ord.cash_received) : '';
+  $('#cpError').textContent = '';
+  updateCpChange();
+  openModal('#confirmPaymentModal');
+}
+
+$('#cpSubmit').addEventListener('click', async () => {
+  if (cpOrderId == null) return;
+  $('#cpError').textContent = '';
+  const orderId = cpOrderId;
+  const payload = { payment_status: 'paid' };
+  const taxRaw = $('#cpTax').value.trim(); if (taxRaw) payload.tax_amount = parseFloat(taxRaw);
+  const cashRaw = $('#cpCash').value.trim(); if (cashRaw) payload.cash_received = parseFloat(cashRaw);
   try {
-    await apiJson('/api/orders/' + orderId + '/payment', 'PUT', { payment_status: 'paid' });
-    const ord = activeOrders.find(x => x.id === orderId) || (lastOrdersFlat.find(x => x.id === orderId));
+    await apiJson('/api/orders/' + orderId + '/payment', 'PUT', payload);
+    const ord = findOrderById(orderId);
     if (ord && ord.status !== 'completed' && ord.status !== 'cancelled') {
       await apiJson('/api/orders/' + orderId + '/status', 'PUT', { status: 'completed' });
     }
     toast(t('toast_payment_confirmed'), 'ok');
     closeModals();
+    cpOrderId = null;
     onOrderActionDone();
-  } catch (e) { toast(e.message, 'err'); }
+  } catch (e) { $('#cpError').textContent = e.message; }
+});
+
+function printElement(el) {
+  // Print isolation: only .print-target is shown at print time (see the
+  // body>* {display:none} rule in style.css) — this is what keeps a small
+  // 80mm receipt to a single page instead of also pulling in the whole
+  // (invisible but still full-height) app layout underneath it.
+  el.classList.add('print-target');
+  const cleanup = () => el.classList.remove('print-target');
+  window.addEventListener('afterprint', cleanup, { once: true });
+  setTimeout(() => { window.print(); setTimeout(cleanup, 1000); }, 50);
 }
 
 function printReceipt(orderId) {
-  const o = activeOrders.find(x => x.id === orderId) || lastOrdersFlat.find(x => x.id === orderId);
+  const o = findOrderById(orderId);
   if (!o) return;
   const shopName = (me && me.tenant && me.tenant.name) || 'ZaabOS';
+  const itemCount = o.items.reduce((sum, it) => sum + it.quantity, 0);
+  const tax = o.tax_amount || 0;
+  const grandTotal = o.total_amount + tax;
+  const cash = (o.cash_received != null && o.cash_received !== '') ? Number(o.cash_received) : null;
+  const change = (cash != null) ? Math.max(0, cash - grandTotal) : null;
   const itemsRows = o.items.map(it => {
     const optLine = it.options.length ? `<div class="hint" style="font-size:10.5px">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
     return `<tr><td>${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${optLine}</td><td style="text-align:right;white-space:nowrap">${fmtMoney(it.line_total)}</td></tr>`;
@@ -818,12 +871,40 @@ function printReceipt(orderId) {
   $('#receiptPrintArea').innerHTML = `
     <h3>${escapeHtml(shopName)}</h3>
     <div class="rp-sub">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-    <div class="rp-sub">${escapeHtml(o.customer_name)} · ${new Date(o.created_at).toLocaleString(localeFor(currentLang))}</div>
+    <div class="rp-sub">${escapeHtml(o.customer_name)}${o.guest_count ? ' · ' + escapeHtml(t('label_guest_count_short')) + ' ' + o.guest_count : ''}</div>
+    <div class="rp-sub">${new Date(o.created_at).toLocaleString(localeFor(currentLang))}</div>
+    ${o.created_by_name ? `<div class="rp-sub">${escapeHtml(t('label_order_taker'))}: ${escapeHtml(o.created_by_name)}</div>` : ''}
     <div class="rp-line"></div>
     <table>${itemsRows}</table>
-    <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(o.total_amount)}</span></div>
+    <div class="rp-line"></div>
+    <div class="rp-row"><span>${escapeHtml(t('label_item_count'))}</span><span>${itemCount}</span></div>
+    <div class="rp-row"><span>${escapeHtml(t('label_subtotal'))}</span><span>${fmtMoney(o.total_amount)}</span></div>
+    ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
+    <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
+    ${cash != null ? `<div class="rp-row"><span>${escapeHtml(t('label_cash_received'))}</span><span>${fmtMoney(cash)}</span></div>` : ''}
+    ${change != null ? `<div class="rp-row"><span>${escapeHtml(t('label_change'))}</span><span>${fmtMoney(change)}</span></div>` : ''}
     <div class="rp-thanks">${escapeHtml(t('receipt_thank_you'))} 🙏</div>`;
-  setTimeout(() => window.print(), 50);
+  printElement($('#receiptPrintArea'));
+}
+
+function printKitchenTicket(orderId, itemIds) {
+  const o = findOrderById(orderId);
+  if (!o) return;
+  const items = o.items.filter(it => itemIds.includes(it.id));
+  if (!items.length) return;
+  const itemsHtml = items.map(it => {
+    const optLine = it.options.length ? `<div class="kt-print-opts">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
+    const noteLine = it.notes ? `<div class="kt-print-notes">📝 ${escapeHtml(it.notes)}</div>` : '';
+    return `<div class="kt-print-item">${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${optLine}${noteLine}</div>`;
+  }).join('');
+  $('#kitchenTicketPrintArea').innerHTML = `
+    <div class="kt-print-head">${escapeHtml(t('kitchen_ticket_header'))}</div>
+    <div class="rp-sub">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
+    <div class="rp-sub">${new Date().toLocaleString(localeFor(currentLang))}</div>
+    <div class="rp-line"></div>
+    ${itemsHtml}
+    ${o.notes ? `<div class="rp-line"></div><div class="kt-print-notes">📝 ${escapeHtml(o.notes)}</div>` : ''}`;
+  printElement($('#kitchenTicketPrintArea'));
 }
 
 // ===================== Live table board + side panel =====================
@@ -943,6 +1024,7 @@ $('#takeOrderBtn').addEventListener('click', () => {
   $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b.dataset.type === 'dine_in'));
   $('#takeOrderTableRow').classList.remove('hidden'); $('#takeOrderDeliveryFields').classList.add('hidden');
   $('#takeOrderCustomerName').value = ''; $('#takeOrderPhone').value = ''; $('#takeOrderAddress').value = '';
+  $('#takeOrderGuestCount').value = '';
   $('#takeOrderError').textContent = '';
   const tsel = $('#takeOrderTable');
   tsel.innerHTML = branchTables().map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
@@ -1065,6 +1147,8 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
     customer_name: $('#takeOrderCustomerName').value.trim() || t('placeholder_customer_name'),
     cart: cart.map(c => ({ menu_item_id: c.menu_item_id, quantity: c.qty, selected_options: c.selected_options, notes: c.notes })),
   };
+  const guestCountRaw = $('#takeOrderGuestCount').value.trim();
+  if (guestCountRaw) payload.guest_count = parseInt(guestCountRaw, 10);
   if (takeOrderType === 'dine_in') payload.table_id = parseInt($('#takeOrderTable').value, 10);
   if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); }
   try {

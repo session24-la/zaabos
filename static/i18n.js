@@ -305,6 +305,17 @@ const I18N = {
   receipt_title: { th: 'ใบเสร็จรับเงิน', lo: 'ໃບບິນຮັບເງິນ', zh: '收据', en: 'Receipt' },
   receipt_thank_you: { th: 'ขอบคุณที่ใช้บริการ', lo: 'ຂອບໃຈທີ່ໃຊ້ບໍລິການ', zh: '感谢您的光临', en: 'Thank you for your order' },
   label_qty_short: { th: 'จำนวน', lo: 'ຈຳນວນ', zh: '数量', en: 'Qty' },
+  label_guest_count: { th: 'จำนวนลูกค้า (คน)', lo: 'ຈຳນວນລູກຄ້າ (ຄົນ)', zh: '顾客人数', en: 'Number of guests' },
+  placeholder_guest_count: { th: 'เช่น 4', lo: 'ເຊັ່ນ 4', zh: '例如 4', en: 'e.g. 4' },
+  label_guest_count_short: { th: 'ลูกค้า', lo: 'ລູກຄ້າ', zh: '人数', en: 'Guests' },
+  modal_confirm_payment_title: { th: 'ยืนยันการชำระเงิน', lo: 'ຢືນຢັນການຈ່າຍເງິນ', zh: '确认付款', en: 'Confirm payment' },
+  label_tax_amount: { th: 'ภาษี (ถ้ามี)', lo: 'ອາກອນ (ຖ້າມີ)', zh: '税额（如有）', en: 'Tax (optional)' },
+  label_cash_received: { th: 'รับเงินมา', lo: 'ຮັບເງິນມາ', zh: '实收金额', en: 'Cash received' },
+  label_change: { th: 'เงินทอน', lo: 'ເງິນທອນ', zh: '找零', en: 'Change' },
+  label_item_count: { th: 'จำนวนรายการ', lo: 'ຈຳນວນລາຍການ', zh: '商品数量', en: 'Item count' },
+  label_subtotal: { th: 'ยอดก่อนภาษี', lo: 'ຍອດກ່ອນອາກອນ', zh: '小计', en: 'Subtotal' },
+  label_order_taker: { th: 'ผู้รับออเดอร์', lo: 'ຜູ້ຮັບອໍເດີ', zh: '接单人', en: 'Order taken by' },
+  kitchen_ticket_header: { th: '🔔 ใบสั่งห้องครัว', lo: '🔔 ໃບສັ່ງຫ້ອງຄົວ', zh: '🔔 厨房订单', en: '🔔 KITCHEN ORDER TICKET' },
 
   // ---------- customer menu (order.html + order.js) — category drill-down ----------
   cat_view_all_tile: { th: 'ดูเมนูทั้งหมด', lo: 'ເບິ່ງເມນູທັງໝົດ', zh: '查看全部菜单', en: 'View full menu' },

@@ -195,12 +195,22 @@ def ensure_schema_migrations(conn):
     new column on an existing table needs to be added here instead."""
     if IS_POSTGRES:
         conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS kitchen_sent_at TIMESTAMP')
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_amount DOUBLE PRECISION NOT NULL DEFAULT 0')
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS cash_received DOUBLE PRECISION')
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_count INTEGER')
         conn.commit()
     else:
-        cols = [r[1] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()]
-        if 'kitchen_sent_at' not in cols:
+        oi_cols = [r[1] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()]
+        if 'kitchen_sent_at' not in oi_cols:
             conn.execute('ALTER TABLE order_items ADD COLUMN kitchen_sent_at TEXT')
-            conn.commit()
+        o_cols = [r[1] for r in conn.execute('PRAGMA table_info(orders)').fetchall()]
+        if 'tax_amount' not in o_cols:
+            conn.execute('ALTER TABLE orders ADD COLUMN tax_amount REAL NOT NULL DEFAULT 0')
+        if 'cash_received' not in o_cols:
+            conn.execute('ALTER TABLE orders ADD COLUMN cash_received REAL')
+        if 'guest_count' not in o_cols:
+            conn.execute('ALTER TABLE orders ADD COLUMN guest_count INTEGER')
+        conn.commit()
 
 def init_db():
     if IS_POSTGRES:
@@ -1035,11 +1045,13 @@ def list_orders():
     if g.tenant_id is None: return jsonify(orders=[])
     status = request.args.get('status')
     branch_id = request.args.get('branch_id')
-    q = 'SELECT * FROM orders WHERE tenant_id=?'
+    q = '''SELECT orders.*, u.display_name AS created_by_name
+           FROM orders LEFT JOIN users u ON u.id = orders.created_by_user_id
+           WHERE orders.tenant_id=?'''
     args = [g.tenant_id]
-    if status: q += ' AND status=?'; args.append(status)
-    if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
-    q += ' ORDER BY id DESC LIMIT 200'
+    if status: q += ' AND orders.status=?'; args.append(status)
+    if branch_id: q += ' AND orders.branch_id=?'; args.append(branch_id)
+    q += ' ORDER BY orders.id DESC LIMIT 200'
     rows = conn.execute(q, args).fetchall()
     return jsonify(orders=[_order_with_items(conn, r) for r in rows])
 
@@ -1074,6 +1086,16 @@ def staff_create_order():
     if order_type == 'delivery' and not _valid_phone(customer_phone):
         return jsonify(error='เบอร์โทรไม่ถูกต้อง'), 400
 
+    guest_count = d.get('guest_count')
+    if guest_count not in (None, ''):
+        try:
+            guest_count = int(guest_count)
+            if guest_count < 1 or guest_count > 200: raise ValueError()
+        except (TypeError, ValueError):
+            return jsonify(error='จำนวนลูกค้าไม่ถูกต้อง'), 400
+    else:
+        guest_count = None
+
     try:
         prepared_items, total = _validate_and_price_cart(conn, g.tenant_id, branch_id, d.get('cart') or [])
     except ValueError as e:
@@ -1081,10 +1103,10 @@ def staff_create_order():
 
     order_no = gen_order_no(conn, g.tenant_id)
     cur = conn.execute('''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
-        customer_name,customer_phone,customer_address,total_amount,notes,placed_by,created_by_user_id,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        customer_name,customer_phone,customer_address,total_amount,guest_count,notes,placed_by,created_by_user_id,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (g.tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
-         customer_address, total, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
+         customer_address, total, guest_count, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
     order_id = cur.lastrowid
     for it in prepared_items:
         oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes)
@@ -1153,7 +1175,28 @@ def update_order_payment(oid):
     payment_status = d.get('payment_status')
     if payment_status not in ('unpaid', 'paid'):
         return jsonify(error='สถานะการชำระเงินไม่ถูกต้อง'), 400
-    conn.execute('UPDATE orders SET payment_status=?,updated_at=? WHERE id=?', (payment_status, now(), oid))
+
+    def _opt_money(key):
+        v = d.get(key)
+        if v in (None, ''): return None
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f'{key} ไม่ถูกต้อง')
+        if v < 0 or v > 100000000: raise ValueError(f'{key} ไม่ถูกต้อง')
+        return v
+
+    try:
+        tax_amount = _opt_money('tax_amount')
+        cash_received = _opt_money('cash_received')
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+
+    if tax_amount is not None or cash_received is not None:
+        conn.execute('UPDATE orders SET payment_status=?,tax_amount=COALESCE(?,tax_amount),cash_received=?,updated_at=? WHERE id=?',
+            (payment_status, tax_amount, cash_received, now(), oid))
+    else:
+        conn.execute('UPDATE orders SET payment_status=?,updated_at=? WHERE id=?', (payment_status, now(), oid))
     log_action('update_order_payment', detail=f'{oid} -> {payment_status}')
     conn.commit()
     return jsonify(ok=True)
