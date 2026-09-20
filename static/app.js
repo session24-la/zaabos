@@ -970,6 +970,36 @@ async function sendSelectedToKitchen(orderId, card) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
+
+async function criticalActionPayload(actionLabel) {
+  const reason=prompt(`เหตุผล${actionLabel}:`);
+  if(reason===null) return null;
+  if(!reason.trim()){ toast('กรุณาระบุเหตุผล','err'); return null; }
+  const payload={reason:reason.trim()};
+  if(me && me.role==='staff'){
+    const username=prompt('รายการนี้ต้องได้รับอนุมัติจาก Owner/Manager\nชื่อผู้ใช้ผู้อนุมัติ:');
+    if(username===null) return null;
+    const password=prompt('รหัสผ่านผู้อนุมัติ:');
+    if(password===null) return null;
+    payload.approval_username=username.trim(); payload.approval_password=password;
+  }
+  return payload;
+}
+async function cancelOrderItemCritical(oid,iid,qty){
+  const payload=await criticalActionPayload('การยกเลิกรายการ'); if(!payload) return;
+  if(!confirm('ยืนยันยกเลิกรายการนี้?')) return;
+  payload.quantity=Number(qty);
+  try{ await apiJson(`/api/orders/${oid}/items/${iid}/cancel`,'PUT',payload); toast('ยกเลิกรายการและบันทึกประวัติแล้ว','ok'); onOrderActionDone(); }catch(e){ toast(e.message,'err'); }
+}
+async function setOrderStatusCritical(id,status){
+  let payload={status};
+  if(status==='cancelled'){
+    const c=await criticalActionPayload('การยกเลิกออเดอร์'); if(!c) return;
+    payload={...payload,...c}; if(!confirm('ยืนยันยกเลิกออเดอร์นี้?')) return;
+  }
+  try{ await apiJson('/api/orders/'+id+'/status','PUT',payload); onOrderActionDone(); }catch(e){ toast(e.message,'err'); }
+}
+
 function wireOrderActionClicks(container) {
   container.addEventListener('click', (e) => {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
@@ -978,10 +1008,10 @@ function wireOrderActionClicks(container) {
     const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
     if (iq) { const [oid,iid,qty]=iq.split(':'); apiJson(`/api/orders/${oid}/items/${iid}/quantity`,'PUT',{quantity:Number(qty)}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
-    else if (ci) { const [oid,iid,qty]=ci.split(':'); if(confirm('ยืนยันยกเลิกรายการนี้?')) apiJson(`/api/orders/${oid}/items/${iid}/cancel`,'PUT',{quantity:Number(qty),reason:'ยกเลิกโดยพนักงาน'}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
+    else if (ci) { const [oid,iid,qty]=ci.split(':'); cancelOrderItemCritical(oid,iid,qty); }
     else if (ai) { openAddItemsToOrder(parseInt(ai,10)); }
     else if (mv) { openMoveTable(parseInt(mv,10)); }
-    else if (s) { const [id, status] = s.split(':'); apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
+    else if (s) { const [id, status] = s.split(':'); setOrderStatusCritical(id,status); }
     else if (p) { const [id, payment_status] = p.split(':'); apiJson('/api/orders/' + id + '/payment', 'PUT', { payment_status }).then(onOrderActionDone).catch(err => toast(err.message, 'err')); }
     else if (cp) { openConfirmPaymentModal(parseInt(cp, 10)); }
     else if (pr) { printReceipt(parseInt(pr, 10)); }
@@ -1470,6 +1500,10 @@ async function loadOperations() {
     const sh = data.shift;
     $('#shiftStatus').innerHTML = sh ? `<div class="report-card"><div class="rc-label">สถานะกะ</div><div class="rc-value">เปิดอยู่</div></div><div class="report-card"><div class="rc-label">เงินเปิดกะ</div><div class="rc-value">${fmtMoney(sh.opening_cash)}</div></div><div class="report-card"><div class="rc-label">เปิดโดย</div><div class="rc-value">${escapeHtml(sh.opened_by_name||'')}</div></div>` : `<div class="report-card"><div class="rc-label">สถานะกะ</div><div class="rc-value">ยังไม่ได้เปิดกะ</div></div>`;
     $('#cashMovementList').innerHTML = data.movements.length ? data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(m.created_at)}</div></div><strong>${fmtMoney(m.amount)}</strong></div>`).join('') : emptyState('💵','ยังไม่มีรายการเงินสด');
+    if ($('#criticalOpsList') && me && ['owner','manager','super_admin'].includes(me.role)) {
+      const ops=await api('/api/operations/critical');
+      $('#criticalOpsList').innerHTML=ops.length?ops.map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason_text||'')} · ทำโดย ${escapeHtml(x.performed_by_name||'')} ${x.approved_by_name?'· อนุมัติโดย '+escapeHtml(x.approved_by_name):''}</div></div><span class="muted">${escapeHtml(x.created_at)}</span></div>`).join(''):emptyState('🛡️','ยังไม่มี Critical Operation');
+    }
   } catch(e) { toast(e.message,'err'); }
 }
 async function opsPost(url, body) { try { await apiJson(url,'POST',body); toast('บันทึกแล้ว','ok'); $('#opsAmount').value=''; $('#opsReason').value=''; loadOperations(); } catch(e){ toast(e.message,'err'); } }
