@@ -108,6 +108,14 @@ if IS_POSTGRES:
 
 ROLES = ('super_admin', 'owner', 'manager', 'staff')
 ORDER_STATUSES = ('received', 'preparing', 'ready', 'served', 'completed', 'cancelled')
+PAYMENT_METHODS = ('cash', 'qr', 'card', 'bank_transfer', 'other')
+STATUS_TRANSITIONS = {
+    'received': {'preparing','cancelled'},
+    'preparing': {'ready','cancelled'},
+    'ready': {'served','cancelled'},
+    'served': {'completed','cancelled'},
+    'completed': set(), 'cancelled': set(),
+}
 BACKUP_DIR = BASE / 'backups'
 
 
@@ -202,6 +210,16 @@ def ensure_schema_migrations(conn):
         conn.execute('ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS track_stock INTEGER NOT NULL DEFAULT 0')
         conn.execute('ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS stock_qty INTEGER')
         conn.execute('ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS low_stock_threshold INTEGER NOT NULL DEFAULT 5')
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT')
+        conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TEXT')
+        conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancelled_quantity INTEGER NOT NULL DEFAULT 0')
+        conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NOT NULL DEFAULT ''')
+        conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancelled_at TEXT')
+        conn.execute('''CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL, amount DOUBLE PRECISION NOT NULL, payment_method TEXT NOT NULL,
+            cash_received DOUBLE PRECISION, reference TEXT NOT NULL DEFAULT '', paid_by_user_id INTEGER,
+            paid_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
         conn.commit()
     else:
         oi_cols = [r[1] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()]
@@ -223,6 +241,16 @@ def ensure_schema_migrations(conn):
             conn.execute('ALTER TABLE menu_items ADD COLUMN stock_qty INTEGER')
         if 'low_stock_threshold' not in mi_cols:
             conn.execute('ALTER TABLE menu_items ADD COLUMN low_stock_threshold INTEGER NOT NULL DEFAULT 5')
+        if 'payment_method' not in o_cols: conn.execute('ALTER TABLE orders ADD COLUMN payment_method TEXT')
+        if 'paid_at' not in o_cols: conn.execute('ALTER TABLE orders ADD COLUMN paid_at TEXT')
+        if 'cancelled_quantity' not in oi_cols: conn.execute('ALTER TABLE order_items ADD COLUMN cancelled_quantity INTEGER NOT NULL DEFAULT 0')
+        if 'cancellation_reason' not in oi_cols: conn.execute("ALTER TABLE order_items ADD COLUMN cancellation_reason TEXT NOT NULL DEFAULT ''")
+        if 'cancelled_at' not in oi_cols: conn.execute('ALTER TABLE order_items ADD COLUMN cancelled_at TEXT')
+        conn.execute('''CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+            order_id INTEGER NOT NULL, amount REAL NOT NULL, payment_method TEXT NOT NULL,
+            cash_received REAL, reference TEXT NOT NULL DEFAULT '', paid_by_user_id INTEGER,
+            paid_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
         conn.commit()
 
 def init_db():
@@ -1005,6 +1033,16 @@ def _decrement_stock(conn, menu_item_id, qty):
         CASE WHEN COALESCE(stock_qty,0) - ? < 0 THEN 0 ELSE COALESCE(stock_qty,0) - ? END
         WHERE id=? AND track_stock=1''', (qty, qty, menu_item_id))
 
+def _restore_stock(conn, menu_item_id, qty):
+    if not menu_item_id or qty <= 0: return
+    conn.execute('UPDATE menu_items SET stock_qty=COALESCE(stock_qty,0)+? WHERE id=? AND track_stock=1', (qty, menu_item_id))
+
+def _recalculate_order_total(conn, oid):
+    row = conn.execute('SELECT COALESCE(SUM((quantity-COALESCE(cancelled_quantity,0))*unit_price),0) AS total FROM order_items WHERE order_id=?', (oid,)).fetchone()
+    total = max(0, float(row['total'] or 0))
+    conn.execute('UPDATE orders SET total_amount=?,updated_at=? WHERE id=?', (total, now(), oid))
+    return total
+
 PHONE_RE_MIN, PHONE_RE_MAX = 8, 12  # digits, covers Lao/Thai mobile numbers
 
 def _valid_phone(phone):
@@ -1240,8 +1278,18 @@ def update_order_status(oid):
     status = d.get('status')
     if status not in ORDER_STATUSES:
         return jsonify(error='สถานะไม่ถูกต้อง'), 400
+    current = order['status']
+    if status == current: return jsonify(ok=True)
+    if status not in STATUS_TRANSITIONS.get(current, set()):
+        return jsonify(error=f'ไม่สามารถเปลี่ยนสถานะจาก {current} เป็น {status} ได้'), 409
+    if status == 'cancelled':
+        rows = conn.execute('SELECT * FROM order_items WHERE order_id=?', (oid,)).fetchall()
+        for it in rows:
+            remaining = max(0, int(it['quantity']) - int(it['cancelled_quantity'] or 0))
+            _restore_stock(conn, it['menu_item_id'], remaining)
+            conn.execute('UPDATE order_items SET cancelled_quantity=quantity,cancelled_at=COALESCE(cancelled_at,?) WHERE id=?', (now(), it['id']))
     conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (status, now(), oid))
-    log_action('update_order_status', detail=f'{oid} -> {status}')
+    log_action('update_order_status', detail=f'{oid}: {current} -> {status}')
     conn.commit()
     return jsonify(ok=True)
 
@@ -1283,33 +1331,93 @@ def update_order_payment(oid):
     if not order: return jsonify(error='ไม่พบออเดอร์'), 404
     d = request.get_json() or {}
     payment_status = d.get('payment_status')
-    if payment_status not in ('unpaid', 'paid'):
-        return jsonify(error='สถานะการชำระเงินไม่ถูกต้อง'), 400
-
-    def _opt_money(key):
-        v = d.get(key)
-        if v in (None, ''): return None
-        try:
-            v = float(v)
-        except (TypeError, ValueError):
-            raise ValueError(f'{key} ไม่ถูกต้อง')
-        if v < 0 or v > 100000000: raise ValueError(f'{key} ไม่ถูกต้อง')
+    if payment_status not in ('unpaid', 'paid'): return jsonify(error='สถานะการชำระเงินไม่ถูกต้อง'), 400
+    if order['status'] == 'cancelled': return jsonify(error='ออเดอร์ที่ยกเลิกแล้วไม่สามารถชำระเงินได้'), 409
+    if order['payment_status'] == 'paid' and payment_status == 'paid': return jsonify(error='ออเดอร์นี้ชำระเงินแล้ว'), 409
+    if payment_status == 'unpaid' and order['payment_status'] == 'paid':
+        return jsonify(error='ไม่สามารถย้อนการชำระเงินโดยตรง กรุณาใช้ขั้นตอนคืนเงิน/void'), 409
+    method = (d.get('payment_method') or '').strip()
+    if payment_status == 'paid' and method not in PAYMENT_METHODS:
+        return jsonify(error='กรุณาเลือกวิธีชำระเงิน'), 400
+    def money(key, default=None):
+        v=d.get(key, default)
+        if v in (None,''): return None
+        try: v=float(v)
+        except: raise ValueError(f'{key} ไม่ถูกต้อง')
+        if v < 0 or v > 1000000000: raise ValueError(f'{key} ไม่ถูกต้อง')
         return v
-
     try:
-        tax_amount = _opt_money('tax_amount')
-        cash_received = _opt_money('cash_received')
-    except ValueError as e:
-        return jsonify(error=str(e)), 400
-
-    if tax_amount is not None or cash_received is not None:
-        conn.execute('UPDATE orders SET payment_status=?,tax_amount=COALESCE(?,tax_amount),cash_received=?,updated_at=? WHERE id=?',
-            (payment_status, tax_amount, cash_received, now(), oid))
-    else:
-        conn.execute('UPDATE orders SET payment_status=?,updated_at=? WHERE id=?', (payment_status, now(), oid))
-    log_action('update_order_payment', detail=f'{oid} -> {payment_status}')
+        tax=money('tax_amount', order['tax_amount'] or 0) or 0
+        cash=money('cash_received')
+    except ValueError as e: return jsonify(error=str(e)),400
+    due=float(order['total_amount'] or 0)+tax
+    if method == 'cash' and (cash is None or cash < due):
+        return jsonify(error='จำนวนเงินสดที่รับมาต้องไม่น้อยกว่ายอดชำระ'), 400
+    if method != 'cash': cash=None
+    ts=now()
+    conn.execute('UPDATE orders SET payment_status=?,payment_method=?,tax_amount=?,cash_received=?,paid_at=?,updated_at=? WHERE id=?',
+                 ('paid',method,tax,cash,ts,ts,oid))
+    conn.execute('INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                 (g.tenant_id,order['branch_id'],oid,due,method,cash,(d.get('reference') or '')[:120],g.user['id'],ts))
+    log_action('payment_completed', detail=f'{oid}: {method} {due}')
     conn.commit()
-    return jsonify(ok=True)
+    return jsonify(ok=True, amount=due, payment_method=method, change=max(0,(cash or 0)-due) if method=='cash' else 0)
+
+@app.post('/api/orders/<int:oid>/items')
+@login_required
+@role_required('owner','manager','staff')
+def add_order_items(oid):
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    if order['status'] in ('completed','cancelled') or order['payment_status']=='paid': return jsonify(error='ออเดอร์นี้ปิดแล้ว ไม่สามารถเพิ่มรายการได้'),409
+    d=request.get_json() or {}
+    try: prepared,_=_validate_and_price_cart(conn,g.tenant_id,order['branch_id'],d.get('items') or [])
+    except ValueError as e: return jsonify(error=str(e)),400
+    ids=[]; ts=now()
+    for it in prepared:
+        cur=conn.execute('INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at) VALUES(?,?,?,?,?,?,?,?)',
+            (oid,it['menu_item_id'],it['item_name'],it['quantity'],it['unit_price'],it['line_total'],it['notes'],ts))
+        iid=cur.lastrowid; ids.append(iid)
+        for op in it['options']:
+            conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
+        _decrement_stock(conn,it['menu_item_id'],it['quantity'])
+    total=_recalculate_order_total(conn,oid); log_action('add_order_items',detail=f'{oid}: {ids}'); conn.commit()
+    return jsonify(ok=True,item_ids=ids,total_amount=total)
+
+@app.put('/api/orders/<int:oid>/items/<int:iid>/cancel')
+@login_required
+@role_required('owner','manager','staff')
+def cancel_order_item(oid,iid):
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ปิดแล้ว'),409
+    it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,oid)).fetchone()
+    if not it: return jsonify(error='ไม่พบรายการ'),404
+    d=request.get_json() or {}; remaining=max(0,int(it['quantity'])-int(it['cancelled_quantity'] or 0))
+    try: qty=int(d.get('quantity') or remaining)
+    except: return jsonify(error='จำนวนไม่ถูกต้อง'),400
+    if qty<1 or qty>remaining: return jsonify(error='จำนวนยกเลิกไม่ถูกต้อง'),400
+    new_cancel=int(it['cancelled_quantity'] or 0)+qty
+    conn.execute('UPDATE order_items SET cancelled_quantity=?,cancellation_reason=?,cancelled_at=? WHERE id=?',(new_cancel,(d.get('reason') or '')[:200],now(),iid))
+    _restore_stock(conn,it['menu_item_id'],qty); total=_recalculate_order_total(conn,oid)
+    log_action('cancel_order_item',detail=f'{oid}/{iid}: {qty}'); conn.commit()
+    return jsonify(ok=True,total_amount=total,cancelled_quantity=new_cancel)
+
+@app.put('/api/orders/<int:oid>/move-table')
+@login_required
+@role_required('owner','manager','staff')
+def move_order_table(oid):
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    if order['order_type']!='dine_in' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ไม่สามารถย้ายโต๊ะได้'),409
+    try: table_id=int((request.get_json() or {}).get('table_id'))
+    except: return jsonify(error='กรุณาเลือกโต๊ะปลายทาง'),400
+    tb=conn.execute('SELECT * FROM dining_tables WHERE id=? AND tenant_id=? AND branch_id=? AND active=1',(table_id,g.tenant_id,order['branch_id'])).fetchone()
+    if not tb: return jsonify(error='โต๊ะปลายทางไม่ถูกต้อง'),400
+    occupied=conn.execute("SELECT id FROM orders WHERE tenant_id=? AND branch_id=? AND table_id=? AND id<>? AND status NOT IN ('completed','cancelled') LIMIT 1",(g.tenant_id,order['branch_id'],table_id,oid)).fetchone()
+    if occupied: return jsonify(error='โต๊ะปลายทางมีออเดอร์อยู่ กรุณาปิดหรือรวมออเดอร์ก่อน'),409
+    conn.execute('UPDATE orders SET table_id=?,table_name_snapshot=?,updated_at=? WHERE id=?',(table_id,tb['name'],now(),oid))
+    log_action('move_order_table',detail=f'{oid}: {order["table_id"]} -> {table_id}'); conn.commit(); return jsonify(ok=True)
 
 # =====================================================================
 # Users management (same pattern as CASHFLOW 24)
@@ -1405,7 +1513,7 @@ def reports_summary():
 
     q = '''SELECT COUNT(*) AS c, COALESCE(SUM(total_amount),0) AS subtotal, COALESCE(SUM(tax_amount),0) AS tax,
            COALESCE(SUM(guest_count),0) AS guests
-           FROM orders WHERE tenant_id=? AND status!='cancelled' AND substr(created_at,1,10) BETWEEN ? AND ?'''
+           FROM orders WHERE tenant_id=? AND payment_status='paid' AND status!='cancelled' AND substr(COALESCE(paid_at,created_at),1,10) BETWEEN ? AND ?'''
     args = [g.tenant_id, frm, to]
     if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
     row = conn.execute(q, args).fetchone()
@@ -1417,7 +1525,7 @@ def reports_summary():
 
     ti_q = '''SELECT oi.item_name_snapshot AS name, SUM(oi.quantity) AS qty, SUM(oi.line_total) AS revenue
               FROM order_items oi JOIN orders o ON o.id=oi.order_id
-              WHERE o.tenant_id=? AND o.status!='cancelled' AND substr(o.created_at,1,10) BETWEEN ? AND ?'''
+              WHERE o.tenant_id=? AND o.payment_status='paid' AND o.status!='cancelled' AND substr(COALESCE(o.paid_at,o.created_at),1,10) BETWEEN ? AND ?'''
     ti_args = [g.tenant_id, frm, to]
     if branch_id: ti_q += ' AND o.branch_id=?'; ti_args.append(branch_id)
     ti_q += ' GROUP BY oi.item_name_snapshot ORDER BY qty DESC LIMIT 10'
@@ -1431,12 +1539,24 @@ def reports_summary():
     cat_q = ex_q.replace('COALESCE(SUM(amount),0) AS total', 'category, COALESCE(SUM(amount),0) AS total') + ' GROUP BY category ORDER BY total DESC'
     expense_by_category = [dict(r) for r in conn.execute(cat_q, ex_args).fetchall()]
 
+    pay_q = '''SELECT payment_method, COALESCE(SUM(amount),0) AS total, COUNT(*) AS count FROM payments
+               WHERE tenant_id=? AND substr(paid_at,1,10) BETWEEN ? AND ?'''
+    pay_args=[g.tenant_id,frm,to]
+    if branch_id: pay_q += ' AND branch_id=?'; pay_args.append(branch_id)
+    pay_q += ' GROUP BY payment_method ORDER BY total DESC'
+    payment_breakdown=[dict(r) for r in conn.execute(pay_q,pay_args).fetchall()]
+    open_q="SELECT COUNT(*) AS c, COALESCE(SUM(total_amount+tax_amount),0) AS total FROM orders WHERE tenant_id=? AND payment_status='unpaid' AND status!='cancelled'"
+    open_args=[g.tenant_id]
+    if branch_id: open_q+=' AND branch_id=?'; open_args.append(branch_id)
+    open_row=conn.execute(open_q,open_args).fetchone()
+
     return jsonify(
         from_date=frm, to_date=to,
         order_count=order_count, subtotal=subtotal, tax=tax, guests=guests, total_sales=total_sales,
         top_items=top_items,
         expense_total=expense_total, expense_by_category=expense_by_category,
-        net_profit=total_sales - expense_total,
+        net_profit=total_sales - expense_total, payment_breakdown=payment_breakdown,
+        open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
     )
 
 @app.get('/api/expenses')

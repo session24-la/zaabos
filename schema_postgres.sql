@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS orders (
  total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
  tax_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
  cash_received DOUBLE PRECISION,
+ payment_method TEXT,
+ paid_at TEXT,
  guest_count INTEGER,
  notes TEXT NOT NULL DEFAULT '',
  placed_by TEXT NOT NULL DEFAULT 'customer' CHECK(placed_by IN ('customer','staff')),
@@ -139,6 +141,9 @@ CREATE TABLE IF NOT EXISTS order_items (
  line_total DOUBLE PRECISION NOT NULL DEFAULT 0,
  notes TEXT NOT NULL DEFAULT '',
  kitchen_sent_at TIMESTAMP,
+ cancelled_quantity INTEGER NOT NULL DEFAULT 0,
+ cancellation_reason TEXT NOT NULL DEFAULT '',
+ cancelled_at TEXT,
  FOREIGN KEY(order_id) REFERENCES orders(id),
  FOREIGN KEY(menu_item_id) REFERENCES menu_items(id)
 );
@@ -150,6 +155,20 @@ CREATE TABLE IF NOT EXISTS order_item_options (
  option_name_snapshot TEXT NOT NULL,
  price_delta_snapshot DOUBLE PRECISION NOT NULL DEFAULT 0,
  FOREIGN KEY(order_item_id) REFERENCES order_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+ id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ tenant_id INTEGER NOT NULL,
+ branch_id INTEGER NOT NULL,
+ order_id INTEGER NOT NULL,
+ amount DOUBLE PRECISION NOT NULL,
+ payment_method TEXT NOT NULL,
+ cash_received DOUBLE PRECISION,
+ reference TEXT NOT NULL DEFAULT '',
+ paid_by_user_id INTEGER,
+ paid_at TEXT NOT NULL,
+ FOREIGN KEY(order_id) REFERENCES orders(id)
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
