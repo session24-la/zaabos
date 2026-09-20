@@ -347,6 +347,7 @@ def ensure_schema_migrations(conn):
     conn.commit()
     record_migration(conn, 11, 'concurrency_and_recovery_hardening')
     record_migration(conn, 12, 'production_acceptance_security')
+    record_migration(conn, 13, 'launch_readiness_recovery')
 
 def init_db():
     if IS_POSTGRES:
@@ -520,6 +521,26 @@ def kitchen_page():
     return render_template('kitchen.html')
 
 # Production health probes. They expose no tenant/business data.
+@app.get('/api/admin/production-readiness')
+def production_readiness():
+    if not getattr(g, 'user', None) or not g.user.get('is_super_admin'):
+        return jsonify(error='forbidden'), 403
+    checks = {
+        'database': 'postgresql' if IS_POSTGRES else 'sqlite',
+        'secret_key_env': bool(os.environ.get('ZAABOS_SECRET_KEY') or os.environ.get('SECRET_KEY')),
+        'admin_password_env': bool(os.environ.get('ZAABOS_ADMIN_PASSWORD')),
+        'https_expected': bool(IS_POSTGRES or os.environ.get('RAILWAY_ENVIRONMENT')),
+        'backup_dir_configured': bool(os.environ.get('ZAABOS_BACKUP_DIR')),
+    }
+    # Backup directory alone is not counted as disaster recovery: production
+    # needs provider/off-site backups and a tested restore procedure.
+    warnings = []
+    if IS_POSTGRES and not checks['secret_key_env']:
+        warnings.append('ตั้ง ZAABOS_SECRET_KEY แบบคงที่ใน Railway เพื่อไม่ให้ session เปลี่ยนเมื่อ redeploy')
+    if IS_POSTGRES and not checks['backup_dir_configured']:
+        warnings.append('ยังไม่ได้กำหนด ZAABOS_BACKUP_DIR; และควรมี off-site/provider PostgreSQL backup แยกจาก app')
+    return jsonify(ok=True, checks=checks, warnings=warnings)
+
 @app.get('/healthz')
 def healthz():
     return jsonify(ok=True, service='zaabos')

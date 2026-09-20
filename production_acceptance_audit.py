@@ -33,6 +33,8 @@ require("HSTS", r"Strict-Transport-Security")
 require("liveness endpoint", r"@app\.get\('/healthz'\)")
 require("readiness endpoint", r"@app\.get\('/readyz'\)")
 require("migration v12", r"record_migration\(conn, 12")
+require("migration v13", r"record_migration\(conn, 13")
+require("production readiness endpoint", r"production-readiness")
 
 if fail:
     print("FAIL")
