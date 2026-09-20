@@ -192,13 +192,14 @@ function openItemModal(item) {
   else body.innerHTML = photoHtml + item.option_groups.map(g => `
     <label style="margin:14px 0 4px">${escapeHtml(g.name)}${g.required ? ' <span style="color:var(--neg)">*</span>' : ''}</label>
     <div class="option-pick" data-group="${g.id}">
-      ${g.options.map(o => `<label><input type="radio" name="ig-${g.id}" value="${o.id}" data-delta="${o.price_delta}">${escapeHtml(o.name)}${o.price_delta ? ` (+${fmtMoney(o.price_delta)})` : ''}</label>`).join('')}
+      ${g.options.map(o => `<label><input type="${g.selection_type === 'multiple' ? 'checkbox' : 'radio'}" name="ig-${g.id}" value="${o.id}" data-delta="${o.price_delta}">${escapeHtml(o.name)}${o.price_delta ? ` (+${fmtMoney(o.price_delta)})` : ''}</label>`).join('')}
+      ${g.selection_type === 'multiple' ? `<div class="hint">เลือกได้สูงสุด ${g.max_select || 1} รายการ</div>` : ''}
     </div>`).join('');
   updateItemAddPrice();
   openModal('#itemModal');
 }
 $('#itemModalBody').addEventListener('change', (e) => {
-  if (e.target.type !== 'radio') return;
+  if (!['radio','checkbox'].includes(e.target.type)) return;
   const group = e.target.closest('[data-group]');
   $$('label', group).forEach(l => l.classList.toggle('checked', l.querySelector('input').checked));
   updateItemAddPrice();
@@ -208,8 +209,8 @@ $('#itemPlus').addEventListener('click', () => { const q = Math.min(50, parseInt
 function currentItemUnitPrice() {
   let price = pendingItem.base_price;
   for (const g of pendingItem.option_groups) {
-    const checked = $(`input[name="ig-${g.id}"]:checked`);
-    if (checked) price += parseFloat(checked.dataset.delta) || 0;
+    const checked = $$(`input[name="ig-${g.id}"]:checked`);
+    checked.forEach(el => { price += parseFloat(el.dataset.delta) || 0; });
   }
   return price;
 }
@@ -221,11 +222,15 @@ $('#itemAdd').addEventListener('click', () => {
   $('#itemError').textContent = '';
   const selected = {}; const labels = [];
   for (const g of pendingItem.option_groups) {
-    const checked = $(`input[name="ig-${g.id}"]:checked`);
-    if (g.required && !checked) { $('#itemError').textContent = `${t('err_choose_option_group')} "${g.name}"`; return; }
-    if (checked) {
-      const opt = g.options.find(o => String(o.id) === checked.value);
-      selected[g.id] = opt.id; labels.push(opt.name);
+    const checked = $$(`input[name="ig-${g.id}"]:checked`);
+    const minSel = Number(g.min_select != null ? g.min_select : (g.required ? 1 : 0));
+    const maxSel = Number(g.selection_type === 'multiple' ? (g.max_select || 1) : 1);
+    if (checked.length < minSel) { $('#itemError').textContent = `${t('err_choose_option_group')} "${g.name}"`; return; }
+    if (checked.length > maxSel) { $('#itemError').textContent = `เลือก "${g.name}" ได้ไม่เกิน ${maxSel} รายการ`; return; }
+    if (checked.length) {
+      const opts = checked.map(el => g.options.find(o => String(o.id) === el.value)).filter(Boolean);
+      selected[g.id] = g.selection_type === 'multiple' ? opts.map(o => o.id) : opts[0].id;
+      opts.forEach(opt => labels.push(opt.name));
     }
   }
   const qty = parseInt($('#itemQty').textContent, 10);

@@ -710,7 +710,9 @@ function renderOptGroupsBox() {
     <div class="opt-group-box" data-gi="${gi}">
       <div class="og-head">
         <input placeholder="${escapeHtml(t('placeholder_group_name'))}" value="${escapeHtml(g.name || '')}" data-og-name="${gi}" style="margin:0">
-        <label style="margin:0;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" ${g.required ? 'checked' : ''} data-og-required="${gi}" style="width:auto">${escapeHtml(t('label_required_choice'))}</label>
+        <select data-og-type="${gi}" style="margin:0;min-width:125px"><option value="single" ${g.selection_type !== 'multiple' ? 'selected' : ''}>เลือกได้ 1</option><option value="multiple" ${g.selection_type === 'multiple' ? 'selected' : ''}>เลือกได้หลายข้อ</option></select>
+        <label style="margin:0;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" ${g.required || Number(g.min_select||0)>0 ? 'checked' : ''} data-og-required="${gi}" style="width:auto">${escapeHtml(t('label_required_choice'))}</label>
+        ${g.selection_type === 'multiple' ? `<label style="margin:0;font-size:12px">สูงสุด <input type="number" min="1" max="20" value="${Number(g.max_select||2)}" data-og-max="${gi}" style="width:65px;margin:0"></label>` : ''}
         <button type="button" data-og-del="${gi}" class="icon-btn danger">🗑️</button>
       </div>
       ${(g.options || []).map((o, oi) => `
@@ -722,7 +724,7 @@ function renderOptGroupsBox() {
       <button class="add-opt-btn" type="button" data-add-opt="${gi}">${escapeHtml(t('btn_add_option'))}</button>
     </div>`).join('');
 }
-$('#addOptGroupBtn').addEventListener('click', () => { optGroupsDraft.push({ name: '', required: false, options: [] }); renderOptGroupsBox(); });
+$('#addOptGroupBtn').addEventListener('click', () => { optGroupsDraft.push({ name: '', required: false, selection_type: 'single', min_select: 0, max_select: 1, options: [] }); renderOptGroupsBox(); });
 $('#optionGroupsBox').addEventListener('click', (e) => {
   const addOpt = e.target.dataset.addOpt, delGrp = e.target.dataset.ogDel, delOpt = e.target.dataset.optDel;
   if (addOpt !== undefined) { optGroupsDraft[addOpt].options.push({ name: '', price_delta: 0 }); renderOptGroupsBox(); }
@@ -736,8 +738,10 @@ $('#optionGroupsBox').addEventListener('input', (e) => {
   else if (optDeltaKey !== undefined) { const [gi, oi] = optDeltaKey.split(':').map(Number); optGroupsDraft[gi].options[oi].price_delta = parseFloat(e.target.value) || 0; }
 });
 $('#optionGroupsBox').addEventListener('change', (e) => {
-  const reqGi = e.target.dataset.ogRequired;
-  if (reqGi !== undefined) optGroupsDraft[reqGi].required = e.target.checked;
+  const reqGi = e.target.dataset.ogRequired, typeGi = e.target.dataset.ogType, maxGi = e.target.dataset.ogMax;
+  if (reqGi !== undefined) { optGroupsDraft[reqGi].required = e.target.checked; optGroupsDraft[reqGi].min_select = e.target.checked ? 1 : 0; }
+  else if (typeGi !== undefined) { optGroupsDraft[typeGi].selection_type = e.target.value; optGroupsDraft[typeGi].max_select = e.target.value === 'multiple' ? Math.max(2, Number(optGroupsDraft[typeGi].max_select||2)) : 1; renderOptGroupsBox(); }
+  else if (maxGi !== undefined) optGroupsDraft[maxGi].max_select = Math.max(1, parseInt(e.target.value,10)||1);
 });
 
 $('#menuItemSave').addEventListener('click', async () => {
@@ -1337,13 +1341,14 @@ function openItemOptionPicker(item) {
     body.innerHTML = photoHtml + item.option_groups.map(g => `
       <label style="margin:14px 0 4px">${escapeHtml(g.name)}${g.required ? ' <span style="color:var(--neg)">*</span>' : ''}</label>
       <div class="option-pick" data-group="${g.id}">
-        ${g.options.map(o => `<label><input type="radio" name="grp-${g.id}" value="${o.id}" data-delta="${o.price_delta}">${escapeHtml(o.name)}${o.price_delta ? ` (+${fmtMoney(o.price_delta)})` : ''}</label>`).join('')}
+        ${g.options.map(o => `<label><input type="${g.selection_type === 'multiple' ? 'checkbox' : 'radio'}" name="grp-${g.id}" value="${o.id}" data-delta="${o.price_delta}">${escapeHtml(o.name)}${o.price_delta ? ` (+${fmtMoney(o.price_delta)})` : ''}</label>`).join('')}
+        ${g.selection_type === 'multiple' ? `<div class="hint">เลือกได้สูงสุด ${g.max_select || 1} รายการ</div>` : ''}
       </div>`).join('');
   }
   openModal('#itemOptionModal');
 }
 $('#itemOptionBody').addEventListener('change', (e) => {
-  if (e.target.type !== 'radio') return;
+  if (!['radio','checkbox'].includes(e.target.type)) return;
   const group = e.target.closest('[data-group]');
   $$('label', group).forEach(l => l.classList.toggle('checked', l.querySelector('input').checked));
 });
@@ -1355,13 +1360,15 @@ $('#itemOptionAdd').addEventListener('click', () => {
   const selected = {}; const labels = [];
   let unitPrice = item.base_price;
   for (const g of item.option_groups) {
-    const checked = $(`input[name="grp-${g.id}"]:checked`);
-    if (g.required && !checked) { $('#itemOptionError').textContent = `${t('err_choose_option_group')} "${g.name}"`; return; }
-    if (checked) {
-      const opt = g.options.find(o => String(o.id) === checked.value);
-      selected[g.id] = opt.id;
-      unitPrice += opt.price_delta;
-      labels.push(opt.name);
+    const checked = $$(`input[name="grp-${g.id}"]:checked`);
+    const minSel = Number(g.min_select != null ? g.min_select : (g.required ? 1 : 0));
+    const maxSel = Number(g.selection_type === 'multiple' ? (g.max_select || 1) : 1);
+    if (checked.length < minSel) { $('#itemOptionError').textContent = `${t('err_choose_option_group')} "${g.name}"`; return; }
+    if (checked.length > maxSel) { $('#itemOptionError').textContent = `เลือก "${g.name}" ได้ไม่เกิน ${maxSel} รายการ`; return; }
+    if (checked.length) {
+      const opts = checked.map(el => g.options.find(o => String(o.id) === el.value)).filter(Boolean);
+      selected[g.id] = g.selection_type === 'multiple' ? opts.map(o => o.id) : opts[0].id;
+      opts.forEach(opt => { unitPrice += opt.price_delta; labels.push(opt.name); });
     }
   }
   const qty = parseInt($('#itemOptionQty').textContent, 10);
