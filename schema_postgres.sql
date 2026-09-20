@@ -196,3 +196,13 @@ CREATE TABLE IF NOT EXISTS expenses (
  FOREIGN KEY(branch_id) REFERENCES branches(id),
  FOREIGN KEY(created_by_user_id) REFERENCES users(id)
 );
+
+
+CREATE TABLE IF NOT EXISTS daily_closings (
+ id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, closing_date TEXT NOT NULL,
+ opening_cash DOUBLE PRECISION NOT NULL DEFAULT 0, cash_out DOUBLE PRECISION NOT NULL DEFAULT 0,
+ expected_cash DOUBLE PRECISION NOT NULL DEFAULT 0, counted_cash DOUBLE PRECISION NOT NULL DEFAULT 0, difference DOUBLE PRECISION NOT NULL DEFAULT 0,
+ notes TEXT NOT NULL DEFAULT '', closed_by_user_id INTEGER, closed_at TEXT NOT NULL,
+ UNIQUE(tenant_id,branch_id,closing_date)
+);

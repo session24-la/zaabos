@@ -220,6 +220,12 @@ def ensure_schema_migrations(conn):
             order_id INTEGER NOT NULL, amount DOUBLE PRECISION NOT NULL, payment_method TEXT NOT NULL,
             cash_received DOUBLE PRECISION, reference TEXT NOT NULL DEFAULT '', paid_by_user_id INTEGER,
             paid_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS daily_closings (
+            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+            closing_date TEXT NOT NULL, opening_cash DOUBLE PRECISION NOT NULL DEFAULT 0, cash_out DOUBLE PRECISION NOT NULL DEFAULT 0,
+            expected_cash DOUBLE PRECISION NOT NULL DEFAULT 0, counted_cash DOUBLE PRECISION NOT NULL DEFAULT 0,
+            difference DOUBLE PRECISION NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '', closed_by_user_id INTEGER,
+            closed_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id,closing_date))''')
         conn.commit()
     else:
         oi_cols = [r[1] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()]
@@ -251,6 +257,12 @@ def ensure_schema_migrations(conn):
             order_id INTEGER NOT NULL, amount REAL NOT NULL, payment_method TEXT NOT NULL,
             cash_received REAL, reference TEXT NOT NULL DEFAULT '', paid_by_user_id INTEGER,
             paid_at TEXT NOT NULL, FOREIGN KEY(order_id) REFERENCES orders(id))''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS daily_closings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
+            closing_date TEXT NOT NULL, opening_cash REAL NOT NULL DEFAULT 0, cash_out REAL NOT NULL DEFAULT 0,
+            expected_cash REAL NOT NULL DEFAULT 0, counted_cash REAL NOT NULL DEFAULT 0, difference REAL NOT NULL DEFAULT 0,
+            notes TEXT NOT NULL DEFAULT '', closed_by_user_id INTEGER, closed_at TEXT NOT NULL,
+            UNIQUE(tenant_id,branch_id,closing_date))''')
         conn.commit()
 
 def init_db():
@@ -1607,7 +1619,48 @@ def reports_summary():
         expense_total=expense_total, expense_by_category=expense_by_category,
         net_profit=total_sales - expense_total, payment_breakdown=payment_breakdown,
         open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
+        average_bill=(total_sales / order_count) if order_count else 0,
     )
+
+@app.get('/api/daily-closing')
+@login_required
+@role_required('owner', 'manager')
+def get_daily_closing():
+    err = require_tenant()
+    if err: return err
+    conn=db(); branch_id=request.args.get('branch_id'); closing_date=(request.args.get('date') or date.today().isoformat())[:10]
+    if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
+    branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขา'),404
+    row=conn.execute('SELECT * FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
+    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND substr(paid_at,1,10)=?",(g.tenant_id,branch_id,closing_date)).fetchone()['total'] or 0
+    return jsonify(closing=dict(row) if row else None,cash_sales=cash)
+
+@app.post('/api/daily-closing')
+@login_required
+@role_required('owner', 'manager')
+def save_daily_closing():
+    err=require_tenant()
+    if err: return err
+    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id'); closing_date=(d.get('closing_date') or date.today().isoformat())[:10]
+    branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขา'),404
+    def num(k):
+        try: v=float(d.get(k,0) or 0)
+        except: raise ValueError(f'{k} ไม่ถูกต้อง')
+        if v < 0 or v > 100000000000: raise ValueError(f'{k} ไม่ถูกต้อง')
+        return v
+    try: opening=num('opening_cash'); cash_out=num('cash_out'); counted=num('counted_cash')
+    except ValueError as e: return jsonify(error=str(e)),400
+    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND substr(paid_at,1,10)=?",(g.tenant_id,branch_id,closing_date)).fetchone()['total'] or 0
+    expected=opening+float(cash)-cash_out; difference=counted-expected; ts=now(); notes=(d.get('notes') or '')[:500]
+    old=conn.execute('SELECT id FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
+    if old:
+        conn.execute('UPDATE daily_closings SET opening_cash=?,cash_out=?,expected_cash=?,counted_cash=?,difference=?,notes=?,closed_by_user_id=?,closed_at=? WHERE id=?',(opening,cash_out,expected,counted,difference,notes,g.user['id'],ts,old['id']))
+    else:
+        conn.execute('INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,closing_date,opening,cash_out,expected,counted,difference,notes,g.user['id'],ts))
+    log_action('daily_closing',detail=f'{branch_id} {closing_date}: expected={expected} counted={counted} difference={difference}')
+    conn.commit(); return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=difference,cash_sales=cash)
 
 @app.get('/api/expenses')
 @login_required
