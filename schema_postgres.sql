@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS menu_option_groups (
  menu_item_id INTEGER NOT NULL,
  name TEXT NOT NULL,
  required INTEGER NOT NULL DEFAULT 0,
+ selection_type TEXT NOT NULL DEFAULT 'single',
+ min_select INTEGER NOT NULL DEFAULT 0,
+ max_select INTEGER NOT NULL DEFAULT 1,
  sort_order INTEGER NOT NULL DEFAULT 0,
  FOREIGN KEY(menu_item_id) REFERENCES menu_items(id)
 );
@@ -97,6 +100,7 @@ CREATE TABLE IF NOT EXISTS menu_options (
  group_id INTEGER NOT NULL,
  name TEXT NOT NULL,
  price_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+ active INTEGER NOT NULL DEFAULT 1,
  sort_order INTEGER NOT NULL DEFAULT 0,
  FOREIGN KEY(group_id) REFERENCES menu_option_groups(id)
 );

@@ -348,6 +348,20 @@ def ensure_schema_migrations(conn):
     record_migration(conn, 11, 'concurrency_and_recovery_hardening')
     record_migration(conn, 12, 'production_acceptance_security')
     record_migration(conn, 13, 'launch_readiness_recovery')
+    # Round 14B: richer restaurant modifiers. Existing groups remain single-choice.
+    if IS_POSTGRES:
+        conn.execute("ALTER TABLE menu_option_groups ADD COLUMN IF NOT EXISTS selection_type TEXT NOT NULL DEFAULT 'single'")
+        conn.execute('ALTER TABLE menu_option_groups ADD COLUMN IF NOT EXISTS min_select INTEGER NOT NULL DEFAULT 0')
+        conn.execute('ALTER TABLE menu_option_groups ADD COLUMN IF NOT EXISTS max_select INTEGER NOT NULL DEFAULT 1')
+        conn.execute('ALTER TABLE menu_options ADD COLUMN IF NOT EXISTS active INTEGER NOT NULL DEFAULT 1')
+    else:
+        mog_cols=[r[1] for r in conn.execute('PRAGMA table_info(menu_option_groups)').fetchall()]
+        mo_cols=[r[1] for r in conn.execute('PRAGMA table_info(menu_options)').fetchall()]
+        if 'selection_type' not in mog_cols: conn.execute("ALTER TABLE menu_option_groups ADD COLUMN selection_type TEXT NOT NULL DEFAULT 'single'")
+        if 'min_select' not in mog_cols: conn.execute('ALTER TABLE menu_option_groups ADD COLUMN min_select INTEGER NOT NULL DEFAULT 0')
+        if 'max_select' not in mog_cols: conn.execute('ALTER TABLE menu_option_groups ADD COLUMN max_select INTEGER NOT NULL DEFAULT 1')
+        if 'active' not in mo_cols: conn.execute('ALTER TABLE menu_options ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
+    conn.commit()
     # Round 14A: restaurant operations — shifts, cash drawer and critical-operation reasons.
     idcol = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     money = 'DOUBLE PRECISION' if IS_POSTGRES else 'REAL'
@@ -372,6 +386,7 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_critical_ops_tenant_created ON critical_operations(tenant_id,created_at)')
     conn.commit()
     record_migration(conn, 14, 'restaurant_operations_foundation')
+    record_migration(conn, 15, 'restaurant_menu_modifiers')
 
 def init_db():
     if IS_POSTGRES:
@@ -948,7 +963,7 @@ def _menu_item_with_options(conn, item):
     d['option_groups'] = []
     for grp in groups:
         gd = dict(grp)
-        opts = conn.execute('SELECT * FROM menu_options WHERE group_id=? ORDER BY sort_order,id', (grp['id'],)).fetchall()
+        opts = conn.execute('SELECT * FROM menu_options WHERE group_id=? AND active=1 ORDER BY sort_order,id', (grp['id'],)).fetchall()
         gd['options'] = [dict(o) for o in opts]
         d['option_groups'].append(gd)
     return d
@@ -1035,8 +1050,16 @@ def _save_option_groups(conn, item_id, groups):
     for gi, grp in enumerate(groups):
         gname = (grp.get('name') or '').strip()
         if not gname: continue
-        cur = conn.execute('INSERT INTO menu_option_groups(menu_item_id,name,required,sort_order) VALUES(?,?,?,?)',
-            (item_id, gname, 1 if grp.get('required') else 0, gi))
+        selection_type = 'multiple' if grp.get('selection_type') == 'multiple' else 'single'
+        try: min_select = max(0, int(grp.get('min_select', 1 if grp.get('required') else 0) or 0))
+        except (TypeError, ValueError): min_select = 0
+        try: max_select = max(1, int(grp.get('max_select', 1) or 1))
+        except (TypeError, ValueError): max_select = 1
+        if selection_type == 'single': max_select = 1; min_select = min(min_select, 1)
+        if grp.get('required') and min_select < 1: min_select = 1
+        if min_select > max_select: min_select = max_select
+        cur = conn.execute('INSERT INTO menu_option_groups(menu_item_id,name,required,sort_order,selection_type,min_select,max_select) VALUES(?,?,?,?,?,?,?)',
+            (item_id, gname, 1 if min_select > 0 else 0, gi, selection_type, min_select, max_select))
         gid = cur.lastrowid
         for oi, opt in enumerate(grp.get('options') or []):
             oname = (opt.get('name') or '').strip()
@@ -1185,15 +1208,24 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
         unit_price = item['base_price']
         chosen_options = []
         groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=?', (menu_item_id,)).fetchall()
-        selected = line.get('selected_options') or {}  # {group_id: option_id}
+        selected = line.get('selected_options') or {}  # {group_id: option_id | [option_ids]}
         for grp in groups:
-            opt_id = selected.get(str(grp['id'])) or selected.get(grp['id'])
-            if grp['required'] and not opt_id:
-                raise ValueError(f'กรุณาเลือก "{grp["name"]}" สำหรับเมนู {item["name"]}')
-            if opt_id:
-                opt = conn.execute('SELECT * FROM menu_options WHERE id=? AND group_id=?', (opt_id, grp['id'])).fetchone()
+            raw = selected.get(str(grp['id'])) if str(grp['id']) in selected else selected.get(grp['id'])
+            opt_ids = raw if isinstance(raw, list) else ([] if raw in (None, '') else [raw])
+            # Deduplicate IDs so a tampered client cannot charge/add the same modifier twice.
+            opt_ids = list(dict.fromkeys(str(x) for x in opt_ids))
+            selection_type = grp['selection_type'] if 'selection_type' in grp.keys() else 'single'
+            min_select = int(grp['min_select'] if 'min_select' in grp.keys() else (1 if grp['required'] else 0))
+            max_select = int(grp['max_select'] if 'max_select' in grp.keys() else 1)
+            if selection_type == 'single': max_select = 1
+            if len(opt_ids) < min_select:
+                raise ValueError(f'กรุณาเลือก "{grp["name"]}" อย่างน้อย {min_select} รายการ สำหรับเมนู {item["name"]}')
+            if len(opt_ids) > max_select:
+                raise ValueError(f'เลือก "{grp["name"]}" ได้ไม่เกิน {max_select} รายการ')
+            for opt_id in opt_ids:
+                opt = conn.execute('SELECT * FROM menu_options WHERE id=? AND group_id=? AND active=1', (opt_id, grp['id'])).fetchone()
                 if not opt:
-                    raise ValueError('ตัวเลือกเมนูไม่ถูกต้อง กรุณาโหลดหน้าใหม่')
+                    raise ValueError('ตัวเลือกเมนูไม่ถูกต้องหรือปิดใช้งานแล้ว กรุณาโหลดหน้าใหม่')
                 unit_price += opt['price_delta']
                 chosen_options.append({'group_name': grp['name'], 'option_name': opt['name'], 'price_delta': opt['price_delta']})
         line_total = unit_price * qty
