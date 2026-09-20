@@ -730,10 +730,7 @@ main{max-width:1180px;padding-top:14px}
 /* Round 17 */
 .inventory-toolbar{display:flex;gap:8px;justify-content:flex-end;margin:0 0 12px}.ingredient-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.recipe-row{display:grid;grid-template-columns:minmax(0,1fr) 140px auto;gap:8px;align-items:center;margin:8px 0}.inventory-history-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}.inventory-history-row small{display:block;color:var(--muted);margin-top:3px}@media(max-width:640px){.ingredient-actions{grid-column:1/-1;justify-content:flex-start}.recipe-row{grid-template-columns:1fr 110px auto}.inventory-toolbar{justify-content:flex-start;flex-wrap:wrap}}
 
-/* Round 17.1 — 80mm receipt right-edge safety margin
-   Keep numeric columns away from printers that clip the far-right printable area. */
-.receipt-print{padding-right:4.5mm}
-.receipt-print .rp-price{padding-right:3mm!important}
-.receipt-print .rp-row span:last-child,
-.receipt-print .rp-footrow span:last-child,
-.receipt-print .rp-total span:last-child{padding-right:3mm;box-sizing:border-box}
+/* Round 17.1 receipt alignment carried forward */
+.receipt-print{padding-right:4.5mm}.receipt-print .rp-price{padding-right:3mm!important}.receipt-print .rp-row span:last-child,.receipt-print .rp-footrow span:last-child,.receipt-print .rp-total span:last-child{padding-right:3mm;box-sizing:border-box}
+/* Round 18 */
+.saas-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.saas-summary>div{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px}.saas-summary b{display:block;font-size:22px}.saas-summary span{font-size:11px;color:var(--text-muted)}.saas-filters{display:flex;gap:8px;margin-bottom:12px}.saas-filters input{flex:1}.tenant-card{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid var(--border)}.tenant-card-main{display:flex;align-items:center;gap:12px;min-width:0}.tenant-card-main small{display:block;color:var(--text-muted);margin-top:4px}.tenant-card-actions{display:flex;gap:6px;flex-wrap:wrap}@media(max-width:700px){.saas-summary{grid-template-columns:1fr 1fr}.tenant-card{align-items:flex-start;flex-direction:column}.tenant-card-actions{width:100%}}

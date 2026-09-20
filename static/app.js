@@ -857,26 +857,15 @@ $('#userSave').addEventListener('click', async () => {
 
 // ===================== Tenants (super_admin) =====================
 
-async function loadTenants() {
-  const r = await api('/api/tenants');
-  const list = $('#tenantsList');
-  if (!r.tenants.length) { list.innerHTML = emptyState('🏢', t('empty_tenants')); return; }
-  list.innerHTML = r.tenants.map(tn => `
-    <div class="row">
-      <div style="display:flex;align-items:center;gap:12px">
-        <span class="avatar-badge">${escapeHtml(tn.icon || '🍽️')}</span>
-        <div><div style="font-weight:700">${escapeHtml(tn.name)}</div><small>${tn.active ? escapeHtml(t('tenant_active')) : escapeHtml(t('tenant_suspended'))} · ${escapeHtml(tn.currency)}</small></div>
-      </div>
-      <div class="row-right"><button class="icon-btn danger" data-del-tenant="${tn.id}">🗑️</button></div>
-    </div>`).join('');
-}
-$('#tenantsList').addEventListener('click', (e) => {
-  const delId = e.target.dataset.delTenant;
-  if (delId) {
-    if (!confirm(t('confirm_suspend_tenant'))) return;
-    apiJson('/api/tenants/' + delId, 'DELETE').then(() => { loadTenants(); toast(t('toast_tenant_suspended'), 'ok'); }).catch(e => toast(e.message, 'err'));
-  }
-});
+let tenantRows=[];
+function subLabel(s){return ({trialing:'Trial',active:'Active',past_due:'Past due',suspended:'Suspended',canceled:'Canceled',expired:'Expired'})[s]||s||'-'}
+function renderTenants(){const list=$('#tenantsList'),q=($('#tenantSearch').value||'').toLowerCase(),f=$('#tenantStatusFilter').value;const rows=tenantRows.filter(tn=>{const attention=!tn.active||['past_due','suspended','expired','canceled'].includes(tn.subscription_status);return(!q||tn.name.toLowerCase().includes(q))&&(!f||(f==='attention'?attention:tn.subscription_status===f))});if(!rows.length){list.innerHTML=emptyState('🏢',t('empty_tenants'));return;}list.innerHTML=rows.map(tn=>`<div class="tenant-card"><div class="tenant-card-main"><span class="avatar-badge">${escapeHtml(tn.icon||'🍽️')}</span><div><b>${escapeHtml(tn.name)}</b><small>${escapeHtml(tn.plan_code||'starter')} · ${subLabel(tn.subscription_status)} · ${tn.branch_count}/${tn.max_branches} สาขา · ${tn.user_count}/${tn.max_users} ผู้ใช้</small></div></div><div class="tenant-card-actions"><button class="ghost-btn" data-sub-tenant="${tn.id}">แพ็กเกจ</button>${tn.active?`<button class="ghost-btn danger" data-del-tenant="${tn.id}">ระงับ</button>`:`<button class="ghost-btn" data-reactivate-tenant="${tn.id}">เปิดใช้งาน</button>`}</div></div>`).join('')}
+async function loadTenants(){const [r,sum]=await Promise.all([api('/api/tenants'),api('/api/admin/saas-summary')]);tenantRows=r.tenants;renderTenants();$('#saasSummary').innerHTML=`<div><b>${sum.total||0}</b><span>ร้านทั้งหมด</span></div><div><b>${sum.trialing||0}</b><span>Trial</span></div><div><b>${sum.subscribed||0}</b><span>Active</span></div><div><b>${sum.attention||0}</b><span>ต้องตรวจสอบ</span></div>`}
+$('#tenantSearch').addEventListener('input',renderTenants);$('#tenantStatusFilter').addEventListener('change',renderTenants);
+function localInput(v){if(!v)return '';const d=new Date(v);if(Number.isNaN(d.getTime()))return '';const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`}
+$('#tenantsList').addEventListener('click',async e=>{const sub=e.target.closest('[data-sub-tenant]');if(sub){const tn=tenantRows.find(x=>x.id===Number(sub.dataset.subTenant));if(!tn)return;$('#subTenantId').value=tn.id;$('#subTenantName').textContent=tn.name;$('#subPlan').value=tn.plan_code||'starter';$('#subStatus').value=tn.subscription_status||'active';$('#subMaxBranches').value=tn.max_branches||1;$('#subMaxUsers').value=tn.max_users||5;$('#subTrialEnd').value=localInput(tn.trial_ends_at);$('#subPeriodEnd').value=localInput(tn.current_period_end);$('#subNote').value=tn.subscription_note||'';openModal('#subscriptionModal');return;}const del=e.target.closest('[data-del-tenant]');if(del){if(!confirm(t('confirm_suspend_tenant')))return;try{await apiJson('/api/tenants/'+del.dataset.delTenant,'DELETE');toast('ระงับร้านแล้ว','ok');loadTenants()}catch(err){toast(err.message,'err')}return;}const react=e.target.closest('[data-reactivate-tenant]');if(react){try{await apiJson('/api/tenants/'+react.dataset.reactivateTenant+'/reactivate','POST',{});toast('เปิดใช้งานร้านแล้ว','ok');loadTenants()}catch(err){toast(err.message,'err')}}});
+$('#subSave').addEventListener('click',async()=>{const id=$('#subTenantId').value,payload={plan_code:$('#subPlan').value,subscription_status:$('#subStatus').value,max_branches:Number($('#subMaxBranches').value),max_users:Number($('#subMaxUsers').value),trial_ends_at:$('#subTrialEnd').value?new Date($('#subTrialEnd').value).toISOString():null,current_period_end:$('#subPeriodEnd').value?new Date($('#subPeriodEnd').value).toISOString():null,subscription_note:$('#subNote').value.trim()};try{await apiJson('/api/tenants/'+id+'/subscription','PUT',payload);closeModals();toast('อัปเดตแพ็กเกจแล้ว','ok');loadTenants()}catch(e){toast(e.message,'err')}});
+
 $('#addTenantBtn').addEventListener('click', () => {
   $('#tenantName').value = ''; $('#tenantOwnerUsername').value = ''; $('#tenantOwnerDisplay').value = ''; $('#tenantOwnerPassword').value = ''; $('#tenantError').textContent = '';
   openModal('#tenantModal');
@@ -886,6 +875,7 @@ $('#tenantSave').addEventListener('click', async () => {
   const payload = {
     name: $('#tenantName').value.trim(), owner_username: $('#tenantOwnerUsername').value.trim(),
     owner_display: $('#tenantOwnerDisplay').value.trim(), owner_password: $('#tenantOwnerPassword').value,
+    plan_code: $('#tenantPlan').value, trial_days: Number($('#tenantTrialDays').value || 0),
   };
   try {
     await apiJson('/api/tenants', 'POST', payload);
