@@ -1195,10 +1195,14 @@ def public_create_order():
             lambda order_no: (tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
              customer_address, total, (d.get('notes') or '').strip()[:500], 'customer', now(), now()))
         order_id = cur.lastrowid
+        if not order_id:
+            raise RuntimeError('public order insert did not return an id')
         for it in prepared_items:
             oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
                 VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
             oi_id = oi_cur.lastrowid
+            if not oi_id:
+                raise RuntimeError('public order item insert did not return an id')
             for opt in it['options']:
                 conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
                     (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
@@ -1307,24 +1311,33 @@ def staff_create_order():
     except ValueError as e:
         return jsonify(error=str(e)), 400
 
-    order_no, cur = insert_order_row(conn, g.tenant_id,
-        '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
-        customer_name,customer_phone,customer_address,total_amount,guest_count,notes,placed_by,created_by_user_id,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-        lambda order_no: (g.tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
-         customer_address, total, guest_count, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
-    order_id = cur.lastrowid
-    for it in prepared_items:
-        oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
-            VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
-        oi_id = oi_cur.lastrowid
-        for opt in it['options']:
-            conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
-                (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
-        _decrement_stock(conn, it['menu_item_id'], it['quantity'])
-    log_action('staff_create_order', detail=order_no)
-    conn.commit()
-    return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+    try:
+        order_no, cur = insert_order_row(conn, g.tenant_id,
+            '''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
+            customer_name,customer_phone,customer_address,total_amount,guest_count,notes,placed_by,created_by_user_id,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            lambda order_no: (g.tenant_id, branch_id, order_no, order_type, table_id, table_name, customer_name, customer_phone,
+             customer_address, total, guest_count, (d.get('notes') or '').strip()[:500], 'staff', g.user['id'], now(), now()))
+        order_id = cur.lastrowid
+        if not order_id:
+            raise RuntimeError('order insert did not return an id')
+        for it in prepared_items:
+            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
+                VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
+            oi_id = oi_cur.lastrowid
+            if not oi_id:
+                raise RuntimeError('order item insert did not return an id')
+            for opt in it['options']:
+                conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
+                    (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
+            _decrement_stock(conn, it['menu_item_id'], it['quantity'])
+        log_action('staff_create_order', detail=order_no)
+        conn.commit()
+        return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+    except Exception:
+        conn.rollback()
+        app.logger.exception('staff_create_order failed')
+        return jsonify(error='บันทึกออเดอร์ไม่สำเร็จ กรุณาลองอีกครั้ง'), 500
 
 @app.put('/api/orders/<int:oid>/status')
 @login_required
