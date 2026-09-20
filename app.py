@@ -213,7 +213,7 @@ def ensure_schema_migrations(conn):
         conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT')
         conn.execute('ALTER TABLE orders ADD COLUMN IF NOT EXISTS paid_at TEXT')
         conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancelled_quantity INTEGER NOT NULL DEFAULT 0')
-        conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NOT NULL DEFAULT ''')
+        conn.execute("ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NOT NULL DEFAULT ''")
         conn.execute('ALTER TABLE order_items ADD COLUMN IF NOT EXISTS cancelled_at TEXT')
         conn.execute('''CREATE TABLE IF NOT EXISTS payments (
             id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL,
