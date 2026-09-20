@@ -317,8 +317,7 @@ $('#tablePickGrid').addEventListener('click', (e) => {
 $('#checkoutSubmit').addEventListener('click', async () => {
   $('#checkoutError').textContent = '';
   if (!cart.length) { $('#checkoutError').textContent = t('empty_cart_customer'); return; }
-  const customerName = $('#custName').value.trim();
-  if (!customerName) { $('#checkoutError').textContent = t('err_customer_name_required'); return; }
+  const customerName = $('#custName').value.trim(); // optional — server defaults it when blank
 
   if (orderType === 'dine_in' && !pickedTableId) {
     $('#tableSelectError').classList.remove('hidden');

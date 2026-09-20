@@ -1087,13 +1087,13 @@ def public_create_order():
             return jsonify(error='โต๊ะที่เลือกไม่ถูกต้อง'), 400
         table_id, table_name = table['id'], table['name']
 
-    customer_name = (d.get('customer_name') or '').strip()[:100]
+    # name is a courtesy field, not required — same as the staff-side take-order
+    # flow, which has always defaulted to 'ลูกค้า' when left blank
+    customer_name = (d.get('customer_name') or '').strip()[:100] or 'ลูกค้า'
     customer_phone = (d.get('customer_phone') or '').strip()
     customer_phone_confirm = (d.get('customer_phone_confirm') or '').strip()
     customer_address = (d.get('customer_address') or '').strip()[:500] if order_type == 'delivery' else None
 
-    if not customer_name:
-        return jsonify(error='กรุณากรอกชื่อผู้สั่ง'), 400
     if order_type == 'delivery':
         if not _valid_phone(customer_phone):
             return jsonify(error='เบอร์โทรไม่ถูกต้อง กรุณากรอกเบอร์ให้ครบถ้วน'), 400
