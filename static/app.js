@@ -960,7 +960,7 @@ function orderCardHtml(o) {
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
         ${o.payment_status === 'paid' && (me.role === 'owner' || me.role === 'manager' || me.role === 'super_admin') ? `<button class="ghost-btn danger" data-refund-order="${o.id}">↩️ คืนเงิน</button>` : ''}
         ${o.payment_status === 'paid' ? `<button class="ghost-btn" data-reopen-order="${o.id}">↩️ เปิดบิลกลับมาแก้ไข</button>` : ''}
-        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-merge-order="${o.id}">🔗 รวมบิล</button>` : ''}\n        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-split-order="${o.id}">✂️ แยกบิล</button>` : ''}
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-bill-manager="${o.id}">🧾 จัดการบิล</button>` : ''}\n
       </div>
     </div>`;
 }
@@ -1038,7 +1038,7 @@ function wireOrderActionClicks(container) {
     const s = e.target.dataset.setStatus, p = e.target.dataset.setPayment;
     const cp = e.target.dataset.confirmPayment, pr = e.target.dataset.printReceipt;
     const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
-    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, sp = e.target.dataset.splitOrder, ff=e.target.dataset.fulfillment, ro=e.target.dataset.reopenOrder;
+    const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, sp = e.target.dataset.splitOrder, bm=e.target.dataset.billManager, ff=e.target.dataset.fulfillment, ro=e.target.dataset.reopenOrder;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
     if (ff) { const [oid,status]=ff.split(':'); apiJson(`/api/orders/${oid}/fulfillment`,'PUT',{fulfillment_status:status}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
     else if (iq) {
@@ -1060,6 +1060,7 @@ function wireOrderActionClicks(container) {
     else if (pr) { printReceipt(parseInt(pr, 10)); }
     else if (rf) { refundOrder(parseInt(rf,10)); }
     else if (ro) { reopenPaidOrder(parseInt(ro,10)); }
+    else if (bm) { openBillManager(parseInt(bm,10)); }
     else if (mg) { mergeOrder(parseInt(mg,10)); }
     else if (sp) { splitOrder(parseInt(sp,10)); }
     else if (sk) { const card = e.target.closest('.order-card'); if (card) sendSelectedToKitchen(parseInt(sk, 10), card); }
@@ -1091,6 +1092,34 @@ async function refundOrder(orderId) {
   try { const r=await apiJson(`/api/orders/${orderId}/refund`,'POST',{reason:reason.trim()}); toast(`บันทึกคืนเงิน ${fmtMoney(r.amount)} แล้ว`,'ok'); onOrderActionDone(); }
   catch(e){ toast(e.message,'err'); }
 }
+
+let billManagerSource=null,billManagerMode='move';
+function openBillManager(sourceId){
+  billManagerSource=findOrderById(sourceId); if(!billManagerSource)return;
+  billManagerMode='move'; $$('#billManagerModal [data-bm-mode]').forEach((b,i)=>b.classList.toggle('active',i===0));
+  renderBillManager(); openModal('#billManagerModal');
+}
+$$('#billManagerModal [data-bm-mode]').forEach(b=>b.addEventListener('click',()=>{billManagerMode=b.dataset.bmMode;$$('#billManagerModal [data-bm-mode]').forEach(x=>x.classList.toggle('active',x===b));renderBillManager();}));
+function renderBillManager(){
+  const o=billManagerSource, body=$('#billManagerBody'); if(!o)return;
+  if(billManagerMode==='move'){
+    const tables=(boardTables||[]).filter(t=>String(t.id)!==String(o.table_id));
+    body.innerHTML=`<p class="muted">ย้ายบิล #${escapeHtml(o.order_no)} ไปโต๊ะใหม่</p><div class="bm-grid">${tables.map(t=>`<button class="bm-choice" data-bm-table="${t.id}">${escapeHtml(t.name||('โต๊ะ '+t.id))}</button>`).join('')||'<div class="muted">ไม่มีโต๊ะอื่น</div>'}</div>`;
+  }else if(billManagerMode==='merge'){
+    const targets=(allOrders||[]).filter(x=>x.id!==o.id&&x.branch_id===o.branch_id&&x.payment_status==='unpaid'&&!['cancelled','completed'].includes(x.status));
+    body.innerHTML=`<p class="muted">รวมบิลนี้เข้ากับบิลปลายทาง</p><div class="bm-grid">${targets.map(x=>`<button class="bm-choice" data-bm-target="${x.id}">#${escapeHtml(x.order_no)} · ${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}<small>${fmtMoney(x.total_amount)}</small></button>`).join('')||'<div class="muted">ไม่มีบิลที่รวมได้</div>'}</div>`;
+  }else{
+    const rows=o.items.filter(it=>Number(it.quantity||0)-Number(it.cancelled_quantity||0)>0);
+    body.innerHTML=`<p class="muted">แตะ + / − เพื่อเลือกจำนวนที่จะย้ายออกเป็นบิลใหม่</p><div class="bm-items">${rows.map(it=>{const q=Number(it.quantity||0)-Number(it.cancelled_quantity||0);return `<div class="bm-item"><div><b>${escapeHtml(it.item_name_snapshot)}</b><small>มี ${q}</small></div><div class="qty-stepper"><button data-bm-minus="${it.id}">−</button><span data-bm-qty="${it.id}" data-max="${q}">0</span><button data-bm-plus="${it.id}">+</button></div></div>`}).join('')}</div><button class="save" id="bmSplitConfirm">แยกเป็นบิลใหม่</button>`;
+    $('#bmSplitConfirm').onclick=async()=>{const items=[];body.querySelectorAll('[data-bm-qty]').forEach(x=>{const q=Number(x.textContent);if(q>0)items.push({item_id:Number(x.dataset.bmQty),quantity:q})});if(!items.length){toast('เลือกรายการก่อน','err');return;}try{const r=await apiJson(`/api/orders/${o.id}/split`,'POST',{items});closeModals();toast(`สร้างบิล #${r.new_order_no}`,'ok');onOrderActionDone()}catch(e){toast(e.message,'err')}};
+  }
+}
+$('#billManagerBody').addEventListener('click',async e=>{
+  const t=e.target.closest('[data-bm-table]');if(t){try{await apiJson(`/api/orders/${billManagerSource.id}/table`,'PUT',{table_id:Number(t.dataset.bmTable)});closeModals();toast('ย้ายโต๊ะแล้ว','ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
+  const m=e.target.closest('[data-bm-target]');if(m){try{await apiJson(`/api/orders/${billManagerSource.id}/merge`,'POST',{target_order_id:Number(m.dataset.bmTarget)});closeModals();toast('รวมบิลแล้ว','ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
+  const id=e.target.dataset.bmPlus||e.target.dataset.bmMinus;if(id){const q=$(`#billManagerBody [data-bm-qty="${id}"]`);let n=Number(q.textContent),mx=Number(q.dataset.max);n=e.target.dataset.bmPlus?Math.min(mx,n+1):Math.max(0,n-1);q.textContent=n;}
+});
+
 async function mergeOrder(sourceId) {
   const candidates=activeOrders.filter(o=>o.id!==sourceId && o.payment_status==='unpaid' && o.status!=='cancelled' && o.status!=='completed');
   if(!candidates.length){ toast('ไม่มีบิลเปิดอื่นสำหรับรวม','err'); return; }
@@ -1140,6 +1169,7 @@ function openConfirmPaymentModal(orderId) {
   const ord = findOrderById(orderId);
   if (!ord) return;
   cpOrderId = orderId;
+  extraPaymentParts=[]; renderPaymentParts();
   $('#cpTotal').textContent = fmtMoney(ord.total_amount);
   $('#cpPromo').value = ''; $('#cpDiscount').value = ''; $('#cpDiscountReason').value = ''; $('#cpApprovalUser').value=''; $('#cpApprovalPass').value='';
   $('#cpCash').value = ord.cash_received ? String(ord.cash_received) : '';
@@ -1149,11 +1179,26 @@ function openConfirmPaymentModal(orderId) {
   openModal('#confirmPaymentModal');
 }
 
+
+let extraPaymentParts=[];
+function renderPaymentParts(){
+  const el=$('#cpPaymentParts'); if(!el)return;
+  el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" placeholder="จำนวน"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');
+  extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method||'qr';});
+}
+$('#cpAddPayment').addEventListener('click',()=>{extraPaymentParts.push({method:'qr',amount:0});renderPaymentParts();});
+$('#cpPaymentParts').addEventListener('input',e=>{let i=e.target.dataset.partAmount;if(i!==undefined)extraPaymentParts[+i].amount=Number(e.target.value||0);i=e.target.dataset.partMethod;if(i!==undefined)extraPaymentParts[+i].method=e.target.value;});
+$('#cpPaymentParts').addEventListener('click',e=>{const i=e.target.dataset.removePart;if(i!==undefined){extraPaymentParts.splice(+i,1);renderPaymentParts();}});
+
 $('#cpSubmit').addEventListener('click', async () => {
   if (cpOrderId == null) return;
   $('#cpError').textContent = '';
   const orderId = cpOrderId;
   const payload = { payment_status: 'paid', payment_method: $('#cpMethod').value };
+  if(extraPaymentParts.length){
+    payload.payments=[{method:$('#cpMethod').value,amount:null,cash_received:$('#cpMethod').value==='cash'?(parseFloat($('#cpCash').value)||null):null},
+      ...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))];
+  }
   const promo=$('#cpPromo').value.trim(); if(promo) payload.promotion_code=promo; const disc=$('#cpDiscount').value.trim(); if(disc) payload.discount_amount=parseFloat(disc); const dr=$('#cpDiscountReason').value.trim(); if(dr) payload.discount_reason=dr; const au=$('#cpApprovalUser').value.trim(); const ap=$('#cpApprovalPass').value; if(au) payload.approval_username=au; if(ap) payload.approval_password=ap;
   const cashRaw = $('#cpCash').value.trim(); if (payload.payment_method === 'cash' && cashRaw) payload.cash_received = parseFloat(cashRaw);
   try {
@@ -1252,6 +1297,11 @@ function printKitchenTicket(orderId, itemIds) {
 
 let lastOrdersFlat = []; // most recent unfiltered branch order fetch (feeds board/panel + card lookups)
 const STATUS_PRIORITY = { received: 0, preparing: 1, ready: 2, served: 3 };
+
+async function refreshPosShiftBadge(){
+  const el=$('#posShiftBadge'); if(!el||!currentBranchId)return;
+  try{const d=await api('/api/operations/shift?branch_id='+currentBranchId);if(d.shift){el.className='pos-shift-badge open';el.textContent=`● กะเปิด · ${formatDateTime(d.shift.opened_at)}`;}else{el.className='pos-shift-badge closed';el.textContent='○ ยังไม่เปิดกะ · แตะเพื่อเปิด';}el.onclick=()=>showTab('operations');}catch(e){el.textContent='กะ: ตรวจสอบไม่ได้';}
+}
 
 async function loadBoardData() {
   if (!currentBranchId) { activeOrders = []; renderTableBoard(); renderOtherOrders(); renderSidePanel(); return; }
@@ -1563,6 +1613,7 @@ function emptyState(icon, text) { return `<div class="empty-state"><span class="
 
 // ===================== Round 14A Operations =====================
 async function loadOperations(){
+  refreshPosShiftBadge();
   if(!currentBranchId)return;
   try{
     const data=await api('/api/operations/shift?branch_id='+currentBranchId), sh=data.shift;
@@ -1603,3 +1654,16 @@ async function loadPricing(){
 $('#savePricingBtn').addEventListener('click',async()=>{try{await apiJson('/api/pricing/settings','PUT',{branch_id:currentBranchId,tax_rate:parseFloat($('#pricingTax').value)||0,service_charge_rate:parseFloat($('#pricingService').value)||0});toast('บันทึกอัตราแล้ว','ok');loadPricing()}catch(e){toast(e.message,'err')}});
 $('#addPromoBtn').addEventListener('click',async()=>{try{await apiJson('/api/promotions','POST',{branch_id:currentBranchId,code:$('#promoCode').value.trim(),name:$('#promoName').value.trim(),discount_type:$('#promoType').value,discount_value:parseFloat($('#promoValue').value)||0,min_spend:parseFloat($('#promoMin').value)||0});toast('สร้างโปรโมชั่นแล้ว','ok');$('#promoCode').value='';$('#promoName').value='';loadPricing()}catch(e){toast(e.message,'err')}});
 $('#promotionsList').addEventListener('click',async e=>{const b=e.target.closest('[data-disable-promo]');if(!b)return;if(!confirm('ปิดโปรโมชั่นนี้?'))return;try{await apiJson('/api/promotions/'+b.dataset.disablePromo,'DELETE');loadPricing()}catch(err){toast(err.message,'err')}});
+
+async function loadInventory(){
+  if(!currentBranchId)return;
+  try{
+    const rows=await api('/api/inventory/ingredients?branch_id='+currentBranchId);
+    const low=rows.filter(x=>Number(x.stock_qty)<=Number(x.low_stock_threshold));
+    $('#inventorySummary').innerHTML=`<div class="report-card"><small>วัตถุดิบ</small><b>${rows.length}</b></div><div class="report-card"><small>ใกล้หมด</small><b>${low.length}</b></div>`;
+    $('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button></div>`).join(''):emptyState('📦','ยังไม่มีวัตถุดิบ');
+  }catch(e){toast(e.message,'err')}
+}
+$('#addIngredientBtn').addEventListener('click',()=>openModal('#ingredientModal'));
+$('#ingSave').addEventListener('click',async()=>{try{await apiJson('/api/inventory/ingredients','POST',{branch_id:currentBranchId,name:$('#ingName').value.trim(),unit:$('#ingUnit').value.trim()||'unit',stock_qty:Number($('#ingQty').value||0),low_stock_threshold:Number($('#ingLow').value||0),cost_per_unit:Number($('#ingCost').value||0)});closeModals();toast('เพิ่มวัตถุดิบแล้ว','ok');loadInventory()}catch(e){toast(e.message,'err')}});
+$('#ingredientsList').addEventListener('click',async e=>{const b=e.target.closest('[data-ing-adjust]');if(!b)return;const q=prompt('ปรับจำนวน เช่น 10 หรือ -2');if(q===null)return;const reason=prompt('เหตุผลการปรับสต็อก');if(!reason)return;try{await apiJson(`/api/inventory/ingredients/${b.dataset.ingAdjust}/adjust`,'POST',{quantity:Number(q),reason});loadInventory()}catch(err){toast(err.message,'err')}});
