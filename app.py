@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, g, session, send_from_directory
 import sqlite3, os, functools, secrets, shutil, random, string
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -181,7 +182,51 @@ def close_db(exc=None):
     conn = g.pop('db', None)
     if conn: conn.close()
 
-def now(): return datetime.now().isoformat(timespec='seconds')
+RESTAURANT_TIMEZONE = os.getenv('ZAABOS_TIMEZONE', 'Asia/Vientiane')
+try:
+    RESTAURANT_TZ = ZoneInfo(RESTAURANT_TIMEZONE)
+except Exception:
+    RESTAURANT_TIMEZONE = 'Asia/Vientiane'
+    RESTAURANT_TZ = ZoneInfo(RESTAURANT_TIMEZONE)
+
+def now():
+    # Persist an explicit UTC offset so browsers and services never have to guess
+    # which timezone a timestamp belongs to.
+    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+
+def restaurant_now():
+    return datetime.now(RESTAURANT_TZ)
+
+def restaurant_today():
+    return restaurant_now().date().isoformat()
+
+def local_date_bounds_utc(day_text):
+    """Return [start,end) UTC ISO timestamps for one restaurant-local date."""
+    d = datetime.strptime(day_text[:10], '%Y-%m-%d').date()
+    start_local = datetime.combine(d, datetime.min.time(), tzinfo=RESTAURANT_TZ)
+    end_local = start_local + timedelta(days=1)
+    return (
+        start_local.astimezone(timezone.utc).isoformat(timespec='seconds'),
+        end_local.astimezone(timezone.utc).isoformat(timespec='seconds'),
+    )
+
+def local_range_bounds_utc(frm, to):
+    start, _ = local_date_bounds_utc(frm)
+    _, end = local_date_bounds_utc(to)
+    return start, end
+
+def local_datetime_input_to_utc(value):
+    """Convert HTML datetime-local / naive local input into explicit UTC ISO."""
+    if not value:
+        return None
+    raw = str(value).strip()
+    try:
+        dt = datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=RESTAURANT_TZ)
+        return dt.astimezone(timezone.utc).isoformat(timespec='seconds')
+    except Exception:
+        return None
 
 # ---------- schema bootstrap ----------
 
@@ -428,6 +473,15 @@ def ensure_schema_migrations(conn):
     record_migration(conn, 17, 'pricing_promotions_service_tax')
     record_migration(conn, 18, 'fulfillment_delivery_preorder')
     record_migration(conn, 19, 'independent_audit_fixes')
+    # Round 14G: UTC persistence + restaurant-local business dates + refund-to-shift attribution.
+    if IS_POSTGRES:
+        conn.execute('ALTER TABLE refunds ADD COLUMN IF NOT EXISTS shift_id INTEGER')
+    else:
+        r20=[r[1] for r in conn.execute('PRAGMA table_info(refunds)').fetchall()]
+        if 'shift_id' not in r20: conn.execute('ALTER TABLE refunds ADD COLUMN shift_id INTEGER')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_refunds_tenant_shift ON refunds(tenant_id,shift_id)')
+    conn.commit()
+    record_migration(conn, 20, 'timezone_flexible_shift_refund_attribution')
 
 def init_db():
     if IS_POSTGRES:
@@ -531,7 +585,7 @@ def gen_order_no(conn, tenant_id):
     already-used suffix. Reading the highest fixed-width number also makes the
     retry path advance correctly after a concurrent insert commits.
     """
-    today = datetime.now().strftime('%Y%m%d')
+    today = restaurant_now().strftime('%Y%m%d')
     prefix = f'Z-{today}-'
     row = conn.execute(
         "SELECT order_no FROM orders WHERE tenant_id=? AND order_no LIKE ? ORDER BY order_no DESC LIMIT 1",
@@ -620,6 +674,10 @@ def production_readiness():
     if IS_POSTGRES and not checks['backup_dir_configured']:
         warnings.append('ยังไม่ได้กำหนด ZAABOS_BACKUP_DIR; และควรมี off-site/provider PostgreSQL backup แยกจาก app')
     return jsonify(ok=True, checks=checks, warnings=warnings)
+
+@app.get('/api/system/timezone')
+def system_timezone():
+    return jsonify(timezone=RESTAURANT_TIMEZONE, now_utc=now(), now_local=restaurant_now().isoformat(timespec='seconds'))
 
 @app.get('/healthz')
 def healthz():
@@ -1979,9 +2037,17 @@ def refund_order(oid):
     approved_by, approval_err = _critical_approval(conn,d)
     if approval_err: return approval_err
     amount=float(payment['amount'] or 0); ts=now()
+    active_shift = conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",
+                                (g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
+    # Cash physically leaves the drawer now, so it must belong to the operator's
+    # currently open shift. Non-cash refunds keep the same audit attribution but
+    # do not require a cash drawer.
+    if payment['payment_method']=='cash' and not active_shift:
+        return jsonify(error='กรุณาเปิดกะก่อนคืนเงินสด เพื่อให้ยอดเงินตรงกับกะปัจจุบัน'),409
+    refund_shift_id = active_shift['id'] if active_shift else None
     try:
-        conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at) VALUES(?,?,?,?,?,?,?,?)',
-                     (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts))
+        conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at,shift_id) VALUES(?,?,?,?,?,?,?,?,?)',
+                     (g.tenant_id,order['branch_id'],oid,payment['id'],amount,reason,g.user['id'],ts,refund_shift_id))
         _record_critical(conn,'refund',order['branch_id'],'order',oid,reason,approved_by,f'amount={amount} payment={payment["id"]}')
         log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}')
         conn.commit()
@@ -2090,7 +2156,7 @@ DEFAULT_EXPENSE_CATEGORIES = ['ค่าวัตถุดิบ', 'ค่าเ
 
 def _report_date_range():
     """from/to as YYYY-MM-DD; defaults to today when not given."""
-    today = date.today().isoformat()
+    today = restaurant_today()
     frm = (request.args.get('from') or today)[:10]
     to = (request.args.get('to') or today)[:10]
     if frm > to: frm, to = to, frm
@@ -2106,10 +2172,11 @@ def reports_summary():
     frm, to = _report_date_range()
     branch_id = request.args.get('branch_id')
 
+    range_start, range_end = local_range_bounds_utc(frm, to)
     q = '''SELECT COUNT(*) AS c, COALESCE(SUM(total_amount),0) AS subtotal, COALESCE(SUM(tax_amount),0) AS tax,
            COALESCE(SUM(discount_amount),0) AS discount, COALESCE(SUM(service_charge_amount),0) AS service, COALESCE(SUM(delivery_fee),0) AS delivery, COALESCE(SUM(guest_count),0) AS guests
-           FROM orders WHERE tenant_id=? AND payment_status='paid' AND status!='cancelled' AND substr(COALESCE(paid_at,created_at),1,10) BETWEEN ? AND ?'''
-    args = [g.tenant_id, frm, to]
+           FROM orders WHERE tenant_id=? AND payment_status='paid' AND status!='cancelled' AND COALESCE(paid_at,created_at)>=? AND COALESCE(paid_at,created_at)<?'''
+    args = [g.tenant_id, range_start, range_end]
     if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
     row = conn.execute(q, args).fetchone()
     order_count = row['c'] or 0
@@ -2123,8 +2190,8 @@ def reports_summary():
 
     ti_q = '''SELECT oi.item_name_snapshot AS name, SUM(oi.quantity) AS qty, SUM(oi.line_total) AS revenue
               FROM order_items oi JOIN orders o ON o.id=oi.order_id
-              WHERE o.tenant_id=? AND o.payment_status='paid' AND o.status!='cancelled' AND substr(COALESCE(o.paid_at,o.created_at),1,10) BETWEEN ? AND ?'''
-    ti_args = [g.tenant_id, frm, to]
+              WHERE o.tenant_id=? AND o.payment_status='paid' AND o.status!='cancelled' AND COALESCE(o.paid_at,o.created_at)>=? AND COALESCE(o.paid_at,o.created_at)<?'''
+    ti_args = [g.tenant_id, range_start, range_end]
     if branch_id: ti_q += ' AND o.branch_id=?'; ti_args.append(branch_id)
     ti_q += ' GROUP BY oi.item_name_snapshot ORDER BY qty DESC LIMIT 10'
     top_items = [dict(r) for r in conn.execute(ti_q, ti_args).fetchall()]
@@ -2138,13 +2205,13 @@ def reports_summary():
     expense_by_category = [dict(r) for r in conn.execute(cat_q, ex_args).fetchall()]
 
     pay_q = '''SELECT payment_method, COALESCE(SUM(amount),0) AS total, COUNT(*) AS count FROM payments
-               WHERE tenant_id=? AND substr(paid_at,1,10) BETWEEN ? AND ?'''
-    pay_args=[g.tenant_id,frm,to]
+               WHERE tenant_id=? AND paid_at>=? AND paid_at<?'''
+    pay_args=[g.tenant_id,range_start,range_end]
     if branch_id: pay_q += ' AND branch_id=?'; pay_args.append(branch_id)
     pay_q += ' GROUP BY payment_method ORDER BY total DESC'
     payment_breakdown=[dict(r) for r in conn.execute(pay_q,pay_args).fetchall()]
-    refund_q="SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS count FROM refunds WHERE tenant_id=? AND substr(refunded_at,1,10) BETWEEN ? AND ?"
-    refund_args=[g.tenant_id,frm,to]
+    refund_q="SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS count FROM refunds WHERE tenant_id=? AND refunded_at>=? AND refunded_at<?"
+    refund_args=[g.tenant_id,range_start,range_end]
     if branch_id: refund_q += ' AND branch_id=?'; refund_args.append(branch_id)
     refund_row=conn.execute(refund_q,refund_args).fetchone(); refund_total=float(refund_row['total'] or 0)
     open_q="SELECT COUNT(*) AS c, COALESCE(SUM(total_amount-discount_amount+service_charge_amount+tax_amount+delivery_fee),0) AS total FROM orders WHERE tenant_id=? AND payment_status='unpaid' AND status!='cancelled'"
@@ -2169,12 +2236,13 @@ def reports_summary():
 def get_daily_closing():
     err = require_tenant()
     if err: return err
-    conn=db(); branch_id=request.args.get('branch_id'); closing_date=(request.args.get('date') or date.today().isoformat())[:10]
+    conn=db(); branch_id=request.args.get('branch_id'); closing_date=(request.args.get('date') or restaurant_today())[:10]
     if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
     branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'),404
     row=conn.execute('SELECT * FROM daily_closings WHERE tenant_id=? AND branch_id=? AND closing_date=?',(g.tenant_id,branch_id,closing_date)).fetchone()
-    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND substr(paid_at,1,10)=?",(g.tenant_id,branch_id,closing_date)).fetchone()['total'] or 0
+    close_start, close_end = local_date_bounds_utc(closing_date)
+    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND paid_at>=? AND paid_at<?",(g.tenant_id,branch_id,close_start,close_end)).fetchone()['total'] or 0
     return jsonify(closing=dict(row) if row else None,cash_sales=cash)
 
 @app.post('/api/daily-closing')
@@ -2183,7 +2251,7 @@ def get_daily_closing():
 def save_daily_closing():
     err=require_tenant()
     if err: return err
-    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id'); closing_date=(d.get('closing_date') or date.today().isoformat())[:10]
+    d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id'); closing_date=(d.get('closing_date') or restaurant_today())[:10]
     branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'),404
     def num(k):
@@ -2193,7 +2261,8 @@ def save_daily_closing():
         return v
     try: opening=num('opening_cash'); cash_out=num('cash_out'); counted=num('counted_cash')
     except ValueError as e: return jsonify(error=str(e)),400
-    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND substr(paid_at,1,10)=?",(g.tenant_id,branch_id,closing_date)).fetchone()['total'] or 0
+    close_start, close_end = local_date_bounds_utc(closing_date)
+    cash=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND paid_at>=? AND paid_at<?",(g.tenant_id,branch_id,close_start,close_end)).fetchone()['total'] or 0
     expected=opening+float(cash)-cash_out; difference=counted-expected; ts=now(); notes=(d.get('notes') or '')[:500]
     if IS_POSTGRES:
         conn.execute('''INSERT INTO daily_closings(tenant_id,branch_id,closing_date,opening_cash,cash_out,expected_cash,counted_cash,difference,notes,closed_by_user_id,closed_at)
@@ -2270,11 +2339,12 @@ def close_shift():
     if counted<0: return jsonify(error='ยอดเงินนับจริงต้องไม่ติดลบ'),400
     cash_sales=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND paid_by_user_id=? AND paid_at>=?",(g.tenant_id,branch_id,g.user['id'],sh['opened_at'])).fetchone()['total'] or 0
     mv=conn.execute("SELECT COALESCE(SUM(CASE WHEN movement_type='cash_in' THEN amount ELSE -amount END),0) AS total FROM cash_movements WHERE tenant_id=? AND shift_id=?",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
-    expected=float(sh['opening_cash'])+float(cash_sales)+float(mv); diff=counted-expected; ts=now()
+    cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
+    expected=float(sh['opening_cash'])+float(cash_sales)+float(mv)-float(cash_refunds); diff=counted-expected; ts=now()
     claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],sh['id'],g.tenant_id))
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='กะนี้ถูกปิดจากอุปกรณ์อื่นแล้ว'),409
     log_action('shift_closed',detail=f'branch={branch_id} expected={expected} counted={counted} diff={diff}'); conn.commit()
-    return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=diff,cash_sales=cash_sales)
+    return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=diff,cash_sales=cash_sales,cash_refunds=cash_refunds)
 
 @app.get('/api/operations/critical')
 @login_required
@@ -2329,7 +2399,7 @@ def add_expense():
         if amount <= 0: raise ValueError()
     except (TypeError, ValueError):
         return jsonify(error='จำนวนเงินไม่ถูกต้อง'), 400
-    expense_date = (d.get('expense_date') or date.today().isoformat())[:10]
+    expense_date = (d.get('expense_date') or restaurant_today())[:10]
     branch_id = d.get('branch_id') or None
     conn = db()
     cur = conn.execute('''INSERT INTO expenses(tenant_id,branch_id,category,amount,note,expense_date,created_by_user_id,created_at)
