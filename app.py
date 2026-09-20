@@ -141,15 +141,30 @@ def now(): return datetime.now().isoformat(timespec='seconds')
 # ---------- schema bootstrap ----------
 
 def ensure_default_tenant(conn):
+    # Guarded with INTEGRITY_ERRORS, not just the pre-check above: with gunicorn
+    # running multiple workers (no --preload) or during a rolling restart, two
+    # processes can both pass the "not exists" check before either commits.
+    # Without this, the loser crashes on a UNIQUE violation instead of just
+    # finding the row already there on retry.
     if not conn.execute('SELECT id FROM tenants ORDER BY id LIMIT 1').fetchone():
-        conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', ('ร้านของฉัน', '🍽️', now()))
-    conn.commit()
+        try:
+            conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', ('ร้านของฉัน', '🍽️', now()))
+            conn.commit()
+        except INTEGRITY_ERRORS:
+            conn.rollback()
+    else:
+        conn.commit()
 
 def ensure_super_admin(conn):
     if not conn.execute("SELECT 1 FROM users WHERE role='super_admin'").fetchone():
-        conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(NULL,?,?,?,?,1,?)',
-            ('admin', hash_password('changeme123'), 'ผู้ดูแลระบบ', 'super_admin', now()))
-    conn.commit()
+        try:
+            conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(NULL,?,?,?,?,1,?)',
+                ('admin', hash_password('changeme123'), 'ผู้ดูแลระบบ', 'super_admin', now()))
+            conn.commit()
+        except INTEGRITY_ERRORS:
+            conn.rollback()
+    else:
+        conn.commit()
 
 def create_tenant_indexes(conn):
     for stmt in (
