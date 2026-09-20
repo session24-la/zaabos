@@ -134,8 +134,10 @@ def _valid_image_data_uri(s):
 
 
 def get_secret_key():
-    env_key = os.getenv('ZAABOS_SECRET_KEY')
+    env_key = (os.getenv('ZAABOS_SECRET_KEY') or '').strip()
     if env_key: return env_key
+    if IS_POSTGRES:
+        raise RuntimeError('ZAABOS_SECRET_KEY is required when PostgreSQL/production mode is enabled')
     if SECRET_FILE.exists(): return SECRET_FILE.read_text().strip()
     key = secrets.token_hex(32)
     SECRET_FILE.write_text(key)
@@ -1096,7 +1098,7 @@ def add_branch():
     d = request.get_json() or {}
     name = (d.get('name') or '').strip()
     if not name: return jsonify(error='กรุณาใส่ชื่อสาขา'), 400
-    conn=db(); tenant=conn.execute('SELECT max_branches FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
+    conn=db(); tenant=conn.execute('SELECT max_branches FROM tenants WHERE id=?'+(' FOR UPDATE' if IS_POSTGRES else ''),(g.tenant_id,)).fetchone()
     used=conn.execute('SELECT COUNT(*) c FROM branches WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
     if tenant and used>=int(tenant['max_branches'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_branches']} สาขา กรุณาอัปเกรดแพ็กเกจ"),409
     cur = conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',
@@ -1158,15 +1160,6 @@ def add_table():
     branch_id = d.get('branch_id')
     if not name or not branch_id: return jsonify(error='กรุณาใส่ชื่อโต๊ะและเลือกสาขา'), 400
     conn = db()
-    client_request_id = (d.get('client_request_id') or '').strip()[:100] or None
-    client_device_id = (d.get('client_device_id') or '').strip()[:100] or None
-    offline_created_at = (d.get('offline_created_at') or '').strip()[:80] or None
-    if client_request_id:
-        existing = conn.execute('SELECT id,order_no,total_amount FROM orders WHERE tenant_id=? AND client_request_id=?',
-                                (g.tenant_id, client_request_id)).fetchone()
-        if existing:
-            return jsonify(ok=True, idempotent=True, order_id=existing['id'], order_no=existing['order_no'],
-                           total_amount=existing['total_amount'])
     branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'), 404
     token = gen_qr_token()
@@ -1545,7 +1538,7 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
     if not cart:
         raise ValueError('ตะกร้าว่างเปล่า กรุณาเลือกเมนูก่อนสั่ง')
     prepared = []
-    total = 0.0
+    total = Decimal('0.00')
     for line in cart:
         menu_item_id = line.get('menu_item_id')
         qty = line.get('quantity') or 1
@@ -1561,7 +1554,7 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
             raise ValueError('พบเมนูที่ไม่ถูกต้องในตะกร้า กรุณาโหลดหน้าใหม่')
         if item['sold_out']:
             raise ValueError(f'"{item["name"]}" หมดแล้ว กรุณาเอาออกจากตะกร้า')
-        unit_price = item['base_price']
+        unit_price = money_decimal(item['base_price'])
         chosen_options = []
         groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=?', (menu_item_id,)).fetchall()
         selected = line.get('selected_options') or {}  # {group_id: option_id | [option_ids]}
@@ -1582,34 +1575,35 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
                 opt = conn.execute('SELECT * FROM menu_options WHERE id=? AND group_id=? AND active=1', (opt_id, grp['id'])).fetchone()
                 if not opt:
                     raise ValueError('ตัวเลือกเมนูไม่ถูกต้องหรือปิดใช้งานแล้ว กรุณาโหลดหน้าใหม่')
-                unit_price += opt['price_delta']
-                chosen_options.append({'group_name': grp['name'], 'option_name': opt['name'], 'price_delta': opt['price_delta']})
-        line_total = unit_price * qty
-        total += line_total
+                price_delta = money_decimal(opt['price_delta'])
+                unit_price = money_decimal(unit_price + price_delta)
+                chosen_options.append({'group_name': grp['name'], 'option_name': opt['name'], 'price_delta': money_float(price_delta)})
+        line_total = money_decimal(unit_price * qty)
+        total = money_decimal(total + line_total)
         prepared.append({
             'menu_item_id': menu_item_id, 'item_name': item['name'], 'quantity': qty,
-            'unit_price': unit_price, 'line_total': line_total,
+            'unit_price': money_float(unit_price), 'line_total': money_float(line_total),
             'notes': (line.get('notes') or '').strip()[:300], 'options': chosen_options,
         })
-    return prepared, total
+    return prepared, money_float(total)
 
 
-def _apply_recipe_inventory(conn, menu_item_id, qty, movement_type, order_id=None, user_id=None):
+def _apply_recipe_inventory(conn, tenant_id, menu_item_id, qty, movement_type, order_id=None, user_id=None):
     """Apply recipe ingredient movement. Negative qty consumes; positive restores."""
     rows=conn.execute("""SELECT r.ingredient_id,r.quantity,i.branch_id
         FROM recipes r JOIN ingredients i ON i.id=r.ingredient_id
-        WHERE r.tenant_id=? AND r.menu_item_id=? AND i.active=1""",(g.tenant_id,menu_item_id)).fetchall()
+        WHERE r.tenant_id=? AND r.menu_item_id=? AND i.active=1""",(tenant_id,menu_item_id)).fetchall()
     ts=now()
     for r in rows:
         delta=float(r['quantity'] or 0)*float(qty)
         conn.execute('UPDATE ingredients SET stock_qty=stock_qty+?,updated_at=? WHERE id=? AND tenant_id=?',
-                     (delta,ts,r['ingredient_id'],g.tenant_id))
+                     (delta,ts,r['ingredient_id'],tenant_id))
         conn.execute("""INSERT INTO inventory_movements(tenant_id,branch_id,ingredient_id,movement_type,quantity,reason,order_id,created_by_user_id,created_at)
                         VALUES(?,?,?,?,?,?,?,?,?)""",
-                     (g.tenant_id,r['branch_id'],r['ingredient_id'],movement_type,delta,
+                     (tenant_id,r['branch_id'],r['ingredient_id'],movement_type,delta,
                       'อัตโนมัติจากออเดอร์' if order_id else 'ปรับสต็อก',order_id,user_id,ts))
 
-def _decrement_stock(conn, menu_item_id, qty):
+def _decrement_stock(conn, tenant_id, menu_item_id, qty):
     """Deducts stock when an order is placed, for menu items that opted into
     stock tracking. Clamped at 0 rather than blocking the sale — an owner who
     wants a hard stop still has the existing sold_out toggle for that."""
@@ -1622,12 +1616,12 @@ def _decrement_stock(conn, menu_item_id, qty):
     conn.execute('''UPDATE menu_items SET stock_qty =
         CASE WHEN COALESCE(stock_qty,0) - ? < 0 THEN 0 ELSE COALESCE(stock_qty,0) - ? END
         WHERE id=? AND track_stock=1''', (qty, qty, menu_item_id))
-    _apply_recipe_inventory(conn, menu_item_id, -float(qty), 'sale', user_id=getattr(g,'user',{}).get('id') if getattr(g,'user',None) else None)
+    _apply_recipe_inventory(conn, tenant_id, menu_item_id, -float(qty), 'sale', user_id=getattr(g,'user',{}).get('id') if getattr(g,'user',None) else None)
 
-def _restore_stock(conn, menu_item_id, qty):
+def _restore_stock(conn, tenant_id, menu_item_id, qty):
     if not menu_item_id or qty <= 0: return
     conn.execute('UPDATE menu_items SET stock_qty=COALESCE(stock_qty,0)+? WHERE id=? AND track_stock=1', (qty, menu_item_id))
-    _apply_recipe_inventory(conn, menu_item_id, float(qty), 'restore', user_id=getattr(g,'user',{}).get('id') if getattr(g,'user',None) else None)
+    _apply_recipe_inventory(conn, tenant_id, menu_item_id, float(qty), 'restore', user_id=getattr(g,'user',{}).get('id') if getattr(g,'user',None) else None)
 
 def _recalculate_order_total(conn, oid):
     row = conn.execute('SELECT COALESCE(SUM((quantity-COALESCE(cancelled_quantity,0))*unit_price),0) AS total FROM order_items WHERE order_id=?', (oid,)).fetchone()
@@ -1664,7 +1658,7 @@ def public_menu():
     else:
         return jsonify(error='ไม่พบข้อมูลร้าน กรุณาสแกน QR ใหม่อีกครั้ง'), 400
     tenant = conn.execute('SELECT * FROM tenants WHERE id=? AND active=1', (tenant_id,)).fetchone()
-    if not tenant:
+    if not tenant or not tenant_active(conn, tenant_id):
         return jsonify(error='ร้านนี้ปิดให้บริการชั่วคราว'), 404
     categories = [dict(x) for x in conn.execute('SELECT * FROM menu_categories WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY sort_order,id', (tenant_id, branch_id))]
     items_rows = conn.execute('SELECT * FROM menu_items WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY sort_order,id', (tenant_id, branch_id)).fetchall()
@@ -1685,10 +1679,12 @@ def public_tables():
     branch_id = request.args.get('branch_id')
     if not branch_id:
         return jsonify(error='ไม่พบข้อมูลสาขา'), 400
-    branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
+    branch = conn.execute('SELECT tenant_id FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
     if not branch:
         return jsonify(error='ไม่พบสาขานี้'), 404
-    rows = conn.execute('SELECT id,name FROM dining_tables WHERE branch_id=? AND active=1 ORDER BY id', (branch_id,)).fetchall()
+    if not tenant_active(conn, branch['tenant_id']):
+        return jsonify(error='ร้านนี้ปิดให้บริการชั่วคราว'), 404
+    rows = conn.execute('SELECT id,name FROM dining_tables WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY id', (branch['tenant_id'], branch_id)).fetchall()
     return jsonify(tables=[dict(x) for x in rows])
 
 def _fulfillment_fields(d, order_type, public=False):
@@ -1715,6 +1711,8 @@ def public_create_order():
     if not branch:
         return jsonify(error='ไม่พบสาขา กรุณาสแกน QR ใหม่'), 400
     tenant_id = branch['tenant_id']
+    if not tenant_active(conn, tenant_id):
+        return jsonify(error='ร้านนี้ปิดให้บริการชั่วคราว'), 404
 
     table_id = None
     table_name = None
@@ -1777,7 +1775,7 @@ def public_create_order():
             for opt in it['options']:
                 conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
                     (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
-            _decrement_stock(conn, it['menu_item_id'], it['quantity'])
+            _decrement_stock(conn, tenant_id, it['menu_item_id'], it['quantity'])
         conn.commit()
         return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
     except Exception:
@@ -1803,6 +1801,8 @@ def public_track_order():
         # Same order number is valid in different tenants. Never guess and leak
         # another shop's order data through the public tracker.
         return jsonify(error='พบเลขออเดอร์ซ้ำในหลายร้าน กรุณาเปิดหน้าติดตามจากลิงก์ของร้านที่สั่ง'), 409
+    if not tenant_active(conn, matches[0]['tenant_id']):
+        return jsonify(error='ร้านนี้ปิดให้บริการชั่วคราว'), 404
     return jsonify(order=_order_with_items(conn, matches[0]))
 
 # ---------- staff-side order management ----------
@@ -1941,7 +1941,7 @@ def staff_create_order():
             for opt in it['options']:
                 conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
                     (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
-            _decrement_stock(conn, it['menu_item_id'], it['quantity'])
+            _decrement_stock(conn, g.tenant_id, it['menu_item_id'], it['quantity'])
         log_action('staff_create_order', detail=order_no)
         conn.commit()
         return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
@@ -1983,7 +1983,7 @@ def update_order_status(oid):
         rows = conn.execute('SELECT * FROM order_items WHERE order_id=?', (oid,)).fetchall()
         for it in rows:
             remaining = max(0, int(it['quantity']) - int(it['cancelled_quantity'] or 0))
-            _restore_stock(conn, it['menu_item_id'], remaining)
+            _restore_stock(conn, g.tenant_id, it['menu_item_id'], remaining)
             conn.execute('UPDATE order_items SET cancelled_quantity=quantity,cancelled_at=COALESCE(cancelled_at,?) WHERE id=?', (now(), it['id']))
     conn.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (status, now(), oid))
     if status == 'cancelled': _record_critical(conn,'cancel_order',order['branch_id'],'order',oid,reason,approved_by,f'{current} -> cancelled')
@@ -2135,7 +2135,7 @@ def update_order_payment(oid):
         return x
     try:
         subtotal=money_decimal(order['total_amount']); delivery=money_decimal(order['delivery_fee'])
-        settings=_pricing_settings(conn,order['branch_id']); discount=0.0; label=''; promotion_id=None
+        settings=_pricing_settings(conn,order['branch_id']); discount=Decimal('0.00'); label=''; promotion_id=None
         code=(d.get('promotion_code') or '').strip()
         if code:
             promo=_active_promotion(conn,code,order['branch_id'],subtotal); promotion_id=promo['id']; label=promo['name']
@@ -2234,7 +2234,7 @@ def add_order_items(oid):
         iid=cur.lastrowid; ids.append(iid)
         for op in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
-        _decrement_stock(conn,it['menu_item_id'],it['quantity'])
+        _decrement_stock(conn,g.tenant_id,it['menu_item_id'],it['quantity'])
     total=_recalculate_order_total(conn,oid); log_action('add_order_items',detail=f'{oid}: {ids}'); conn.commit()
     return jsonify(ok=True,item_ids=ids,total_amount=total)
 
@@ -2257,7 +2257,7 @@ def cancel_order_item(oid,iid):
     if qty<1 or qty>remaining: return jsonify(error='จำนวนยกเลิกไม่ถูกต้อง'),400
     new_cancel=int(it['cancelled_quantity'] or 0)+qty
     conn.execute('UPDATE order_items SET cancelled_quantity=?,cancellation_reason=?,cancelled_at=? WHERE id=?',(new_cancel,reason[:200],now(),iid))
-    _restore_stock(conn,it['menu_item_id'],qty); total=_recalculate_order_total(conn,oid)
+    _restore_stock(conn,g.tenant_id,it['menu_item_id'],qty); total=_recalculate_order_total(conn,oid)
     _record_critical(conn,'cancel_item',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} qty={qty}')
     log_action('cancel_order_item',detail=f'{oid}/{iid}: {qty} / {reason}'); conn.commit()
     return jsonify(ok=True,total_amount=total,cancelled_quantity=new_cancel)
@@ -2285,8 +2285,8 @@ def update_order_item_quantity(oid,iid):
         if len(reason) < 2: return jsonify(error='กรุณาระบุเหตุผลในการลดจำนวนสินค้า'), 400
         approved_by, approval_err = _critical_approval(conn, d)
         if approval_err: return approval_err
-    if delta>0: _decrement_stock(conn,it['menu_item_id'],delta)
-    elif delta<0: _restore_stock(conn,it['menu_item_id'],-delta)
+    if delta>0: _decrement_stock(conn,g.tenant_id,it['menu_item_id'],delta)
+    elif delta<0: _restore_stock(conn,g.tenant_id,it['menu_item_id'],-delta)
     new_total_qty=new_active+cancelled
     conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(new_total_qty,new_total_qty*float(it['unit_price']),iid))
     total=_recalculate_order_total(conn,oid)
@@ -2357,7 +2357,7 @@ def create_operation_reason():
 @role_required('owner','manager')
 def refund_order(oid):
     """Partial refund across active payment rows; preserves every payment/refund for audit."""
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''; order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(oid,g.tenant_id)).fetchone()
     if not order or order['payment_status']!='paid': return jsonify(error='คืนเงินได้เฉพาะบิลที่ชำระแล้ว'),409
     payments=conn.execute('SELECT * FROM payments WHERE order_id=? AND tenant_id=? AND reversed_at IS NULL ORDER BY id',(oid,g.tenant_id)).fetchall()
     if not payments:return jsonify(error='ไม่พบข้อมูลการชำระเงิน'),409
@@ -2421,7 +2421,8 @@ def merge_orders(source_id):
 def split_order(source_id):
     """Split selected active quantities into a new unpaid bill without changing stock."""
     conn=db(); d=request.get_json() or {}
-    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(source_id,g.tenant_id)).fetchone()
+    lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''
+    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(source_id,g.tenant_id)).fetchone()
     if not source: return jsonify(error='ไม่พบบิลต้นทาง'),404
     if source['payment_status']!='unpaid' or source['status'] in ('completed','cancelled'):
         return jsonify(error='แยกได้เฉพาะบิลที่ยังเปิดและยังไม่ชำระ'),409
@@ -2482,8 +2483,14 @@ def kitchen_stations_list():
 def kitchen_station_create():
     d=request.get_json() or {}; name=(d.get('name') or '').strip()[:80]; bid=d.get('branch_id')
     if not name:return jsonify(error='กรุณาระบุชื่อสถานี'),400
-    conn=db(); cur=conn.execute('INSERT INTO kitchen_stations(tenant_id,branch_id,name,active,sort_order,created_at) VALUES(?,?,?,?,?,?)',
-        (g.tenant_id,int(bid) if bid else None,name,1,int(d.get('sort_order') or 0),now())); conn.commit()
+    conn=db(); branch_id=None
+    if bid not in (None,''):
+        try: branch_id=int(bid)
+        except (TypeError,ValueError): return jsonify(error='สาขาไม่ถูกต้อง'),400
+        if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=? AND active=1',(branch_id,g.tenant_id)).fetchone():
+            return jsonify(error='สาขาไม่ถูกต้อง'),400
+    cur=conn.execute('INSERT INTO kitchen_stations(tenant_id,branch_id,name,active,sort_order,created_at) VALUES(?,?,?,?,?,?)',
+        (g.tenant_id,branch_id,name,1,int(d.get('sort_order') or 0),now())); conn.commit()
     return jsonify(ok=True,id=cur.lastrowid)
 
 @app.get('/api/inventory/ingredients')
@@ -2503,7 +2510,10 @@ def ingredient_create():
     try: bid=int(d.get('branch_id')); qty=float(d.get('stock_qty') or 0); low=float(d.get('low_stock_threshold') or 0); cost=float(d.get('cost_per_unit') or 0)
     except:return jsonify(error='ข้อมูลวัตถุดิบไม่ถูกต้อง'),400
     if not name or qty<0 or low<0 or cost<0:return jsonify(error='ข้อมูลวัตถุดิบไม่ถูกต้อง'),400
-    conn=db(); ts=now(); cur=conn.execute('INSERT INTO ingredients(tenant_id,branch_id,name,unit,stock_qty,low_stock_threshold,cost_per_unit,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+    conn=db()
+    if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=? AND active=1',(bid,g.tenant_id)).fetchone():
+        return jsonify(error='สาขาไม่ถูกต้อง'),400
+    ts=now(); cur=conn.execute('INSERT INTO ingredients(tenant_id,branch_id,name,unit,stock_qty,low_stock_threshold,cost_per_unit,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
         (g.tenant_id,bid,name,(d.get('unit') or 'unit')[:30],qty,low,cost,1,ts,ts)); conn.commit()
     return jsonify(ok=True,id=cur.lastrowid)
 
@@ -2667,7 +2677,7 @@ def add_user():
     if not username or not display_name or not password: return jsonify(error='กรุณาใส่ชื่อผู้ใช้ ชื่อที่แสดง และรหัสผ่าน'), 400
     if role not in ('owner', 'manager', 'staff'): return jsonify(error='สิทธิ์ไม่ถูกต้อง'), 400
     if len(password) < 10: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 10 ตัวอักษร'), 400
-    conn=db(); tenant=conn.execute('SELECT max_users FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
+    conn=db(); tenant=conn.execute('SELECT max_users FROM tenants WHERE id=?'+(' FOR UPDATE' if IS_POSTGRES else ''),(g.tenant_id,)).fetchone()
     used=conn.execute('SELECT COUNT(*) c FROM users WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
     if tenant and used>=int(tenant['max_users'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_users']} ผู้ใช้ กรุณาอัปเกรดแพ็กเกจ"),409
     try:
@@ -2932,6 +2942,11 @@ def add_expense():
     expense_date = (d.get('expense_date') or restaurant_today())[:10]
     branch_id = d.get('branch_id') or None
     conn = db()
+    if branch_id is not None:
+        try: branch_id=int(branch_id)
+        except (TypeError,ValueError): return jsonify(error='สาขาไม่ถูกต้อง'),400
+        if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=? AND active=1',(branch_id,g.tenant_id)).fetchone():
+            return jsonify(error='สาขาไม่ถูกต้อง'),400
     cur = conn.execute('''INSERT INTO expenses(tenant_id,branch_id,category,amount,note,expense_date,created_by_user_id,created_at)
         VALUES(?,?,?,?,?,?,?,?)''',
         (g.tenant_id, branch_id, category, amount, (d.get('note') or '').strip()[:300], expense_date, g.user['id'], now()))
