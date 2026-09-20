@@ -32,7 +32,7 @@ let pendingCartItem = null; // item being configured in the option picker
 let activeOrders = []; // live, non-terminal orders for the current branch (feeds the table board + side panel)
 let ordersPollTimer = null;
 
-let zaabosOfflineMode=false, zaabosSyncRunning=false;
+let zaabosOfflineMode=false, zaabosSyncRunning=false, offlineOutboxRows=[];
 const ZAABOS_OFFLINE_DB='ZaabOSOfflineV1', ZAABOS_OFFLINE_MAX_AGE=24*60*60*1000;
 function offlineDb(){return new Promise((resolve,reject)=>{const q=indexedDB.open(ZAABOS_OFFLINE_DB,1);q.onupgradeneeded=()=>{const d=q.result;if(!d.objectStoreNames.contains('kv'))d.createObjectStore('kv');if(!d.objectStoreNames.contains('outbox')){const s=d.createObjectStore('outbox',{keyPath:'client_request_id'});s.createIndex('created_at','created_at');}};q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
 async function offlinePut(store,key,value){const d=await offlineDb();return new Promise((res,rej)=>{const tx=d.transaction(store,'readwrite');const st=tx.objectStore(store);key===undefined?st.put(value):st.put(value,key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}
@@ -49,9 +49,10 @@ async function queueOfflineOrder(payload){
   await offlinePut('outbox',undefined,rec);await renderOfflineQueue();return rec;
 }
 async function renderOfflineQueue(){
-  const box=$('#offlineQueuePanel');if(!box)return;const rows=(await offlineAll('outbox')).sort((a,b)=>a.created_at-b.created_at);
+  const box=$('#offlineQueuePanel');if(!box)return;const rows=(await offlineAll('outbox')).sort((a,b)=>a.created_at-b.created_at);offlineOutboxRows=rows;
   box.classList.toggle('hidden',!rows.length);$('#offlineQueueSummary').textContent=`${rows.length} รายการ`;
-  $('#offlineQueueList').innerHTML=rows.map(x=>`<div class="offline-queue-row"><span>${x.payload.order_type==='dine_in'?'โต๊ะ '+escapeHtml((boot.tables.find(t=>t.id===x.payload.table_id)||{}).name||''):escapeHtml(orderTypeLabel(x.payload.order_type))}</span><b>${x.status==='conflict'?'ต้องตรวจสอบ':'รอส่ง'}</b>${x.last_error?`<small>${escapeHtml(x.last_error)}</small>`:''}</div>`).join('');
+  $('#offlineQueueList').innerHTML=rows.map(x=>`<div class="offline-queue-row"><span>${x.payload.order_type==='dine_in'?'โต๊ะ '+escapeHtml((boot.tables.find(t=>t.id===x.payload.table_id)||{}).name||''):escapeHtml(orderTypeLabel(x.payload.order_type))}</span><b>${x.status==='conflict'?'ต้องตรวจสอบ':'รอส่ง'}</b>${x.last_error?`<small>${escapeHtml(x.last_error)}</small>`:''}<div class="offline-queue-actions">${x.status==='conflict'?`<button class="ghost-btn" data-offline-retry="${x.client_request_id}">ลองใหม่</button>`:''}<button class="ghost-btn danger" data-offline-remove="${x.client_request_id}">ลบคิว</button></div></div>`).join('');
+  if(typeof renderTableBoard==='function'){renderTableBoard();renderOtherOrders();}
 }
 async function syncOfflineOrders(){
   if(zaabosSyncRunning||!navigator.onLine||!me)return;zaabosSyncRunning=true;
@@ -63,9 +64,8 @@ async function syncOfflineOrders(){
         await apiJson('/api/orders','POST',rec.payload);
         await offlineDelete('outbox',rec.client_request_id);
       }catch(e){
-        // A reachable server rejected the queued order: stop retrying it forever and surface it for manager review.
-        if(navigator.onLine){rec.status='conflict';rec.last_error=e.message;await offlinePut('outbox',undefined,rec);}
-        else break;
+        if(!navigator.onLine || e.transient || !e.status){rec.status='pending';rec.last_error=e.message||'';await offlinePut('outbox',undefined,rec);break;}
+        rec.status='conflict';rec.last_error=e.message;await offlinePut('outbox',undefined,rec);
       }
     }
   }finally{zaabosSyncRunning=false;await renderOfflineQueue();if(navigator.onLine&&!zaabosOfflineMode){loadOrders();loadBoardData();}}
@@ -129,7 +129,10 @@ async function api(url, opts) {
   }
   let r;
   try { r = await fetch(url, opts); }
-  catch (e) { if (!silent) toast('การเชื่อมต่อขัดข้อง กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง','err'); throw new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้'); }
+  catch (e) {
+    if (!silent) toast('การเชื่อมต่อขัดข้อง กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง','err');
+    const err=new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้'); err.status=0; err.transient=true; throw err;
+  }
   let body = null;
   try { body = await r.json(); } catch (e) { /* no body */ }
   if (r.status === 401) {
@@ -146,7 +149,7 @@ async function api(url, opts) {
   }
   if (!r.ok) {
     const fallback = r.status >= 500 ? 'ระบบบันทึกข้อมูลขัดข้อง กรุณาลองอีกครั้ง' : t('err_generic');
-    throw new Error((body && body.error) || fallback);
+    const err=new Error((body && body.error) || fallback); err.status=r.status; err.transient=(r.status>=500||r.status===408||r.status===429); throw err;
   }
   return body;
 }
@@ -1373,6 +1376,8 @@ function renderTableBoard() {
   board.innerHTML = tables.map(tb => {
     const orders = tableActiveOrders(tb.id);
     if (!orders.length) {
+      const local=offlineOutboxRows.filter(x=>x.status!=='conflict'&&x.payload.order_type==='dine_in'&&Number(x.payload.table_id)===Number(tb.id));
+      if(local.length)return `<button type="button" class="board-tile offline-pending" data-board-table="${tb.id}" disabled><span class="bt-badge">OFFLINE</span><div class="bt-name">${escapeHtml(tb.name)}</div><div class="bt-empty-lbl">${local.length} ออเดอร์ · รอ Sync</div></button>`;
       return `<button type="button" class="board-tile" data-board-table="${tb.id}">
         <div class="bt-name">${escapeHtml(tb.name)}</div>
         <div class="bt-empty-lbl">${escapeHtml(t('board_table_empty'))}</div>
@@ -1408,9 +1413,10 @@ function renderOtherOrders() {
   const wrap = $('#otherOrdersWrap');
   const list = $('#otherOrdersList');
   const orders = activeOrders.filter(o => o.order_type !== 'dine_in').sort((a, b) => b.id - a.id);
-  if (!orders.length) { wrap.classList.add('hidden'); return; }
+  const local=offlineOutboxRows.filter(x=>x.status!=='conflict'&&x.payload.order_type!=='dine_in');
+  if (!orders.length && !local.length) { wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
-  list.innerHTML = orders.map(o => sidePanelRowHtml(o)).join('');
+  list.innerHTML = local.map(x=>`<div class="side-row offline-local-row"><div class="sr-main"><div class="sr-no"><span class="sr-new-dot"></span>OFFLINE</div><div class="sr-meta">${escapeHtml(orderTypeLabel(x.payload.order_type))} · ${escapeHtml(x.payload.customer_name||'')}</div></div><div class="sr-right"><span class="pill received">รอ Sync</span></div></div>`).join('') + orders.map(o => sidePanelRowHtml(o)).join('');
 }
 $('#otherOrdersList').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-side-order]');
@@ -1757,3 +1763,12 @@ window.addEventListener('online',async()=>{zaabosOfflineMode=false;try{me=await 
 window.addEventListener('offline',()=>{zaabosOfflineMode=true;renderOfflineQueue();});
 setInterval(()=>{if(navigator.onLine)syncOfflineOrders();},10000);
 const offlineSyncBtn=$('#offlineSyncBtn');if(offlineSyncBtn)offlineSyncBtn.addEventListener('click',syncOfflineOrders);
+
+const offlineQueueList=$('#offlineQueueList');
+if(offlineQueueList)offlineQueueList.addEventListener('click',async e=>{
+  const retry=e.target.closest('[data-offline-retry]');
+  if(retry){const rec=await offlineGet('outbox',retry.dataset.offlineRetry);if(rec){rec.status='pending';rec.last_error='';await offlinePut('outbox',undefined,rec);await renderOfflineQueue();syncOfflineOrders();}return;}
+  const rem=e.target.closest('[data-offline-remove]');
+  if(rem&&confirm('ลบออเดอร์นี้ออกจากคิวออฟไลน์? ข้อมูลรายการนี้จะไม่ถูกส่งขึ้น Server')){await offlineDelete('outbox',rem.dataset.offlineRemove);await renderOfflineQueue();}
+});
+
