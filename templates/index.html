@@ -49,11 +49,11 @@
   <nav class="tabs pos-nav" id="mainTabs" aria-label="Main navigation">
     <button data-tab="orders" class="active nav-primary"><span class="tab-ic">⌂</span><span class="tab-lb" data-i18n="tab_pos">POS</span></button>
     <button data-tab="menu" class="nav-primary"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button data-tab="tables" class="nav-primary"><span class="tab-ic">▦</span><span class="tab-lb">โต๊ะ &amp; QR</span></button>
     <button data-tab="history" class="nav-primary"><span class="tab-ic">🕘</span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
     <div class="nav-more-wrap">
       <button id="moreNavBtn" class="nav-primary nav-more-btn" type="button" aria-expanded="false"><span class="tab-ic">☰</span><span class="tab-lb" data-i18n="tab_more">เพิ่มเติม</span></button>
       <div class="nav-more-menu hidden" id="moreNavMenu">
-        <button data-tab="tables"><span class="tab-ic">🍽️</span><span class="tab-lb" data-i18n="tab_tables">โต๊ะ &amp; QR</span></button>
         <button data-tab="reports"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
         <button data-tab="operations"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
         <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
@@ -136,19 +136,21 @@
 
   <!-- ===== Menu tab ===== -->
   <section id="tab-menu" class="tab-panel hidden">
-    <div class="panel">
-      <div class="panel-head">
-        <h2 data-i18n="categories_title">หมวดหมู่เมนู</h2>
-        <button class="ghost-btn primary" id="addCategoryBtn" data-i18n="btn_add_category">➕ เพิ่มหมวดหมู่</button>
-      </div>
-      <div id="categoriesList"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <h2 data-i18n="menu_items_title">รายการเมนู</h2>
-        <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item">➕ เพิ่มเมนู</button>
-      </div>
-      <div class="menu-grid" id="menuItemsGrid"></div>
+    <div class="menu-manager">
+      <aside class="menu-category-sidebar panel">
+        <div class="menu-sidebar-head">
+          <div><div class="section-kicker">MENU</div><h2>หมวดหมู่</h2></div>
+          <button class="icon-btn primary" id="addCategoryBtn" title="เพิ่มหมวดหมู่">＋</button>
+        </div>
+        <div id="categoriesList" class="menu-category-list"></div>
+      </aside>
+      <section class="menu-items-workspace panel">
+        <div class="panel-head menu-workspace-head">
+          <div><div class="section-kicker">รายการอาหาร</div><h2 id="menuWorkspaceTitle">เมนูทั้งหมด</h2><div class="muted" id="menuWorkspaceCount"></div></div>
+          <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item">➕ เพิ่มเมนู</button>
+        </div>
+        <div class="menu-grid menu-manager-grid" id="menuItemsGrid"></div>
+      </section>
     </div>
   </section>
 
