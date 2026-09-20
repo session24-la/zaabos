@@ -207,7 +207,7 @@ function applyRoleVisibility() {
   $$('.tabs button[data-tab="branches"], .tabs button[data-tab="users"]').forEach(b => {
     b.classList.toggle('hidden', !isOwner);
   });
-  $$('.tabs button[data-tab="reports"], .tabs button[data-tab="pricing"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
+  $$('.tabs button[data-tab="reports"], .tabs button[data-tab="pricing"], .tabs button[data-tab="inventory"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
   $('#addTableBtn').classList.toggle('hidden', !isManagerPlus);
   $('#bulkAddTablesBtn').classList.toggle('hidden', !isManagerPlus);
   $('#addCategoryBtn').classList.toggle('hidden', !isManagerPlus);
@@ -266,6 +266,7 @@ function refreshCurrentTab(tab) {
   else if (tab === 'tables') renderTables();
   else if (tab === 'menu') loadBootstrap().then(renderMenu); // re-fetch so stock counts (which change from orders placed elsewhere — staff or customer QR) are current whenever this tab is opened
   else if (tab === 'pricing') loadPricing();
+  else if (tab === 'inventory') loadInventory();
   else if (tab === 'operations') loadOperations();
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
@@ -1082,14 +1083,21 @@ wireOrderActionClicks($('#orderDetailBody'));
 async function reopenPaidOrder(orderId){
   const payload=await criticalActionPayload('การเปิดบิลที่ชำระแล้วกลับมาแก้ไข'); if(!payload) return;
   if(!confirm('ยืนยันเปิดบิลนี้กลับมาแก้ไข? การชำระเดิมจะถูกเก็บเป็นประวัติและทำเครื่องหมายย้อนรายการ')) return;
-  try{await apiJson(`/api/orders/${orderId}/reopen`,'POST',payload); closeModals(); toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok'); onOrderActionDone(); setTimeout(()=>showTab('orders'),100);}catch(e){toast(e.message,'err');}
+  try{await apiJson(`/api/orders/${orderId}/reopen`,'POST',payload); closeModals(); toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok'); onOrderActionDone(); setTimeout(()=>switchTab('orders'),100);}catch(e){toast(e.message,'err');}
 }
 
 async function refundOrder(orderId) {
+  const order=findOrderById(orderId);
+  const maxAmount=order ? Number(order.grand_total || order.total_amount || 0) : 0;
+  const raw=prompt(`ยอดคืนเงิน (เว้นว่าง = คืนเต็มจำนวน${maxAmount ? ' '+fmtMoney(maxAmount) : ''})`,'');
+  if(raw===null) return;
+  let amount=null;
+  if(raw.trim()!==''){ amount=Number(raw); if(!Number.isFinite(amount)||amount<=0){toast('ยอดคืนเงินไม่ถูกต้อง','err');return;} }
   const reason=prompt('เหตุผลการคืนเงิน:'); if(reason===null) return;
   if(!reason.trim()) { toast('กรุณาระบุเหตุผลการคืนเงิน','err'); return; }
-  if(!confirm('ยืนยันคืนเงินเต็มจำนวนสำหรับบิลนี้? รายการจะถูกบันทึกในประวัติ')) return;
-  try { const r=await apiJson(`/api/orders/${orderId}/refund`,'POST',{reason:reason.trim()}); toast(`บันทึกคืนเงิน ${fmtMoney(r.amount)} แล้ว`,'ok'); onOrderActionDone(); }
+  if(!confirm(`ยืนยันคืนเงิน${amount ? ' '+fmtMoney(amount) : 'เต็มจำนวน'}?`)) return;
+  const payload={reason:reason.trim()}; if(amount) payload.amount=amount;
+  try { const r=await apiJson(`/api/orders/${orderId}/refund`,'POST',payload); toast(`คืนเงิน ${fmtMoney(r.amount)} แล้ว · คืนได้อีก ${fmtMoney(r.remaining_refundable||0)}`,'ok'); onOrderActionDone(); }
   catch(e){ toast(e.message,'err'); }
 }
 
@@ -1300,7 +1308,7 @@ const STATUS_PRIORITY = { received: 0, preparing: 1, ready: 2, served: 3 };
 
 async function refreshPosShiftBadge(){
   const el=$('#posShiftBadge'); if(!el||!currentBranchId)return;
-  try{const d=await api('/api/operations/shift?branch_id='+currentBranchId);if(d.shift){el.className='pos-shift-badge open';el.textContent=`● กะเปิด · ${formatDateTime(d.shift.opened_at)}`;}else{el.className='pos-shift-badge closed';el.textContent='○ ยังไม่เปิดกะ · แตะเพื่อเปิด';}el.onclick=()=>showTab('operations');}catch(e){el.textContent='กะ: ตรวจสอบไม่ได้';}
+  try{const d=await api('/api/operations/shift?branch_id='+currentBranchId);if(d.shift){el.className='pos-shift-badge open';el.textContent=`● กะเปิด · ${formatDateTime(d.shift.opened_at)}`;}else{el.className='pos-shift-badge closed';el.textContent='○ ยังไม่เปิดกะ · แตะเพื่อเปิด';}el.onclick=()=>switchTab('operations');}catch(e){el.textContent='กะ: ตรวจสอบไม่ได้';}
 }
 
 async function loadBoardData() {

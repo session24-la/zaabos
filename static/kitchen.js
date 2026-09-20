@@ -90,11 +90,25 @@ async function afterLogin() {
   branches = boot.branches;
   const sel = $('#branchSelect');
   sel.innerHTML = `<option value="">${escapeHtml(t('select_all_branches'))}</option>` + branches.map(b => `<option value="${b.id}">${escapeHtml(b.icon || '')} ${escapeHtml(b.name)}</option>`).join('');
-  sel.onchange = () => { currentBranchId = sel.value || null; loadBoard(); };
+  sel.onchange = () => { currentBranchId = sel.value || null; loadKitchenStations(); loadBoard(); };
+  await loadKitchenStations();
   loadBoard();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadBoard, 2500);
 }
+
+
+async function loadKitchenStations(){
+  const sel=$('#kitchenStationFilter'); if(!sel)return;
+  const qs=new URLSearchParams(); if(currentBranchId)qs.set('branch_id',currentBranchId);
+  try{
+    const rows=await api('/api/kitchen/stations?'+qs.toString(),{silent:true});
+    const cur=sel.value;
+    sel.innerHTML='<option value="">ทุกสถานี</option>'+rows.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');
+    if(rows.some(x=>String(x.id)===cur))sel.value=cur;
+  }catch(e){}
+}
+$('#kitchenStationFilter').addEventListener('change',loadBoard);
 
 const STATUS_ACTIONS = {
   received: [{ to: 'preparing', labelKey: 'kt_btn_start', cls: 'btn-preparing' }, { to: 'cancelled', labelKey: 'kt_btn_cancel', cls: 'btn-cancel' }],
@@ -106,6 +120,7 @@ function orderTypeLabel(s) { return t('order_type_' + s) || s; }
 async function loadBoard() {
   const qs = new URLSearchParams();
   if (currentBranchId) qs.set('branch_id', currentBranchId);
+  const station=$('#kitchenStationFilter'); if(station && station.value) qs.set('station_id',station.value);
   try {
     const r = await api('/api/kitchen/orders?' + qs.toString(), { silent: true });
     const all = r.orders || [];
