@@ -316,6 +316,7 @@ function refreshCurrentTab(tab) {
   else if (tab === 'pricing') loadPricing();
   else if (tab === 'inventory') loadInventory();
   else if (tab === 'operations') loadOperations();
+  else if (tab === 'receiptsettings') loadReceiptSettings();
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
   else if (tab === 'users') loadUsers();
@@ -1271,11 +1272,14 @@ function printElement(el) {
   setTimeout(() => { window.print(); setTimeout(cleanup, 1000); }, 50);
 }
 
-function printReceipt(orderId) {
+async function printReceipt(orderId) {
   const o = findOrderById(orderId);
   if (!o) return;
-  const shopName = (me && me.tenant && me.tenant.name) || 'ZaabOS';
   const branch = (boot && boot.branches && boot.branches.find(b => Number(b.id) === Number(o.branch_id))) || null;
+  let rs={}; try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(o.branch_id))}catch(e){}
+  const shopName = rs.shop_name || ((me && me.tenant && me.tenant.name) || 'ZaabOS');
+  const displayBranch = rs.branch_name || (branch&&branch.name) || '';
+  const receiptClass=`paper-${rs.paper_width||'80'} font-${rs.font_scale||'normal'} head-${rs.header_align||'center'}`;
   const tax = Number(o.tax_amount || 0);
   const subtotal = Number(o.total_amount || 0);
   const discount = Number(o.discount_amount || 0);
@@ -1303,12 +1307,16 @@ function printReceipt(orderId) {
     return `<tr><td class="rp-qty">${qty}</td><td class="rp-item">${escapeHtml(it.item_name_snapshot)}${opts}${note}</td><td class="rp-price">${fmtMoney(amount)}</td></tr>`;
   }).join('');
   const guest = o.guest_count != null ? o.guest_count : '-';
+  $('#receiptPrintArea').className='receipt-print '+receiptClass;
   $('#receiptPrintArea').innerHTML = `
     <div class="rp-brand">${escapeHtml(shopName)}</div>
-    <div class="rp-brand-sub">RESTAURANT · POS</div>
-    ${branch ? `<div class="rp-center">${escapeHtml(branch.name || '')}</div>` : ''}
+    ${rs.subtitle!=='' ? `<div class="rp-brand-sub">${escapeHtml(rs.subtitle||'RESTAURANT · POS')}</div>` : ''}
+    ${rs.show_branch!==false && displayBranch ? `<div class="rp-center">${escapeHtml(displayBranch)}</div>` : ''}
+    ${rs.address ? `<div class="rp-center rp-shop-detail">${escapeHtml(rs.address)}</div>` : ''}
+    ${rs.phone ? `<div class="rp-center rp-shop-detail">${escapeHtml(rs.phone)}</div>` : ''}
+    ${rs.tax_id ? `<div class="rp-center rp-shop-detail">Tax ID: ${escapeHtml(rs.tax_id)}</div>` : ''}
     <div class="rp-sep"></div>
-    <div class="rp-meta"><span>${escapeHtml(t('label_table') || 'Table')}</span><b>${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b><span class="rp-guest-label">${escapeHtml(t('label_guest_count_short') || 'Guests')}</span><b class="rp-guest-value">${escapeHtml(String(guest))}</b></div>
+    <div class="rp-meta"><span>${escapeHtml(t('label_table') || 'Table')}</span><b>${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b>${rs.show_guest!==false?`<span class="rp-guest-label">${escapeHtml(t('label_guest_count_short') || 'Guests')}</span><b class="rp-guest-value">${escapeHtml(String(guest))}</b>`:''}</div>
     <div class="rp-meta rp-order"><span>Order</span><b>#${escapeHtml(o.order_no)}</b></div>
     <div class="rp-sep"></div>
     <table class="rp-items"><tbody>${itemsRows}</tbody></table>
@@ -1319,14 +1327,14 @@ function printReceipt(orderId) {
     ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
     <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
     ${o.payment_status === 'paid' ? `<div class="rp-paid">【 PAID · ຊຳລະແລ້ວ 】</div>` : ''}
-    ${paymentBreakdown}
+    ${rs.show_payment_breakdown!==false ? paymentBreakdown : (o.payment_method ? `<div class="rp-row"><span>Payment</span><span>${escapeHtml(paymentNames[o.payment_method] || o.payment_method)}</span></div>` : '')}
     ${cash != null ? `<div class="rp-row"><span>${escapeHtml(t('label_cash_received'))}</span><span>${fmtMoney(cash)}</span></div>` : ''}
     ${change != null ? `<div class="rp-row"><span>${escapeHtml(t('label_change'))}</span><span>${fmtMoney(change)}</span></div>` : ''}
     <div class="rp-sep"></div>
-    <div class="rp-footrow"><span>Order time</span><span>${zaabosDateTime(createdAt)}</span></div>
-    ${paidAt ? `<div class="rp-footrow"><span>Paid time</span><span>${zaabosDateTime(paidAt)}</span></div>` : ''}
-    ${o.created_by_name ? `<div class="rp-footrow"><span>Cashier</span><span>${escapeHtml(o.created_by_name)}</span></div>` : ''}
-    <div class="rp-thanks">${escapeHtml(t('receipt_thank_you'))}</div>
+    ${rs.show_order_time!==false?`<div class="rp-footrow"><span>Order time</span><span>${zaabosDateTime(createdAt)}</span></div>`:''}
+    ${paidAt && rs.show_paid_time!==false ? `<div class="rp-footrow"><span>Paid time</span><span>${zaabosDateTime(paidAt)}</span></div>` : ''}
+    ${o.created_by_name && rs.show_cashier!==false ? `<div class="rp-footrow"><span>Cashier</span><span>${escapeHtml(o.created_by_name)}</span></div>` : ''}
+    <div class="rp-thanks">${escapeHtml(rs.footer||t('receipt_thank_you'))}</div>
     <div class="rp-powered">ZaabOS</div>`;
   printElement($('#receiptPrintArea'));
 }
@@ -1714,15 +1722,25 @@ async function loadOperations(){
       $('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:currentBranchId,opening_cash:Number($('#shiftOpeningCash').value||0),notes:$('#shiftOpenNote').value});
     }
     $('#cashMovementList').innerHTML=data.movements.length?data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(formatDateTime(m.created_at))}</div></div><strong>${m.movement_type==='cash_in'?'+':'−'}${fmtMoney(m.amount)}</strong></div>`).join(''):emptyState('💵','ยังไม่มีรายการเงินสดในกะนี้');
+    loadShiftHistory();
     if(me && ['owner','manager'].includes(me.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('🛡️','ยังไม่มีรายการอนุมัติ');}
   }catch(e){toast(e.message,'err')}
 }
-async function opsPost(url,payload){try{const r=await apiJson(url,'POST',payload);if(r.expected_cash!=null)toast(`ปิดกะแล้ว · ควรมี ${fmtMoney(r.expected_cash)} · ต่าง ${fmtMoney(r.difference)}`,'ok');else toast('บันทึกแล้ว','ok');$('#opsAmount').value='';$('#opsReason').value='';loadOperations();}catch(e){toast(e.message,'err')}}
+async function opsPost(url,payload){try{const r=await apiJson(url,'POST',payload);if(r.expected_cash!=null){toast(`ปิดกะแล้ว · ควรมี ${fmtMoney(r.expected_cash)} · ต่าง ${fmtMoney(r.difference)}`,'ok');await printShiftCloseReport(r);}else toast('บันทึกแล้ว','ok');$('#opsAmount').value='';$('#opsReason').value='';loadOperations();}catch(e){toast(e.message,'err')}}
+async function printShiftCloseReport(sh){let rs={};try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(currentBranchId))}catch(e){}const b=(boot.branches||[]).find(x=>Number(x.id)===Number(currentBranchId));const sm=sh.summary||{},pb=sm.payment_breakdown||{};$('#receiptPrintArea').className='receipt-print paper-'+(rs.paper_width||'80')+' font-'+(rs.font_scale||'normal')+' head-'+(rs.header_align||'center');$('#receiptPrintArea').innerHTML=`<div class="rp-brand">${escapeHtml(rs.shop_name||((me&&me.tenant&&me.tenant.name)||'ZaabOS'))}</div><div class="rp-brand-sub">SHIFT CLOSING REPORT · สรุปปิดกะ</div><div class="rp-center">${escapeHtml(rs.branch_name||(b&&b.name)||'')}</div><div class="rp-sep"></div><div class="rp-footrow"><span>เปิดกะ</span><span>${escapeHtml(formatDateTime(sh.opened_at))}</span></div><div class="rp-footrow"><span>ปิดกะ</span><span>${escapeHtml(formatDateTime(sh.closed_at))}</span></div><div class="rp-sep"></div><div class="rp-row"><span>จำนวนบิล</span><span>${Number(sm.bill_count||0)}</span></div><div class="rp-row"><span>ยอดรับชำระ</span><span>${fmtMoney(sm.gross_received||0)}</span></div><div class="rp-row"><span>เงินสด</span><span>${fmtMoney(pb.cash||0)}</span></div><div class="rp-row"><span>QR / โอน</span><span>${fmtMoney((pb.qr||0)+(pb.bank_transfer||0)+(pb.transfer||0))}</span></div><div class="rp-row"><span>คืนเงิน</span><span>−${fmtMoney(sm.refund_total||0)}</span></div><div class="rp-total"><span>ยอดสุทธิ</span><span>${fmtMoney(sm.net_received||0)}</span></div><div class="rp-sep"></div><div class="rp-row"><span>เงินทอนตั้งต้น</span><span>${fmtMoney((sm.expected_cash||0)-(sm.cash_sales||0)-(sm.cash_in||0)+(sm.cash_out||0)+(sm.cash_refunds||0)+(sm.cash_reversals||0))}</span></div><div class="rp-row"><span>เงินเข้า</span><span>${fmtMoney(sm.cash_in||0)}</span></div><div class="rp-row"><span>เงินออก</span><span>${fmtMoney(sm.cash_out||0)}</span></div><div class="rp-row"><span>เงินสดที่ควรมี</span><span>${fmtMoney(sh.expected_cash||sm.expected_cash||0)}</span></div><div class="rp-row"><span>เงินสดนับจริง</span><span>${fmtMoney(sh.counted_cash||0)}</span></div><div class="rp-total"><span>ขาด / เกิน</span><span>${fmtMoney(sh.difference||0)}</span></div>${sh.notes?`<div class="rp-note">หมายเหตุ: ${escapeHtml(sh.notes)}</div>`:''}<div class="rp-thanks">ลงชื่อผู้ปิดกะ __________________</div><div class="rp-powered">ZaabOS</div>`;printElement($('#receiptPrintArea'));}
+async function loadShiftHistory(){const el=$('#shiftHistoryList');if(!el)return;try{const rows=await api('/api/operations/shifts?branch_id='+currentBranchId);el.innerHTML=rows.length?rows.map(x=>`<div class="list-row shift-history-row"><div><b>${escapeHtml(formatDateTime(x.closed_at))}</b><div class="muted">${escapeHtml(x.opened_by_name||'')} · ${Number(x.summary?.bill_count||0)} บิล · สุทธิ ${fmtMoney(x.summary?.net_received||0)}</div></div><button class="ghost-btn" data-print-shift="${x.id}">🧾 พิมพ์</button></div>`).join(''):emptyState('🧾','ยังไม่มีประวัติกะที่ปิด');el.onclick=async e=>{const b=e.target.closest('[data-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.printShift));if(x)await printShiftCloseReport({...x,expected_cash:x.expected_cash,counted_cash:x.counted_cash,difference:x.difference})}}catch(e){el.innerHTML=`<div class="error-text">${escapeHtml(e.message)}</div>`}}
+
 $('#refreshOpsBtn').onclick=loadOperations;
 $('#cashInBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_in',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
 $('#cashOutBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_out',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
 
 // Round 14D pricing / promotions
+let receiptSettingsCache={};
+function readReceiptSettingsForm(){return{branch_id:currentBranchId,shop_name:$('#rsShopName').value.trim(),branch_name:$('#rsBranchName').value.trim(),subtitle:$('#rsSubtitle').value.trim(),address:$('#rsAddress').value.trim(),phone:$('#rsPhone').value.trim(),tax_id:$('#rsTaxId').value.trim(),footer:$('#rsFooter').value.trim(),paper_width:$('#rsPaper').value,font_scale:$('#rsFont').value,header_align:$('#rsAlign').value,show_branch:$('#rsShowBranch').checked,show_guest:$('#rsShowGuest').checked,show_cashier:$('#rsShowCashier').checked,show_payment_breakdown:$('#rsShowPayments').checked,show_order_time:$('#rsShowOrderTime').checked,show_paid_time:$('#rsShowPaidTime').checked}}
+function renderReceiptSettingsPreview(){const r=readReceiptSettingsForm(),el=$('#receiptSettingsPreview');if(!el)return;el.className=`receipt-settings-preview paper-${r.paper_width} font-${r.font_scale} head-${r.header_align}`;el.innerHTML=`<div class="rp-brand">${escapeHtml(r.shop_name||'ชื่อร้าน')}</div>${r.subtitle?`<div class="rp-brand-sub">${escapeHtml(r.subtitle)}</div>`:''}${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}${r.address?`<div class="rp-center rp-shop-detail">${escapeHtml(r.address)}</div>`:''}${r.phone?`<div class="rp-center rp-shop-detail">${escapeHtml(r.phone)}</div>`:''}<div class="rp-sep"></div><div class="rp-meta"><span>โต๊ะ</span><b>โต๊ะ 4</b>${r.show_guest?'<span>ลูกค้า</span><b>3</b>':''}</div><table class="rp-items"><tbody><tr><td>1</td><td>เมนูตัวอย่าง</td><td class="rp-price">₭50,000</td></tr></tbody></table><div class="rp-sep"></div><div class="rp-total"><span>รวม</span><span>₭50,000</span></div>${r.show_payment_breakdown?'<div class="rp-row"><span>Cash</span><span>₭50,000</span></div>':''}<div class="rp-thanks">${escapeHtml(r.footer||'ขอบใจที่ใช้บริการ')}</div><div class="rp-powered">ZaabOS</div>`}
+async function loadReceiptSettings(){if(!currentBranchId)return;try{const r=await api('/api/settings/receipt?branch_id='+currentBranchId);receiptSettingsCache=r;$('#rsShopName').value=r.shop_name||'';$('#rsBranchName').value=r.branch_name||'';$('#rsSubtitle').value=r.subtitle||'';$('#rsAddress').value=r.address||'';$('#rsPhone').value=r.phone||'';$('#rsTaxId').value=r.tax_id||'';$('#rsFooter').value=r.footer||'';$('#rsPaper').value=r.paper_width||'80';$('#rsFont').value=r.font_scale||'normal';$('#rsAlign').value=r.header_align||'center';$('#rsShowBranch').checked=r.show_branch!==false;$('#rsShowGuest').checked=r.show_guest!==false;$('#rsShowCashier').checked=r.show_cashier!==false;$('#rsShowPayments').checked=r.show_payment_breakdown!==false;$('#rsShowOrderTime').checked=r.show_order_time!==false;$('#rsShowPaidTime').checked=r.show_paid_time!==false;renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}}
+$('#tab-receiptsettings').addEventListener('input',renderReceiptSettingsPreview);$('#tab-receiptsettings').addEventListener('change',renderReceiptSettingsPreview);$('#saveReceiptSettingsBtn').onclick=async()=>{try{const r=await apiJson('/api/settings/receipt','PUT',readReceiptSettingsForm());receiptSettingsCache=r.settings||{};toast('บันทึกการตั้งค่าร้านและใบเสร็จแล้ว','ok');renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}};
+
 async function loadPricing(){
   if(!currentBranchId) return;
   try{
