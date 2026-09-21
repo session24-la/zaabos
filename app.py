@@ -155,7 +155,7 @@ ROLES = ('super_admin', 'owner', 'manager', 'staff')
 ORDER_STATUSES = ('received', 'preparing', 'ready', 'served', 'completed', 'cancelled')
 PAYMENT_METHODS = ('cash', 'qr', 'card', 'bank_transfer', 'other')
 STATUS_TRANSITIONS = {
-    'received': {'preparing','cancelled'},
+    'received': {'preparing','ready','cancelled'},
     'preparing': {'ready','cancelled'},
     'ready': {'served','cancelled'},
     'served': {'completed','cancelled'},
@@ -2833,6 +2833,22 @@ def reports_summary():
     if branch_id: open_q+=' AND branch_id=?'; open_args.append(branch_id)
     open_row=conn.execute(open_q,open_args).fetchone()
 
+    cancel_q = """SELECT c.operation_type,c.reason_text,c.created_at,c.entity_id,u.display_name AS performed_by_name
+      FROM critical_operations c LEFT JOIN users u ON u.id=c.performed_by_user_id
+      WHERE c.tenant_id=? AND c.operation_type IN ('cancel_order','cancel_item') AND c.created_at>=? AND c.created_at<?"""
+    cancel_args=[g.tenant_id,range_start,range_end]
+    if branch_id: cancel_q+=' AND c.branch_id=?'; cancel_args.append(branch_id)
+    cancel_q+=' ORDER BY c.created_at DESC'
+    cancel_rows=[dict(r) for r in conn.execute(cancel_q,cancel_args).fetchall()]
+    reason_map={}
+    for cr in cancel_rows:
+        reason=(cr.get('reason_text') or 'ไม่ระบุเหตุผล').strip() or 'ไม่ระบุเหตุผล'
+        x=reason_map.setdefault(reason,{'reason':reason,'count':0,'order_count':0,'item_count':0})
+        x['count']+=1; x['order_count']+=1 if cr['operation_type']=='cancel_order' else 0; x['item_count']+=1 if cr['operation_type']=='cancel_item' else 0
+    cancellation_analytics={'total':len(cancel_rows),'order_count':sum(x['operation_type']=='cancel_order' for x in cancel_rows),
+      'item_count':sum(x['operation_type']=='cancel_item' for x in cancel_rows),
+      'reasons':sorted(reason_map.values(),key=lambda x:(-x['count'],x['reason'])),'recent':cancel_rows[:30]}
+
     return jsonify(
         from_date=frm, to_date=to,
         order_count=order_count, subtotal=subtotal, discount=discount, service_charge=service, tax=tax, delivery_fee=delivery, guests=guests, total_sales=total_sales,
@@ -2842,6 +2858,7 @@ def reports_summary():
         refund_total=refund_total, refund_count=refund_row['count'] or 0, net_sales=total_sales-refund_total,
         open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
         average_bill=(total_sales / order_count) if order_count else 0,
+        cancellations=cancellation_analytics,
     )
 
 @app.get('/api/daily-closing')

@@ -111,11 +111,12 @@
             <option value="completed" data-i18n="status_completed">เสร็จสิ้น</option>
             <option value="cancelled" data-i18n="status_cancelled">ยกเลิก</option>
           </select>
-          <button class="ghost-btn history-kitchen-btn" id="historyKitchenBtn" type="button">👨‍🍳 หน้าจอครัว</button>
           <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
         </div>
       </div>
+      <div class="history-workspace-switch" id="historyWorkspaceSwitch"><button type="button" class="active" data-history-view="orders">🧾 ออเดอร์</button><button type="button" data-history-view="kitchen">👨‍🍳 ครัว <span id="historyKitchenCount" class="mini-count">0</span></button></div>
       <div id="ordersList"></div>
+      <div id="historyKitchenWorkspace" class="history-kitchen-workspace hidden"><div class="history-kitchen-toolbar"><div><b>จอครัวในหน้าประวัติ</b><span>กดติดตามได้ตามต้องการ · ไม่กดก็ไม่กระทบการจ่ายเงิน สต็อก หรือรายงาน</span></div><select id="historyKitchenStation"><option value="">ทุกสถานี</option></select></div><div id="historyKitchenBoard" class="history-kitchen-board"></div></div>
     </div>
   </section>
 
@@ -188,6 +189,7 @@
           <div class="report-cards payment-cards" id="paymentBreakdown"></div>
         </section>
       </div>
+      <section class="report-section cancellation-report"><div class="section-kicker">คุณภาพการบริการ</div><h3>การยกเลิก & เหตุผล</h3><div id="cancellationReport"></div></section>
     </div>
     <div class="panel">
       <div class="panel-head">
@@ -476,10 +478,10 @@
     <label><span>Manager / Owner username</span><input id="cpApprovalUser" autocomplete="off"></label>
     <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
   </div>
-  <label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label>
-  <label><span data-i18n="label_tax_amount">ภาษี (ถ้ามี)</span><input id="cpTax" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
-  <label><span data-i18n="label_cash_received">รับเงินมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
-  <div class="row" style="margin-top:6px"><span data-i18n="label_change">เงินทอน</span><b id="cpChange">0</b></div>
+  <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
+  <label id="cpCashLabel"><span>รับเงินสดมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
+  <div class="payment-live-summary"><div><span>ชำระรวม</span><b id="cpPaidTotal">0</b></div><div><span>คงเหลือ</span><b id="cpRemaining">0</b></div><div><span>เงินทอน</span><b id="cpChange">0</b></div></div>
+  <div class="payment-tax-note">ภาษีและค่าบริการคำนวณจากการตั้งค่าร้านอัตโนมัติ ไม่ใช่ยอด QR/ยอดโอน</div>
   <div class="split-pay-head"><b>แบ่งชำระ</b><button type="button" class="ghost-btn" id="cpAddPayment">+ เพิ่มช่องทาง</button></div>
   <div id="cpPaymentParts"></div>
   <div class="login-error" id="cpError"></div>
