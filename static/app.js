@@ -1168,23 +1168,34 @@ function openBillManager(sourceId){
   renderBillManager(); openModal('#billManagerModal');
 }
 $$('#billManagerModal [data-bm-mode]').forEach(b=>b.addEventListener('click',()=>{billManagerMode=b.dataset.bmMode;$$('#billManagerModal [data-bm-mode]').forEach(x=>x.classList.toggle('active',x===b));renderBillManager();}));
+function bmSelectedItems(body){
+  const items=[];
+  body.querySelectorAll('[data-bm-qty]').forEach(x=>{const q=Number(x.textContent);if(q>0)items.push({item_id:Number(x.dataset.bmQty),quantity:q})});
+  return items;
+}
 function renderBillManager(){
   const o=billManagerSource, body=$('#billManagerBody'); if(!o)return;
   if(billManagerMode==='move'){
     const tables=branchTables().filter(t=>String(t.id)!==String(o.table_id));
-    body.innerHTML=`<p class="muted">ย้ายบิล #${escapeHtml(o.order_no)} ไปโต๊ะใหม่</p><div class="bm-grid">${tables.map(t=>`<button class="bm-choice" data-bm-table="${t.id}">${escapeHtml(t.name||('โต๊ะ '+t.id))}</button>`).join('')||'<div class="muted">ไม่มีโต๊ะอื่น</div>'}</div>`;
+    body.innerHTML=`<div class="bm-move-head"><div><span class="bm-kicker">ย้ายทั้งบิล</span><h3>${escapeHtml(o.table_name_snapshot||'โต๊ะปัจจุบัน')} <span>→</span> เลือกโต๊ะปลายทาง</h3><p>โต๊ะที่มีออเดอร์อยู่จะย้ายทั้งบิลเข้าไปไม่ได้ เพื่อป้องกันบิลชนกัน</p></div><span class="bm-bill-no">#${escapeHtml(o.order_no)}</span></div>
+      <div class="bm-grid bm-table-grid">${tables.map(t=>{const active=tableActiveOrders(t.id).filter(x=>x.id!==o.id&&!['cancelled','completed'].includes(x.status));const occupied=active.length>0;return `<button class="bm-choice bm-table-choice ${occupied?'is-occupied':''}" ${occupied?'disabled':''} data-bm-table="${t.id}"><span class="bm-table-icon">${occupied?'●':'▦'}</span><span><b>${escapeHtml(t.name||('โต๊ะ '+t.id))}</b><small>${occupied?'มีออเดอร์อยู่ · ย้ายทั้งบิลไม่ได้':'ว่าง · แตะเพื่อย้ายทั้งบิล'}</small></span><span class="bm-arrow">${occupied?'ล็อก':'→'}</span></button>`}).join('')||'<div class="bm-empty">ไม่มีโต๊ะปลายทาง</div>'}</div>`;
   }else if(billManagerMode==='merge'){
     const targets=(activeOrders||[]).filter(x=>x.id!==o.id&&x.branch_id===o.branch_id&&x.payment_status==='unpaid'&&!['cancelled','completed'].includes(x.status));
-    body.innerHTML=`<p class="muted">รวมบิลนี้เข้ากับบิลปลายทาง</p><div class="bm-grid">${targets.map(x=>`<button class="bm-choice" data-bm-target="${x.id}">#${escapeHtml(x.order_no)} · ${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}<small>${fmtMoney(x.total_amount)}</small></button>`).join('')||'<div class="muted">ไม่มีบิลที่รวมได้</div>'}</div>`;
+    body.innerHTML=`<div class="bm-section-head"><div><span class="bm-kicker">รวมทั้งบิล</span><h3>เลือกบิลปลายทาง</h3><p>รายการทั้งหมดจากบิลนี้จะถูกรวมเข้าบิลที่เลือก</p></div></div><div class="bm-grid">${targets.map(x=>`<button class="bm-choice" data-bm-target="${x.id}"><b>${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}</b><small>#${escapeHtml(x.order_no)} · ${fmtMoney(x.total_amount)}</small></button>`).join('')||'<div class="bm-empty">ไม่มีบิลที่รวมได้</div>'}</div>`;
   }else{
     const rows=o.items.filter(it=>Number(it.quantity||0)-Number(it.cancelled_quantity||0)>0);
-    body.innerHTML=`<p class="muted">แตะ + / − เพื่อเลือกจำนวนที่จะย้ายออกเป็นบิลใหม่</p><div class="bm-items">${rows.map(it=>{const q=Number(it.quantity||0)-Number(it.cancelled_quantity||0);return `<div class="bm-item"><div><b>${escapeHtml(it.item_name_snapshot)}</b><small>มี ${q}</small></div><div class="qty-stepper"><button data-bm-minus="${it.id}">−</button><span data-bm-qty="${it.id}" data-max="${q}">0</span><button data-bm-plus="${it.id}">+</button></div></div>`}).join('')}</div><button class="save" id="bmSplitConfirm">แยกเป็นบิลใหม่</button>`;
-    $('#bmSplitConfirm').onclick=async()=>{const items=[];body.querySelectorAll('[data-bm-qty]').forEach(x=>{const q=Number(x.textContent);if(q>0)items.push({item_id:Number(x.dataset.bmQty),quantity:q})});if(!items.length){toast('เลือกรายการก่อน','err');return;}try{const r=await apiJson(`/api/orders/${o.id}/split`,'POST',{items});closeModals();toast(`สร้างบิล #${r.new_order_no}`,'ok');onOrderActionDone()}catch(e){toast(e.message,'err')}};
+    const occupiedTargets=(activeOrders||[]).filter(x=>x.id!==o.id&&x.branch_id===o.branch_id&&x.order_type==='dine_in'&&x.payment_status==='unpaid'&&!['cancelled','completed'].includes(x.status));
+    body.innerHTML=`<div class="bm-section-head"><div><span class="bm-kicker">ย้ายบางรายการ</span><h3>เลือกรายการและจำนวน</h3><p>ใช้เมื่อลูกค้าย้ายบางเมนูไปอีกโต๊ะ หรืออยากแยกเป็นบิลใหม่ โดยสต็อกและครัวจะไม่ถูกนับซ้ำ</p></div></div>
+      <div class="bm-items">${rows.map(it=>{const q=Number(it.quantity||0)-Number(it.cancelled_quantity||0);return `<div class="bm-item"><div><b>${escapeHtml(it.item_name_snapshot)}</b><small>ในบิล ${q}</small></div><div class="qty-stepper"><button data-bm-minus="${it.id}">−</button><span data-bm-qty="${it.id}" data-max="${q}">0</span><button data-bm-plus="${it.id}">+</button></div></div>`}).join('')}</div>
+      <div class="bm-destination"><span class="bm-kicker">ปลายทาง</span><div class="bm-destination-actions"><button class="bm-new-bill" id="bmSplitConfirm">＋ แยกเป็นบิลใหม่</button></div>
+      ${occupiedTargets.length?`<div class="bm-target-label">หรือย้ายรายการที่เลือกไปยังบิล/โต๊ะที่มีออเดอร์อยู่</div><div class="bm-grid bm-target-grid">${occupiedTargets.map(x=>`<button class="bm-choice bm-target-choice" data-bm-split-target="${x.id}"><span><b>${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}</b><small>#${escapeHtml(x.order_no)} · ${fmtMoney(x.total_amount)}</small></span><span class="bm-arrow">→</span></button>`).join('')}</div>`:'<div class="bm-target-label">ตอนนี้ไม่มีโต๊ะอื่นที่มีบิลเปิดอยู่</div>'}</div>`;
+    $('#bmSplitConfirm').onclick=async()=>{const items=bmSelectedItems(body);if(!items.length){toast('เลือกรายการก่อน','err');return;}try{const r=await apiJson(`/api/orders/${o.id}/split`,'POST',{items});closeModals();toast(`แยกเป็นบิล #${r.new_order_no}`,'ok');onOrderActionDone()}catch(e){toast(e.message,'err')}};
   }
 }
 $('#billManagerBody').addEventListener('click',async e=>{
-  const t=e.target.closest('[data-bm-table]');if(t){try{await apiJson(`/api/orders/${billManagerSource.id}/table`,'PUT',{table_id:Number(t.dataset.bmTable)});closeModals();toast('ย้ายโต๊ะแล้ว','ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
-  const m=e.target.closest('[data-bm-target]');if(m){try{await apiJson(`/api/orders/${billManagerSource.id}/merge`,'POST',{target_order_id:Number(m.dataset.bmTarget)});closeModals();toast('รวมบิลแล้ว','ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
+  const t=e.target.closest('[data-bm-table]');if(t&&!t.disabled){const destination=t.querySelector('b')?.textContent||'โต๊ะปลายทาง';if(!confirm(`ยืนยันย้ายทั้งบิลไป ${destination}?`))return;try{await apiJson(`/api/orders/${billManagerSource.id}/move-table`,'PUT',{table_id:Number(t.dataset.bmTable)});closeModals();toast(`ย้ายไป ${destination} แล้ว`,'ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
+  const m=e.target.closest('[data-bm-target]');if(m){const destination=m.querySelector('b')?.textContent||'บิลปลายทาง';if(!confirm(`ยืนยันรวมทั้งบิลเข้ากับ ${destination}?`))return;try{await apiJson(`/api/orders/${billManagerSource.id}/merge`,'POST',{target_order_id:Number(m.dataset.bmTarget)});closeModals();toast('รวมบิลแล้ว','ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
+  const st=e.target.closest('[data-bm-split-target]');if(st){const body=$('#billManagerBody'),items=bmSelectedItems(body);if(!items.length){toast('เลือกรายการก่อน','err');return;}const destination=st.querySelector('b')?.textContent||'โต๊ะปลายทาง';if(!confirm(`ย้ายเฉพาะรายการที่เลือกไป ${destination}?`))return;try{await apiJson(`/api/orders/${billManagerSource.id}/split`,'POST',{items,target_order_id:Number(st.dataset.bmSplitTarget)});closeModals();toast(`ย้ายรายการไป ${destination} แล้ว`,'ok');onOrderActionDone()}catch(err){toast(err.message,'err')}return;}
   const id=e.target.dataset.bmPlus||e.target.dataset.bmMinus;if(id){const q=$(`#billManagerBody [data-bm-qty="${id}"]`);let n=Number(q.textContent),mx=Number(q.dataset.max);n=e.target.dataset.bmPlus?Math.min(mx,n+1):Math.max(0,n-1);q.textContent=n;}
 });
 
@@ -1675,11 +1686,7 @@ function openAddItemsToOrder(orderId) {
 }
 async function openMoveTable(orderId) {
   const ord=findOrderById(orderId); if(!ord) return;
-  const choices=branchTables().filter(tb=>tb.id!==ord.table_id && tableActiveOrders(tb.id).length===0);
-  if(!choices.length){ toast('ไม่มีโต๊ะว่างสำหรับย้าย','err'); return; }
-  const msg='เลือกหมายเลขโต๊ะปลายทาง:\n'+choices.map((tb,i)=>`${i+1}. ${tb.name}`).join('\n');
-  const raw=prompt(msg,'1'); if(raw===null) return; const idx=Number(raw)-1; if(!choices[idx]){toast('เลือกโต๊ะไม่ถูกต้อง','err');return;}
-  try{await apiJson(`/api/orders/${orderId}/move-table`,'PUT',{table_id:choices[idx].id}); closeModals(); toast(`ย้ายไป ${choices[idx].name} แล้ว`,'ok'); onOrderActionDone();}catch(e){toast(e.message,'err');}
+  openBillManager(orderId);
 }
 
 // ===================== Misc =====================
