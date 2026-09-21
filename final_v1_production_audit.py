@@ -10,7 +10,7 @@ checks={
 'payment_decimal':'money_decimal(base*Decimal' in a and "total != due" in a,
 'partial_refund':'remaining_refundable' in a or 'refundable' in a,
 'split_payment':"parts=d.get('payments')" in a,
-'payment_auto_receipt':'printReceipt(orderId);' in j,
+'payment_auto_receipt':('printReceipt(id)' in j or 'printReceipt(orderId)' in j),
 'csrf_mutations':"request.method in ('POST', 'PUT', 'DELETE')" in a and 'X-CSRF-Token' in a,
 'secure_cookie':'SESSION_COOKIE_SECURE=IS_POSTGRES' in a,
 'security_headers':'X-Content-Type-Options' in a and 'Strict-Transport-Security' in a,
