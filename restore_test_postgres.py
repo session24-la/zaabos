@@ -22,6 +22,7 @@ import sys
 import json
 import shutil
 import subprocess
+import hashlib
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -135,6 +136,20 @@ def main():
         print('guard    : DATABASE_URL not set in this environment; '
               'only the explicit target will be written')
 
+    # ---------- verify artifact integrity before any destructive action ----------
+    manifest = dump.with_suffix('.dump.json')
+    if not manifest.is_file():
+        fail('backup manifest is required before restore')
+    try:
+        manifest_data = json.loads(manifest.read_text(encoding='utf-8'))
+    except Exception as e:
+        fail('backup manifest is invalid: ' + scrub(str(e), test, prod))
+    expected_sha = str(manifest_data.get('sha256') or '').strip().lower()
+    actual_sha = hashlib.sha256(dump.read_bytes()).hexdigest()
+    if not expected_sha or actual_sha != expected_sha:
+        fail('backup checksum does not match manifest — refusing destructive restore')
+    print('checksum : SHA-256 matches manifest — OK')
+
     # ---------- wipe the disposable target, then restore ----------
     # Dropping and recreating the schema gives a deterministic restore and a
     # meaningful exit code. `pg_restore --clean` against a fresh empty database
@@ -157,14 +172,7 @@ def main():
         fail('pg_restore failed: ' + scrub(r.stderr, test, prod)[-1500:])
 
     # ---------- verification ----------
-    expected = {}
-    manifest = dump.with_suffix('.dump.json')
-    if manifest.is_file():
-        try:
-            expected = (json.loads(manifest.read_text(encoding='utf-8'))
-                        .get('core_row_counts') or {})
-        except Exception:
-            expected = {}
+    expected = manifest_data.get('core_row_counts') or {}
 
     conn = psycopg2.connect(test, connect_timeout=15)
     problems, report = [], {}
