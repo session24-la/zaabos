@@ -864,3 +864,23 @@ main{max-width:1180px;padding-top:14px}
 @media(max-width:1180px){#tab-receiptsettings .settings-layout{grid-template-columns:minmax(0,1fr) 360px}#tab-receiptsettings .settings-checks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:920px){#tab-receiptsettings{max-width:760px}#tab-receiptsettings .settings-layout{grid-template-columns:1fr}#tab-receiptsettings .receipt-preview-panel{position:static}#tab-receiptsettings .receipt-preview-wrap{min-height:0;max-height:620px}#tab-receiptsettings .receipt-settings-preview{min-height:105mm}}
 @media(max-width:600px){#tab-receiptsettings .panel{padding:14px}#tab-receiptsettings .settings-editor .form-grid{grid-template-columns:1fr}#tab-receiptsettings .settings-editor .form-grid .wide{grid-column:auto}#tab-receiptsettings .settings-checks{grid-template-columns:1fr 1fr;gap:8px}#tab-receiptsettings .settings-checks label{min-height:42px;padding:8px;font-size:12px}#tab-receiptsettings .receipt-preview-wrap{padding:10px}.shift-confirm-summary{grid-template-columns:1fr}.shift-confirm-summary>div{display:flex;align-items:center;justify-content:space-between;gap:12px}.shift-confirm-summary span{margin:0}.shift-confirm-summary b{font-size:16px}.shift-confirm-sheet .dialog-actions{grid-template-columns:1fr}.shift-confirm-sheet .dialog-actions button{width:100%}}
+
+/* Round 27.2 — compact receipt toggles + explicit front/kitchen printer routing */
+#tab-receiptsettings .settings-toggle-grid{grid-template-columns:repeat(3,minmax(150px,1fr));gap:8px}
+#tab-receiptsettings .settings-toggle-grid label{min-height:64px;padding:10px 12px;display:flex;align-items:center;gap:10px;overflow:hidden}
+#tab-receiptsettings .settings-toggle-grid input{width:18px;height:18px;flex:0 0 auto;margin:0}
+#tab-receiptsettings .settings-toggle-grid span{display:flex;flex-direction:column;min-width:0;line-height:1.15}
+#tab-receiptsettings .settings-toggle-grid b{font-size:14px;color:var(--text);white-space:nowrap}
+#tab-receiptsettings .settings-toggle-grid small{font-size:11px;color:var(--muted);margin-top:4px;white-space:normal;overflow-wrap:normal;word-break:normal}
+#tab-receiptsettings .settings-save-compact{min-height:48px;padding:11px 18px;font-size:15px;border-radius:14px;margin-top:4px}
+#tab-receiptsettings .printer-help{margin:-4px 0 10px}
+#tab-receiptsettings .printer-route-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+#tab-receiptsettings .printer-route-grid>label{display:flex;flex-direction:column;gap:7px;padding:12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}
+#tab-receiptsettings .printer-route-grid>label>span{font-weight:800;font-size:14px}
+#tab-receiptsettings .printer-route-grid small,#tab-receiptsettings .printer-queue-toggle small{font-size:11px;color:var(--muted);line-height:1.35}
+#tab-receiptsettings .printer-queue-toggle{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2)}
+#tab-receiptsettings .printer-queue-toggle input{width:18px;height:18px;flex:0 0 auto}
+#tab-receiptsettings .printer-queue-toggle span{display:flex;flex-direction:column;gap:2px}
+#tab-receiptsettings .printer-agent-note{margin-top:9px;padding:9px 11px;border-radius:11px;background:rgba(255,139,61,.08);border:1px solid rgba(255,139,61,.22);font-size:11px;line-height:1.45;color:var(--muted)}
+@media(max-width:1180px){#tab-receiptsettings .settings-toggle-grid{grid-template-columns:repeat(2,minmax(150px,1fr))}}
+@media(max-width:600px){#tab-receiptsettings .settings-toggle-grid{grid-template-columns:1fr 1fr}#tab-receiptsettings .settings-toggle-grid label{min-height:58px;padding:9px}#tab-receiptsettings .settings-toggle-grid b{font-size:13px}#tab-receiptsettings .settings-toggle-grid small{font-size:10.5px}#tab-receiptsettings .printer-route-grid{grid-template-columns:1fr}#tab-receiptsettings .settings-save-compact{width:100%}}
