@@ -896,3 +896,15 @@ main{max-width:1180px;padding-top:14px}
 #tab-receiptsettings .printer-route-grid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))!important}
 @media(max-width:1050px){#tab-receiptsettings .settings-layout{grid-template-columns:1fr!important;max-width:760px;margin:0 auto}#tab-receiptsettings .receipt-preview-panel{max-width:none;position:static!important}#tab-receiptsettings .receipt-preview-wrap{min-height:0!important}}
 @media(max-width:560px){#tab-receiptsettings .settings-toggle-grid{grid-template-columns:1fr!important}#tab-receiptsettings .settings-toggle-grid label{min-height:54px!important}#tab-receiptsettings .receipt-preview-wrap{padding:10px!important}.receipt-settings-preview{transform-origin:top center}}
+
+/* Round 28 — Production Gate: tablet navigation must stay inside the viewport. */
+@media (min-width:641px) and (max-width:999px){
+  .pos-nav{max-width:100%!important;width:100%!important;grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:7px!important}
+  .pos-nav>.nav-secondary{display:none!important}
+  .pos-nav>button,.pos-nav>.nav-more-wrap>.nav-primary{min-width:0!important;padding-left:8px!important;padding-right:8px!important}
+  .pos-nav .tab-lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
+@media (max-width:640px){
+  .menu-manager,.menu-category-sidebar,.menu-items-workspace{min-width:0!important;max-width:100%!important;width:100%!important}
+  .menu-category-list{max-width:100%!important}
+}
