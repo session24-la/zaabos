@@ -474,13 +474,14 @@
 
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
   <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
-  <label><span>Promotion Code (ถ้ามี)</span><input id="cpPromo" maxlength="40" placeholder="เช่น LUNCH10"></label>
-  <label><span>ส่วนลดพิเศษ (ถ้ามี)</span><input id="cpDiscount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
-  <label><span>เหตุผลส่วนลด</span><input id="cpDiscountReason" maxlength="300" placeholder="ระบุเมื่อให้ส่วนลดพิเศษ"></label>
-  <div class="form-grid">
-    <label><span>Manager / Owner username</span><input id="cpApprovalUser" autocomplete="off"></label>
-    <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
-  </div>
+  <details class="payment-advanced" id="cpAdvanced"><summary><span>🏷️ โปรโมชั่น / ส่วนลด</span><small>ไม่ใช้สามารถข้ามได้</small></summary><div class="payment-advanced-body">
+    <label><span>Promotion Code (ถ้ามี)</span><input id="cpPromo" maxlength="40" placeholder="เช่น LUNCH10"></label>
+    <div class="form-grid"><label><span>ส่วนลดพิเศษ (ถ้ามี)</span><input id="cpDiscount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label><label><span>เหตุผลส่วนลด</span><input id="cpDiscountReason" maxlength="300" placeholder="ระบุเมื่อให้ส่วนลดพิเศษ"></label></div>
+    <div class="form-grid">
+      <label><span>Manager / Owner username</span><input id="cpApprovalUser" autocomplete="off"></label>
+      <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
+    </div>
+  </div></details>
   <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
   <label id="cpCashLabel"><span>รับเงินสดมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <div class="payment-live-summary"><div><span>ชำระรวม</span><b id="cpPaidTotal">0</b></div><div><span>คงเหลือ</span><b id="cpRemaining">0</b></div><div><span>เงินทอน</span><b id="cpChange">0</b></div></div>
@@ -495,6 +496,10 @@
 <div class="modal" id="orderDetailModal"><div class="sheet wide"><div class="sheet-head"><h2 id="orderDetailTitle" data-i18n="order_detail_title">รายละเอียดออเดอร์</h2><button data-close>×</button></div>
   <div id="orderDetailBody"></div>
 </div></div>
+
+<div class="modal action-dialog" id="refundModal"><div class="sheet small"><div class="sheet-head"><div><div class="dialog-eyebrow">REFUND</div><h2>คืนเงิน</h2></div><button data-close>×</button></div><div class="dialog-summary"><span>คืนได้สูงสุด</span><b id="refundMax">0</b></div><label><span>ยอดคืนเงิน</span><input id="refundAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เว้นว่าง = คืนเต็มจำนวน"></label><label><span>เหตุผลการคืนเงิน</span><textarea id="refundReason" maxlength="300" rows="3" placeholder="เช่น ลูกค้าเปลี่ยนใจ / รายการผิด"></textarea></label><div class="dialog-note">การคืนเงินจะถูกบันทึกในประวัติและรายงาน ไม่สามารถทำให้ยอดคืนรวมเกินยอดที่ชำระได้</div><div class="login-error" id="refundError"></div><div class="dialog-actions"><button class="ghost-btn" data-close>ยกเลิก</button><button class="save danger-save" id="refundSubmit">ยืนยันคืนเงิน</button></div></div></div>
+
+<div class="modal action-dialog" id="reopenModal"><div class="sheet small"><div class="sheet-head"><div><div class="dialog-eyebrow">REOPEN BILL</div><h2>เปิดบิลกลับมาแก้ไข</h2></div><button data-close>×</button></div><div class="dialog-hero-icon">↩️</div><p class="dialog-copy">การชำระเดิมจะยังอยู่ในประวัติ แต่ถูกทำเครื่องหมายย้อนรายการ จากนั้นบิลและโต๊ะจะกลับมาแก้ไขได้อีกครั้ง</p><div class="dialog-note warning">บิลที่มีการคืนเงินแล้วจะไม่สามารถเปิดกลับมาแก้ไขได้ เพื่อป้องกันยอดการเงินผิดพลาด</div><div class="login-error" id="reopenError"></div><div class="dialog-actions"><button class="ghost-btn" data-close>ยังไม่เปิด</button><button class="save" id="reopenSubmit">เปิดบิลกลับมาแก้ไข</button></div></div></div>
 
 <div class="modal" id="billManagerModal"><div class="sheet wide"><div class="sheet-head"><h2>จัดการบิล</h2><button data-close>×</button></div>
   <div class="bill-manager-tabs"><button data-bm-mode="move" class="active">ย้ายโต๊ะ</button><button data-bm-mode="merge">รวมบิล</button><button data-bm-mode="split">ย้ายบางรายการ / แยกบิล</button></div>
