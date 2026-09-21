@@ -294,7 +294,8 @@ $('#moreNavBtn').addEventListener('click', (e) => {
   $('#moreNavBtn').setAttribute('aria-expanded', String(!open));
 });
 document.addEventListener('click', (e) => { if (!e.target.closest('.nav-more-wrap')) { $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded','false'); } });
-$('#historyKitchenBtn').addEventListener('click', () => { window.location.href='/kitchen'; });
+let historyView='orders';
+$('#historyWorkspaceSwitch').addEventListener('click',e=>{const b=e.target.closest('[data-history-view]');if(!b)return;historyView=b.dataset.historyView;$$('#historyWorkspaceSwitch button').forEach(x=>x.classList.toggle('active',x===b));$('#ordersList').classList.toggle('hidden',historyView!=='orders');$('#historyKitchenWorkspace').classList.toggle('hidden',historyView!=='kitchen');if(historyView==='kitchen')loadHistoryKitchen();});
 
 function switchTab(tab) {
   $$('#mainTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -428,7 +429,9 @@ function renderReportCards(s) {
   const labels={cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'};
   if (s.refund_total > 0) $('#reportCards').insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
+  renderCancellationReport(s.cancellations||{});
 }
+function renderCancellationReport(c){const el=$('#cancellationReport');if(!el)return;const reasons=c.reasons||[],recent=c.recent||[];if(!(c.total||0)){el.innerHTML=emptyState('✅','ช่วงนี้ไม่มีการยกเลิก');return;}el.innerHTML=`<div class="cancel-summary-cards"><div><b>${c.total}</b><span>เหตุการณ์ยกเลิก</span></div><div><b>${c.order_count}</b><span>ยกเลิกทั้งบิล</span></div><div><b>${c.item_count}</b><span>ยกเลิกรายการ</span></div></div><div class="cancel-reason-list">${reasons.map((x,i)=>`<div class="cancel-reason-row"><span>${i+1}</span><div><b>${escapeHtml(x.reason)}</b><small>${x.order_count} บิล · ${x.item_count} รายการ</small></div><strong>${x.count}</strong></div>`).join('')}</div><details class="cancel-audit"><summary>ดูรายการล่าสุด</summary>${recent.map(x=>`<div class="cancel-audit-row"><span>${x.operation_type==='cancel_order'?'ทั้งบิล':'รายการ'}</span><b>${escapeHtml(x.reason_text||'ไม่ระบุเหตุผล')}</b><small>${escapeHtml(x.performed_by_name||'-')} · ${formatDateTime(x.created_at)}</small></div>`).join('')}</details>`;}
 
 function renderTopItems(items) {
   const el = $('#reportTopItems');
@@ -963,8 +966,12 @@ async function loadOrders() {
   renderOrdersList(r.orders);
 }
 $('#orderStatusFilter').addEventListener('change', loadOrders);
-$('#refreshOrdersBtn').addEventListener('click', loadOrders);
+$('#refreshOrdersBtn').addEventListener('click',()=>{loadOrders();if(historyView==='kitchen')loadHistoryKitchen();});
 $('#refreshPosBtn').addEventListener('click', loadBoardData);
+async function loadHistoryKitchenStations(){if(!currentBranchId)return;try{const rows=await api('/api/kitchen/stations?branch_id='+currentBranchId),sel=$('#historyKitchenStation'),cur=sel.value;sel.innerHTML='<option value="">ทุกสถานี</option>'+rows.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');sel.value=rows.some(x=>String(x.id)===cur)?cur:'';}catch(e){}}
+async function loadHistoryKitchen(){if(!currentBranchId)return;await loadHistoryKitchenStations();const qs=new URLSearchParams({branch_id:currentBranchId}),station=$('#historyKitchenStation').value;if(station)qs.set('station_id',station);try{const r=await api('/api/kitchen/orders?'+qs),rows=(r.orders||[]).filter(o=>['received','preparing','ready'].includes(o.status));$('#historyKitchenCount').textContent=rows.length;$('#historyKitchenBoard').innerHTML=rows.length?rows.map(o=>`<article class="hk-card ${o.status}"><div class="hk-head"><div><b>#${escapeHtml(o.order_no)}</b><span>${escapeHtml(o.table_name_snapshot||orderTypeLabel(o.order_type))}</span></div><time>${fmtClock(o.created_at)}</time></div><div class="hk-items">${o.items.filter(it=>it.kitchen_sent_at&&Number(it.quantity||0)>Number(it.cancelled_quantity||0)).map(it=>`<div><b>${Number(it.quantity||0)-Number(it.cancelled_quantity||0)}×</b><span>${escapeHtml(it.item_name_snapshot)}</span></div>`).join('')}</div><div class="hk-actions">${o.status!=='ready'?`<button data-hk-status="${o.id}:ready" class="hk-ready">✓ พร้อมเสิร์ฟ</button>`:`<button data-hk-status="${o.id}:served" class="hk-served">✓ เสิร์ฟแล้ว</button>`}</div></article>`).join(''):emptyState('👨‍🍳','ไม่มีออเดอร์ที่ต้องติดตามในครัว');}catch(e){toast(e.message,'err')}}
+$('#historyKitchenStation').addEventListener('change',loadHistoryKitchen);
+$('#historyKitchenBoard').addEventListener('click',async e=>{const b=e.target.closest('[data-hk-status]');if(!b)return;const [id,status]=b.dataset.hkStatus.split(':');try{await apiJson('/api/orders/'+id+'/status','PUT',{status});toast(status==='ready'?'พร้อมเสิร์ฟแล้ว':'บันทึกว่าเสิร์ฟแล้ว','ok');loadHistoryKitchen();loadOrders();}catch(err){toast(err.message,'err')}});
 
 function fmtClock(iso) {
   try { return zaabosTime(iso); }
@@ -1228,72 +1235,17 @@ function findOrderById(orderId) {
   return activeOrders.find(x => x.id === orderId) || lastOrdersFlat.find(x => x.id === orderId);
 }
 
-let cpOrderId = null;
-
-function updateCpChange() {
-  const ord = findOrderById(cpOrderId);
-  if (!ord) return;
-  const tax = 0;
-  const method = $('#cpMethod').value;
-  const cash = method === 'cash' ? (parseFloat($('#cpCash').value) || 0) : 0;
-  $('#cpCash').closest('label').classList.toggle('hidden', method !== 'cash');
-  const manual = parseFloat($('#cpDiscount').value) || 0; const due = Math.max(0, ord.total_amount - manual) + tax;
-  $('#cpChange').textContent = fmtMoney(cash > 0 ? Math.max(0, cash - due) : 0);
-}
-$('#cpDiscount').addEventListener('input', updateCpChange);
-$('#cpCash').addEventListener('input', updateCpChange);
-$('#cpMethod').addEventListener('change', updateCpChange);
-
-function openConfirmPaymentModal(orderId) {
-  const ord = findOrderById(orderId);
-  if (!ord) return;
-  cpOrderId = orderId;
-  extraPaymentParts=[]; renderPaymentParts();
-  $('#cpTotal').textContent = fmtMoney(ord.total_amount);
-  $('#cpPromo').value = ''; $('#cpDiscount').value = ''; $('#cpDiscountReason').value = ''; $('#cpApprovalUser').value=''; $('#cpApprovalPass').value='';
-  $('#cpCash').value = ord.cash_received ? String(ord.cash_received) : '';
-  $('#cpError').textContent = '';
-  $('#cpMethod').value = ord.payment_method || 'cash';
-  updateCpChange();
-  openModal('#confirmPaymentModal');
-}
-
-
-let extraPaymentParts=[];
-function renderPaymentParts(){
-  const el=$('#cpPaymentParts'); if(!el)return;
-  el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" placeholder="จำนวน"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');
-  extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method||'qr';});
-}
-$('#cpAddPayment').addEventListener('click',()=>{extraPaymentParts.push({method:'qr',amount:0});renderPaymentParts();});
-$('#cpPaymentParts').addEventListener('input',e=>{let i=e.target.dataset.partAmount;if(i!==undefined)extraPaymentParts[+i].amount=Number(e.target.value||0);i=e.target.dataset.partMethod;if(i!==undefined)extraPaymentParts[+i].method=e.target.value;});
-$('#cpPaymentParts').addEventListener('click',e=>{const i=e.target.dataset.removePart;if(i!==undefined){extraPaymentParts.splice(+i,1);renderPaymentParts();}});
-
-$('#cpSubmit').addEventListener('click', async () => {
-  if (cpOrderId == null) return;
-  $('#cpError').textContent = '';
-  const orderId = cpOrderId;
-  const payload = { payment_status: 'paid', payment_method: $('#cpMethod').value };
-  if(extraPaymentParts.length){
-    payload.payments=[{method:$('#cpMethod').value,amount:null,cash_received:$('#cpMethod').value==='cash'?(parseFloat($('#cpCash').value)||null):null},
-      ...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))];
-  }
-  const promo=$('#cpPromo').value.trim(); if(promo) payload.promotion_code=promo; const disc=$('#cpDiscount').value.trim(); if(disc) payload.discount_amount=parseFloat(disc); const dr=$('#cpDiscountReason').value.trim(); if(dr) payload.discount_reason=dr; const au=$('#cpApprovalUser').value.trim(); const ap=$('#cpApprovalPass').value; if(au) payload.approval_username=au; if(ap) payload.approval_password=ap;
-  const cashRaw = $('#cpCash').value.trim(); if (payload.payment_method === 'cash' && cashRaw) payload.cash_received = parseFloat(cashRaw);
-  try {
-    await apiJson('/api/orders/' + orderId + '/payment', 'PUT', payload);
-    toast(t('toast_payment_confirmed'), 'ok');
-    closeModals();
-    cpOrderId = null;
-    // Pull the paid order back from the server before printing so the receipt
-    // contains the authoritative paid time, discounts, tax and payment method.
-    const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId));
-    lastOrdersFlat=fresh.orders||[];
-    activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');
-    renderTableBoard(); renderOtherOrders(); renderSidePanel();
-    printReceipt(orderId);
-  } catch (e) { $('#cpError').textContent = e.message; }
-});
+let cpOrderId=null,extraPaymentParts=[];
+function cpBaseDue(){const o=findOrderById(cpOrderId);if(!o)return 0;return Math.max(0,Number(o.total_amount||0)-Math.max(0,Number($('#cpDiscount').value||0)));}
+function paymentMethodName(m){return({cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'})[m]||m}
+function updateCpPaymentSummary(){const due=cpBaseDue(),method=$('#cpMethod').value;$('#cpCashLabel').classList.toggle('hidden',method!=='cash');const primary=Math.max(0,Number($('#cpPrimaryAmount').value||0)),extras=extraPaymentParts.reduce((a,x)=>a+Math.max(0,Number(x.amount||0)),0),paid=primary+extras,remaining=Math.max(0,due-paid),cash=method==='cash'?Math.max(0,Number($('#cpCash').value||0)):0;$('#cpPaidTotal').textContent=fmtMoney(paid);$('#cpRemaining').textContent=fmtMoney(remaining);$('#cpRemaining').classList.toggle('payment-ok',Math.abs(paid-due)<.005);$('#cpChange').textContent=fmtMoney(method==='cash'?Math.max(0,cash-primary):0);}
+function renderPaymentParts(){const el=$('#cpPaymentParts');if(!el)return;el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="ยอดช่องทางนี้" value="${p.amount||''}"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method});updateCpPaymentSummary();}
+function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';renderPaymentParts();openModal('#confirmPaymentModal');}
+$('#cpMethod').addEventListener('change',()=>{if($('#cpMethod').value==='cash'&&!$('#cpCash').value)$('#cpCash').value=$('#cpPrimaryAmount').value;updateCpPaymentSummary()});$('#cpPrimaryAmount').addEventListener('input',updateCpPaymentSummary);$('#cpCash').addEventListener('input',updateCpPaymentSummary);
+$('#cpDiscount').addEventListener('input',()=>{const due=cpBaseDue(),extras=extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);$('#cpPrimaryAmount').value=String(Math.max(0,due-extras));updateCpPaymentSummary()});
+$('#cpAddPayment').addEventListener('click',()=>{const due=cpBaseDue(),paid=Number($('#cpPrimaryAmount').value||0)+extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);extraPaymentParts.push({method:'qr',amount:Math.max(0,due-paid)});renderPaymentParts()});
+$('#cpPaymentParts').addEventListener('input',e=>{let i=e.target.dataset.partAmount;if(i!==undefined)extraPaymentParts[+i].amount=Number(e.target.value||0);i=e.target.dataset.partMethod;if(i!==undefined)extraPaymentParts[+i].method=e.target.value;updateCpPaymentSummary()});$('#cpPaymentParts').addEventListener('click',e=>{const i=e.target.dataset.removePart;if(i!==undefined){extraPaymentParts.splice(+i,1);renderPaymentParts()}});
+$('#cpSubmit').addEventListener('click',async()=>{if(cpOrderId==null)return;$('#cpError').textContent='';const id=cpOrderId,method=$('#cpMethod').value,primary=Number($('#cpPrimaryAmount').value||0);if(primary<=0){$('#cpError').textContent='กรุณาระบุยอดชำระ';return}const parts=[{method,amount:primary,cash_received:method==='cash'?(Number($('#cpCash').value||0)||primary):null},...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))],due=cpBaseDue(),paid=parts.reduce((a,x)=>a+Number(x.amount||0),0);if(Math.abs(paid-due)>.005){$('#cpError').textContent=`ยอดชำระยังไม่ครบ: ชำระ ${fmtMoney(paid)} / ${fmtMoney(due)}`;return}if(parts.some(x=>x.amount<=0)){ $('#cpError').textContent='ยอดแต่ละช่องทางต้องมากกว่า 0';return}const payload={payment_status:'paid',payment_method:method,payments:parts},promo=$('#cpPromo').value.trim(),disc=$('#cpDiscount').value.trim(),dr=$('#cpDiscountReason').value.trim(),au=$('#cpApprovalUser').value.trim(),ap=$('#cpApprovalPass').value;if(promo)payload.promotion_code=promo;if(disc)payload.discount_amount=parseFloat(disc);if(dr)payload.discount_reason=dr;if(au)payload.approval_username=au;if(ap)payload.approval_password=ap;try{const result=await apiJson('/api/orders/'+id+'/payment','PUT',payload);toast('ชำระเงินสำเร็จ · '+result.payments.map(x=>paymentMethodName(x.method)+' '+fmtMoney(x.amount)).join(' + '),'ok');closeModals();cpOrderId=null;const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId||''));lastOrdersFlat=fresh.orders||[];activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');renderTableBoard();renderOtherOrders();renderSidePanel();printReceipt(id)}catch(e){$('#cpError').textContent=e.message}});
 
 function printElement(el) {
   // Print isolation: only .print-target is shown at print time (see the
@@ -1335,7 +1287,7 @@ function printReceipt(orderId) {
     <div class="rp-brand-sub">RESTAURANT · POS</div>
     ${branch ? `<div class="rp-center">${escapeHtml(branch.name || '')}</div>` : ''}
     <div class="rp-sep"></div>
-    <div class="rp-meta"><span>${escapeHtml(t('label_table') || 'Table')}</span><b>${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b><span>${escapeHtml(t('label_guest_count_short') || 'Guests')}</span><b>${escapeHtml(String(guest))}</b></div>
+    <div class="rp-meta"><span>${escapeHtml(t('label_table') || 'Table')}</span><b>${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b><span class="rp-guest-label">${escapeHtml(t('label_guest_count_short') || 'Guests')}</span><b class="rp-guest-value">${escapeHtml(String(guest))}</b></div>
     <div class="rp-meta rp-order"><span>Order</span><b>#${escapeHtml(o.order_no)}</b></div>
     <div class="rp-sep"></div>
     <table class="rp-items"><tbody>${itemsRows}</tbody></table>

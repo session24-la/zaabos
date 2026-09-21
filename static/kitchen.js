@@ -111,7 +111,7 @@ async function loadKitchenStations(){
 const kitchenStationFilter=$('#kitchenStationFilter'); if(kitchenStationFilter) kitchenStationFilter.addEventListener('change',loadBoard);
 
 const STATUS_ACTIONS = {
-  received: [{ to: 'preparing', labelKey: 'kt_btn_start', cls: 'btn-preparing' }, { to: 'cancelled', labelKey: 'kt_btn_cancel', cls: 'btn-cancel' }],
+  received: [{ to: 'ready', labelKey: 'kt_btn_ready', cls: 'btn-ready' }, { to: 'cancelled', labelKey: 'kt_btn_cancel', cls: 'btn-cancel' }],
   preparing: [{ to: 'ready', labelKey: 'kt_btn_ready', cls: 'btn-ready' }, { to: 'cancelled', labelKey: 'kt_btn_cancel', cls: 'btn-cancel' }],
   ready: [{ to: 'served', labelKey: 'kt_btn_served', cls: 'btn-served' }],
 };
