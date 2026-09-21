@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, g, session, send_from_directory
-import sqlite3, os, functools, secrets, shutil, random, string
+import sqlite3, os, functools, secrets, shutil, random, string, json
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -604,6 +604,19 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_tenants_subscription ON tenants(active,subscription_status,trial_ends_at,current_period_end)')
     conn.commit()
     record_migration(conn, 26, 'saas_commercial_layer')
+    # Closed shifts keep an immutable accounting snapshot so later payment reversals do not rewrite history.
+    if IS_POSTGRES:
+        conn.execute('ALTER TABLE work_shifts ADD COLUMN IF NOT EXISTS summary_json TEXT')
+    else:
+        ws_cols={r['name'] for r in conn.execute('PRAGMA table_info(work_shifts)').fetchall()}
+        if 'summary_json' not in ws_cols: conn.execute('ALTER TABLE work_shifts ADD COLUMN summary_json TEXT')
+    # Round 27 — branch-level receipt/shop presentation settings.
+    if IS_POSTGRES:
+        conn.execute("""CREATE TABLE IF NOT EXISTS receipt_settings (id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, settings_json TEXT NOT NULL DEFAULT '{}', updated_by_user_id INTEGER, updated_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id))""")
+    else:
+        conn.execute("""CREATE TABLE IF NOT EXISTS receipt_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, settings_json TEXT NOT NULL DEFAULT '{}', updated_by_user_id INTEGER, updated_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id))""")
+    conn.commit()
+    record_migration(conn, 28, 'receipt_and_shop_settings')
     # Round 20 — Offline POS + Safe Sync
     if IS_POSTGRES:
         order_cols = {r['column_name'] for r in conn.execute(
@@ -2902,15 +2915,18 @@ def save_daily_closing():
 
 # ---------- Round 14A: shifts / cash drawer / critical operations ----------
 def _shift_live_summary(conn, sh, user_id):
-    """Single source of truth for live shift totals and close-shift reconciliation."""
+    """Single source of truth for open/closed shift totals and reconciliation."""
     tenant_id=sh['tenant_id']; branch_id=sh['branch_id']; opened_at=sh['opened_at']; shift_id=sh['id']
-    pay_rows=conn.execute("""SELECT payment_method, COALESCE(SUM(amount),0) AS total, COUNT(*) AS payment_count
-        FROM payments WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=? AND reversed_at IS NULL
-        GROUP BY payment_method""",(tenant_id,branch_id,user_id,opened_at)).fetchall()
+    closed_at=sh['closed_at'] if 'closed_at' in sh.keys() else None
+    time_clause=' AND paid_at<?' if closed_at else ''
+    pay_args=(tenant_id,branch_id,user_id,opened_at,closed_at) if closed_at else (tenant_id,branch_id,user_id,opened_at)
+    pay_rows=conn.execute(f"""SELECT payment_method, COALESCE(SUM(amount),0) AS total, COUNT(*) AS payment_count
+        FROM payments WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=?{time_clause} AND reversed_at IS NULL
+        GROUP BY payment_method""",pay_args).fetchall()
     payment_breakdown={str(r['payment_method'] or 'other'): money_float(r['total'] or 0) for r in pay_rows}
     gross_received=money_float(sum(money_decimal(r['total'] or 0) for r in pay_rows))
-    bill_row=conn.execute("""SELECT COUNT(DISTINCT order_id) AS c FROM payments
-        WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=? AND reversed_at IS NULL""",(tenant_id,branch_id,user_id,opened_at)).fetchone()
+    bill_row=conn.execute(f"""SELECT COUNT(DISTINCT order_id) AS c FROM payments
+        WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=?{time_clause} AND reversed_at IS NULL""",pay_args).fetchone()
     refund_row=conn.execute("SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS c FROM refunds WHERE tenant_id=? AND shift_id=?",(tenant_id,shift_id)).fetchone()
     refund_total=money_float(refund_row['total'] or 0)
     mv_rows=conn.execute("""SELECT movement_type, COALESCE(SUM(amount),0) AS total FROM cash_movements
@@ -2923,12 +2939,9 @@ def _shift_live_summary(conn, sh, user_id):
     cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(tenant_id,shift_id)).fetchone()['total'] or 0
     cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL AND paid_at<?",(tenant_id,shift_id,opened_at)).fetchone()['total'] or 0
     expected=money_float(money_decimal(sh['opening_cash'])+money_decimal(cash_sales)+money_decimal(cash_in)-money_decimal(cash_out)-money_decimal(cash_refunds)-money_decimal(cash_reversals))
-    return dict(
-        gross_received=gross_received, refund_total=refund_total, net_received=money_float(money_decimal(gross_received)-money_decimal(refund_total)),
-        bill_count=int(bill_row['c'] or 0), payment_breakdown=payment_breakdown,
-        cash_sales=cash_sales, cash_in=cash_in, cash_out=cash_out, cash_refunds=money_float(cash_refunds), cash_reversals=money_float(cash_reversals),
-        expected_cash=expected, refund_count=int(refund_row['c'] or 0)
-    )
+    return dict(gross_received=gross_received, refund_total=refund_total, net_received=money_float(money_decimal(gross_received)-money_decimal(refund_total)),
+        bill_count=int(bill_row['c'] or 0), payment_breakdown=payment_breakdown, cash_sales=cash_sales, cash_in=cash_in, cash_out=cash_out,
+        cash_refunds=money_float(cash_refunds), cash_reversals=money_float(cash_reversals), expected_cash=expected, refund_count=int(refund_row['c'] or 0))
 
 @app.get('/api/operations/shift')
 @login_required
@@ -2977,6 +2990,23 @@ def add_cash_movement():
     conn.execute('INSERT INTO cash_movements(tenant_id,branch_id,shift_id,movement_type,amount,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,sh['id'],typ,amount,reason,g.user['id'],now()))
     log_action(typ,detail=f'branch={branch_id} amount={amount} reason={reason}'); conn.commit(); return jsonify(ok=True)
 
+@app.get('/api/operations/shifts')
+@login_required
+@role_required('owner','manager','staff')
+def shift_history():
+    conn=db(); branch_id=request.args.get('branch_id')
+    if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
+    rows=conn.execute("""SELECT s.*,u.display_name AS opened_by_name,c.display_name AS closed_by_name
+        FROM work_shifts s LEFT JOIN users u ON u.id=s.opened_by_user_id LEFT JOIN users c ON c.id=s.closed_by_user_id
+        WHERE s.tenant_id=? AND s.branch_id=? AND s.status='closed' ORDER BY s.id DESC LIMIT 30""",(g.tenant_id,branch_id)).fetchall()
+    out=[]
+    for row in rows:
+        d=dict(row)
+        try: d['summary']=json.loads(row['summary_json']) if row['summary_json'] else _shift_live_summary(conn,row,row['opened_by_user_id'])
+        except Exception: d['summary']=_shift_live_summary(conn,row,row['opened_by_user_id'])
+        out.append(d)
+    return jsonify(out)
+
 @app.post('/api/operations/shift/close')
 @login_required
 @role_required('owner','manager','staff')
@@ -2990,10 +3020,10 @@ def close_shift():
     summary=_shift_live_summary(conn,sh,g.user['id'])
     cash_sales=summary['cash_sales']; cash_refunds=summary['cash_refunds']; cash_reversals=summary['cash_reversals']; expected=summary['expected_cash']
     counted=money_float(counted); diff=money_float(money_decimal(counted)-money_decimal(expected)); ts=now()
-    claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],sh['id'],g.tenant_id))
+    claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=?,summary_json=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],json.dumps(summary,ensure_ascii=False),sh['id'],g.tenant_id))
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='กะนี้ถูกปิดจากอุปกรณ์อื่นแล้ว'),409
     log_action('shift_closed',detail=f'branch={branch_id} expected={expected} counted={counted} diff={diff}'); conn.commit()
-    return jsonify(ok=True,expected_cash=expected,counted_cash=counted,difference=diff,cash_sales=cash_sales,cash_refunds=cash_refunds,cash_reversals=cash_reversals)
+    return jsonify(ok=True,shift_id=sh['id'],opened_at=sh['opened_at'],closed_at=ts,opened_by_user_id=sh['opened_by_user_id'],expected_cash=expected,counted_cash=counted,difference=diff,cash_sales=cash_sales,cash_refunds=cash_refunds,cash_reversals=cash_reversals,summary=summary,notes=(d.get('notes') or sh['notes'] or '')[:300])
 
 @app.get('/api/operations/critical')
 @login_required
@@ -3001,6 +3031,52 @@ def close_shift():
 def list_critical_operations():
     conn=db(); rows=conn.execute("SELECT c.*,u.display_name AS performed_by_name,a.display_name AS approved_by_name FROM critical_operations c LEFT JOIN users u ON u.id=c.performed_by_user_id LEFT JOIN users a ON a.id=c.approved_by_user_id WHERE c.tenant_id=? ORDER BY c.id DESC LIMIT 200",(g.tenant_id,)).fetchall()
     return jsonify([dict(x) for x in rows])
+
+def _receipt_settings_defaults(conn, branch_id):
+    tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
+    branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
+    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True)
+
+@app.get('/api/settings/receipt')
+@login_required
+@role_required('owner','manager','staff')
+def get_receipt_settings():
+    conn=db(); branch_id=request.args.get('branch_id')
+    try: branch_id=int(branch_id)
+    except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
+    if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
+    data=_receipt_settings_defaults(conn,branch_id)
+    row=conn.execute('SELECT settings_json FROM receipt_settings WHERE tenant_id=? AND branch_id=?',(g.tenant_id,branch_id)).fetchone()
+    if row:
+        try: data.update(json.loads(row['settings_json'] or '{}'))
+        except Exception: pass
+    return jsonify(data)
+
+@app.put('/api/settings/receipt')
+@login_required
+@role_required('owner','manager')
+def save_receipt_settings():
+    conn=db(); d=request.get_json() or {}
+    try: branch_id=int(d.get('branch_id'))
+    except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
+    if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
+    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time'}
+    defaults=_receipt_settings_defaults(conn,branch_id); clean={}
+    for k in allowed:
+        v=d.get(k,defaults.get(k))
+        if k.startswith('show_'): clean[k]=bool(v)
+        else: clean[k]=str(v or '')[:300]
+    if clean['paper_width'] not in ('58','80'): clean['paper_width']='80'
+    if clean['font_scale'] not in ('small','normal','large'): clean['font_scale']='normal'
+    if clean['header_align'] not in ('left','center'): clean['header_align']='center'
+    payload=json.dumps(clean,ensure_ascii=False)
+    if IS_POSTGRES:
+        conn.execute('''INSERT INTO receipt_settings(tenant_id,branch_id,settings_json,updated_by_user_id,updated_at) VALUES(?,?,?,?,?)
+            ON CONFLICT(tenant_id,branch_id) DO UPDATE SET settings_json=EXCLUDED.settings_json,updated_by_user_id=EXCLUDED.updated_by_user_id,updated_at=EXCLUDED.updated_at''',(g.tenant_id,branch_id,payload,g.user['id'],now()))
+    else:
+        conn.execute('''INSERT INTO receipt_settings(tenant_id,branch_id,settings_json,updated_by_user_id,updated_at) VALUES(?,?,?,?,?)
+            ON CONFLICT(tenant_id,branch_id) DO UPDATE SET settings_json=excluded.settings_json,updated_by_user_id=excluded.updated_by_user_id,updated_at=excluded.updated_at''',(g.tenant_id,branch_id,payload,g.user['id'],now()))
+    log_action('receipt_settings_updated',detail=f'branch={branch_id}'); conn.commit(); return jsonify(ok=True,settings=clean)
 
 @app.get('/api/expenses')
 @login_required

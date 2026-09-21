@@ -60,6 +60,7 @@
         <button data-tab="reports" class="mobile-more-only"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
         <button data-tab="operations" class="mobile-more-only"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
         <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
+        <button data-tab="receiptsettings"><span class="tab-ic">🧾</span><span class="tab-lb">ตั้งค่าร้าน &amp; ใบเสร็จ</span></button>
           <button data-tab="inventory" class="more-item mobile-more-only"><span>📦</span><span>วัตถุดิบ & สูตร</span></button>
         <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
         <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
@@ -236,6 +237,7 @@
       </details>
       <div class="section-divider"></div>
       <h3>รายการเงินสดในกะนี้</h3><div id="cashMovementList"></div>
+      <details class="audit-details shift-history-details"><summary>ประวัติกะ &amp; พิมพ์สรุปย้อนหลัง</summary><div id="shiftHistoryList"></div></details>
       <details class="audit-details"><summary>ประวัติการอนุมัติ / Critical Operations</summary><div id="criticalOpsList"></div></details>
     </div>
   </section>
@@ -266,6 +268,34 @@
           <button class="save compact-save" id="addPromoBtn" type="button">สร้างโปรโมชั่น</button>
         </details>
       </div>
+    </div>
+  </section>
+
+  <section id="tab-receiptsettings" class="tab-panel hidden">
+    <div class="settings-layout">
+      <div class="panel settings-editor">
+        <div class="panel-head"><div><span class="eyebrow">SHOP & RECEIPT</span><h2>ตั้งค่าร้าน &amp; ใบเสร็จ</h2><div class="muted">ตั้งค่าแยกตามสาขา เหมาะสำหรับร้านหลายสาขาและร้านลูกค้าแต่ละราย</div></div></div>
+        <div class="settings-section"><h3>ข้อมูลหน้าร้าน</h3><div class="form-grid">
+          <label><span>ชื่อร้านบนใบเสร็จ</span><input id="rsShopName" maxlength="120"></label>
+          <label><span>ชื่อสาขาที่แสดง</span><input id="rsBranchName" maxlength="120"></label>
+          <label><span>ข้อความใต้ชื่อร้าน</span><input id="rsSubtitle" maxlength="120" placeholder="RESTAURANT · POS"></label>
+          <label><span>เบอร์โทร</span><input id="rsPhone" maxlength="80"></label>
+          <label class="wide"><span>ที่อยู่</span><input id="rsAddress" maxlength="300"></label>
+          <label><span>เลขประจำตัวผู้เสียภาษี</span><input id="rsTaxId" maxlength="100"></label>
+          <label class="wide"><span>ข้อความท้ายใบเสร็จ</span><input id="rsFooter" maxlength="300"></label>
+        </div></div>
+        <div class="settings-section"><h3>รูปแบบการพิมพ์</h3><div class="form-grid">
+          <label><span>ขนาดกระดาษ</span><select id="rsPaper"><option value="80">80 mm</option><option value="58">58 mm</option></select></label>
+          <label><span>ขนาดตัวอักษร</span><select id="rsFont"><option value="small">เล็ก</option><option value="normal">มาตรฐาน</option><option value="large">ใหญ่</option></select></label>
+          <label><span>ตำแหน่งหัวใบเสร็จ</span><select id="rsAlign"><option value="center">กึ่งกลาง</option><option value="left">ชิดซ้าย</option></select></label>
+        </div><div class="settings-checks">
+          <label><input id="rsShowBranch" type="checkbox"> แสดงสาขา</label><label><input id="rsShowGuest" type="checkbox"> แสดงจำนวนลูกค้า</label>
+          <label><input id="rsShowCashier" type="checkbox"> แสดงแคชเชียร์</label><label><input id="rsShowPayments" type="checkbox"> แยกช่องทางชำระ</label>
+          <label><input id="rsShowOrderTime" type="checkbox"> เวลาเปิดบิล</label><label><input id="rsShowPaidTime" type="checkbox"> เวลาชำระ</label>
+        </div></div>
+        <button class="save" id="saveReceiptSettingsBtn" type="button">บันทึกการตั้งค่าสาขานี้</button>
+      </div>
+      <div class="panel receipt-preview-panel"><div class="panel-head"><div><h3>ตัวอย่างใบเสร็จ</h3><div class="muted">ตัวอย่างจะเปลี่ยนตามค่าที่เลือก</div></div></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
     </div>
   </section>
 

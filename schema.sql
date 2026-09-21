@@ -259,7 +259,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 -- Round 14A restaurant operations
-CREATE TABLE IF NOT EXISTS work_shifts (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, opened_by_user_id INTEGER NOT NULL, closed_by_user_id INTEGER, opened_at TEXT NOT NULL, closed_at TEXT, opening_cash REAL NOT NULL DEFAULT 0, counted_cash REAL, expected_cash REAL, difference REAL, status TEXT NOT NULL DEFAULT 'open', notes TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS work_shifts (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, opened_by_user_id INTEGER NOT NULL, closed_by_user_id INTEGER, opened_at TEXT NOT NULL, closed_at TEXT, opening_cash REAL NOT NULL DEFAULT 0, counted_cash REAL, expected_cash REAL, difference REAL, status TEXT NOT NULL DEFAULT 'open', notes TEXT NOT NULL DEFAULT '', summary_json TEXT);
 CREATE TABLE IF NOT EXISTS cash_movements (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, shift_id INTEGER NOT NULL, movement_type TEXT NOT NULL, amount REAL NOT NULL, reason TEXT NOT NULL, created_by_user_id INTEGER NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS operation_reasons (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, operation_type TEXT NOT NULL, label TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS critical_operations (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER, operation_type TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '', entity_id INTEGER, reason_id INTEGER, reason_text TEXT NOT NULL DEFAULT '', performed_by_user_id INTEGER NOT NULL, approved_by_user_id INTEGER, detail TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
@@ -281,5 +281,7 @@ CREATE TABLE IF NOT EXISTS inventory_counts (id INTEGER PRIMARY KEY AUTOINCREMEN
 CREATE INDEX IF NOT EXISTS idx_inventory_counts_tenant_branch ON inventory_counts(tenant_id,branch_id,counted_at);
 CREATE TABLE IF NOT EXISTS kitchen_print_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, order_id INTEGER NOT NULL, station_id INTEGER, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, printed_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_kitchen_print_jobs_queue ON kitchen_print_jobs(tenant_id,branch_id,status,created_at);
+
+CREATE TABLE IF NOT EXISTS receipt_settings (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, settings_json TEXT NOT NULL DEFAULT '{}', updated_by_user_id INTEGER, updated_at TEXT NOT NULL, UNIQUE(tenant_id,branch_id));
 
 CREATE TABLE IF NOT EXISTS saas_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, max_branches INTEGER NOT NULL, max_users INTEGER NOT NULL, monthly_price DOUBLE PRECISION NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
