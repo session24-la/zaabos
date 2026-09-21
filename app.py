@@ -2901,6 +2901,35 @@ def save_daily_closing():
     return jsonify(error='Daily Closing เดิมถูกยกเลิกแล้ว กรุณาใช้ กะ & เงินสด (Shift/Cash) ซึ่งเป็นแหล่งข้อมูลหลัก'),410
 
 # ---------- Round 14A: shifts / cash drawer / critical operations ----------
+def _shift_live_summary(conn, sh, user_id):
+    """Single source of truth for live shift totals and close-shift reconciliation."""
+    tenant_id=sh['tenant_id']; branch_id=sh['branch_id']; opened_at=sh['opened_at']; shift_id=sh['id']
+    pay_rows=conn.execute("""SELECT payment_method, COALESCE(SUM(amount),0) AS total, COUNT(*) AS payment_count
+        FROM payments WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=? AND reversed_at IS NULL
+        GROUP BY payment_method""",(tenant_id,branch_id,user_id,opened_at)).fetchall()
+    payment_breakdown={str(r['payment_method'] or 'other'): money_float(r['total'] or 0) for r in pay_rows}
+    gross_received=money_float(sum(money_decimal(r['total'] or 0) for r in pay_rows))
+    bill_row=conn.execute("""SELECT COUNT(DISTINCT order_id) AS c FROM payments
+        WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=? AND reversed_at IS NULL""",(tenant_id,branch_id,user_id,opened_at)).fetchone()
+    refund_row=conn.execute("SELECT COALESCE(SUM(amount),0) AS total, COUNT(*) AS c FROM refunds WHERE tenant_id=? AND shift_id=?",(tenant_id,shift_id)).fetchone()
+    refund_total=money_float(refund_row['total'] or 0)
+    mv_rows=conn.execute("""SELECT movement_type, COALESCE(SUM(amount),0) AS total FROM cash_movements
+        WHERE tenant_id=? AND shift_id=? GROUP BY movement_type""",(tenant_id,shift_id)).fetchall()
+    cash_in=cash_out=0.0
+    for r in mv_rows:
+        if r['movement_type']=='cash_in': cash_in=money_float(r['total'] or 0)
+        elif r['movement_type']=='cash_out': cash_out=money_float(r['total'] or 0)
+    cash_sales=money_float(payment_breakdown.get('cash',0))
+    cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(tenant_id,shift_id)).fetchone()['total'] or 0
+    cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL AND paid_at<?",(tenant_id,shift_id,opened_at)).fetchone()['total'] or 0
+    expected=money_float(money_decimal(sh['opening_cash'])+money_decimal(cash_sales)+money_decimal(cash_in)-money_decimal(cash_out)-money_decimal(cash_refunds)-money_decimal(cash_reversals))
+    return dict(
+        gross_received=gross_received, refund_total=refund_total, net_received=money_float(money_decimal(gross_received)-money_decimal(refund_total)),
+        bill_count=int(bill_row['c'] or 0), payment_breakdown=payment_breakdown,
+        cash_sales=cash_sales, cash_in=cash_in, cash_out=cash_out, cash_refunds=money_float(cash_refunds), cash_reversals=money_float(cash_reversals),
+        expected_cash=expected, refund_count=int(refund_row['c'] or 0)
+    )
+
 @app.get('/api/operations/shift')
 @login_required
 @role_required('owner','manager','staff')
@@ -2910,9 +2939,10 @@ def current_shift():
     branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'),404
     sh=conn.execute("SELECT s.*,u.display_name AS opened_by_name FROM work_shifts s LEFT JOIN users u ON u.id=s.opened_by_user_id WHERE s.tenant_id=? AND s.branch_id=? AND s.opened_by_user_id=? AND s.status='open' ORDER BY s.id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
-    if not sh: return jsonify(shift=None,movements=[])
+    if not sh: return jsonify(shift=None,movements=[],summary=None)
     moves=conn.execute('SELECT * FROM cash_movements WHERE tenant_id=? AND shift_id=? ORDER BY id DESC',(g.tenant_id,sh['id'])).fetchall()
-    return jsonify(shift=dict(sh),movements=[dict(x) for x in moves])
+    summary=_shift_live_summary(conn,sh,g.user['id'])
+    return jsonify(shift=dict(sh),movements=[dict(x) for x in moves],summary=summary)
 
 @app.post('/api/operations/shift/open')
 @login_required
@@ -2957,11 +2987,9 @@ def close_shift():
     try: counted=float(d.get('counted_cash',0) or 0)
     except: return jsonify(error='ยอดเงินนับจริงไม่ถูกต้อง'),400
     if counted<0: return jsonify(error='ยอดเงินนับจริงต้องไม่ติดลบ'),400
-    cash_sales=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND branch_id=? AND payment_method='cash' AND reversed_at IS NULL AND paid_by_user_id=? AND paid_at>=?",(g.tenant_id,branch_id,g.user['id'],sh['opened_at'])).fetchone()['total'] or 0
-    mv=conn.execute("SELECT COALESCE(SUM(CASE WHEN movement_type='cash_in' THEN amount ELSE -amount END),0) AS total FROM cash_movements WHERE tenant_id=? AND shift_id=?",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
-    cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(g.tenant_id,sh['id'])).fetchone()['total'] or 0
-    cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL AND paid_at<?",(g.tenant_id,sh['id'],sh['opened_at'])).fetchone()['total'] or 0
-    expected=money_float(money_decimal(sh['opening_cash'])+money_decimal(cash_sales)+money_decimal(mv)-money_decimal(cash_refunds)-money_decimal(cash_reversals)); counted=money_float(counted); diff=money_float(money_decimal(counted)-money_decimal(expected)); ts=now()
+    summary=_shift_live_summary(conn,sh,g.user['id'])
+    cash_sales=summary['cash_sales']; cash_refunds=summary['cash_refunds']; cash_reversals=summary['cash_reversals']; expected=summary['expected_cash']
+    counted=money_float(counted); diff=money_float(money_decimal(counted)-money_decimal(expected)); ts=now()
     claimed=conn.execute("UPDATE work_shifts SET status='closed',closed_by_user_id=?,closed_at=?,counted_cash=?,expected_cash=?,difference=?,notes=? WHERE id=? AND tenant_id=? AND status='open'",(g.user['id'],ts,counted,expected,diff,(d.get('notes') or sh['notes'] or '')[:300],sh['id'],g.tenant_id))
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='กะนี้ถูกปิดจากอุปกรณ์อื่นแล้ว'),409
     log_action('shift_closed',detail=f'branch={branch_id} expected={expected} counted={counted} diff={diff}'); conn.commit()
