@@ -3035,7 +3035,7 @@ def list_critical_operations():
 def _receipt_settings_defaults(conn, branch_id):
     tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
     branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
-    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True)
+    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True)
 
 @app.get('/api/settings/receipt')
 @login_required
@@ -3060,15 +3060,17 @@ def save_receipt_settings():
     try: branch_id=int(d.get('branch_id'))
     except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
     if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time'}
+    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue'}
     defaults=_receipt_settings_defaults(conn,branch_id); clean={}
     for k in allowed:
         v=d.get(k,defaults.get(k))
-        if k.startswith('show_'): clean[k]=bool(v)
+        if k.startswith('show_') or k == 'kitchen_auto_queue': clean[k]=bool(v)
         else: clean[k]=str(v or '')[:300]
     if clean['paper_width'] not in ('58','80'): clean['paper_width']='80'
     if clean['font_scale'] not in ('small','normal','large'): clean['font_scale']='normal'
     if clean['header_align'] not in ('left','center'): clean['header_align']='center'
+    if clean['receipt_printer_route'] not in ('front','browser'): clean['receipt_printer_route']='front'
+    if clean['kitchen_printer_route'] not in ('kitchen','browser'): clean['kitchen_printer_route']='kitchen'
     payload=json.dumps(clean,ensure_ascii=False)
     if IS_POSTGRES:
         conn.execute('''INSERT INTO receipt_settings(tenant_id,branch_id,settings_json,updated_by_user_id,updated_at) VALUES(?,?,?,?,?)
