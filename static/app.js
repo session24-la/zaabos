@@ -1715,7 +1715,7 @@ async function loadOperations(){
         <div class="shift-state-card shift-kpi cash-expected"><small>เงินสดที่ควรมีในลิ้นชัก</small><b>${fmtMoney(sum.expected_cash||0)}</b><span class="shift-sub">เริ่ม ${fmtMoney(sh.opening_cash)} · เข้า ${fmtMoney(sum.cash_in||0)} · ออก ${fmtMoney(sum.cash_out||0)}</span></div>
         <div class="shift-state-card"><small>พนักงาน</small><b>${escapeHtml(sh.opened_by_name||'')}</b><span class="shift-sub">กะนี้ไม่ตัดยอดตอน 00:00</span></div>`;
       actions.innerHTML=`<div class="shift-close-box"><div><b>ปิดกะ</b><div class="muted">ให้นับเงินจริงในลิ้นชักเพียงครั้งเดียว ระบบจะเทียบกับยอดที่ควรมีอัตโนมัติ</div></div><div class="shift-close-controls"><input id="shiftCountedCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินสดนับจริง"><input id="shiftCloseNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="danger-btn" id="closeShiftBtn" type="button">ปิดกะ &amp; ตรวจยอด</button></div></div>`;
-      $('#closeShiftBtn').onclick=()=>opsPost('/api/operations/shift/close',{branch_id:currentBranchId,counted_cash:Number($('#shiftCountedCash').value||0),notes:$('#shiftCloseNote').value});
+      $('#closeShiftBtn').onclick=()=>openCloseShiftConfirmation(sum);
     }else{
       status.innerHTML=`<div class="shift-state-card"><small>สถานะ</small><b>ยังไม่ได้เปิดกะ</b></div>`;
       actions.innerHTML=`<div class="shift-open-box"><div><b>เริ่มกะใหม่</b><div class="muted">กรอกเฉพาะเงินทอนที่มีอยู่จริงก่อนเริ่มขาย</div></div><div class="shift-open-controls"><input id="shiftOpeningCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินทอนตั้งต้น"><input id="shiftOpenNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="save" id="openShiftBtn" type="button">เปิดกะ</button></div></div>`;
@@ -1726,6 +1726,30 @@ async function loadOperations(){
     if(me && ['owner','manager'].includes(me.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('🛡️','ยังไม่มีรายการอนุมัติ');}
   }catch(e){toast(e.message,'err')}
 }
+let pendingCloseShift=null;
+function openCloseShiftConfirmation(sum={}){
+  const countedEl=$('#shiftCountedCash'), noteEl=$('#shiftCloseNote');
+  if(!countedEl)return;
+  const raw=String(countedEl.value||'').trim();
+  if(raw===''){toast('กรุณานับและกรอกเงินสดจริงก่อนปิดกะ','err');countedEl.focus();return;}
+  const counted=Number(raw), expected=Number(sum.expected_cash||0);
+  if(!Number.isFinite(counted)||counted<0){toast('ยอดเงินสดนับจริงไม่ถูกต้อง','err');countedEl.focus();return;}
+  const notes=(noteEl?.value||'').trim();
+  pendingCloseShift={branch_id:currentBranchId,counted_cash:counted,notes};
+  $('#shiftConfirmExpected').textContent=fmtMoney(expected);
+  $('#shiftConfirmCounted').textContent=fmtMoney(counted);
+  $('#shiftConfirmDiff').textContent=fmtMoney(counted-expected);
+  const noteBox=$('#shiftConfirmNote'); noteBox.textContent=notes?'หมายเหตุ: '+notes:''; noteBox.classList.toggle('hidden',!notes);
+  openModal('#closeShiftConfirmModal');
+}
+$('#confirmCloseShiftBtn').onclick=async()=>{
+  if(!pendingCloseShift)return;
+  const btn=$('#confirmCloseShiftBtn'), payload={...pendingCloseShift};
+  btn.disabled=true; btn.textContent='กำลังปิดกะ…';
+  try{closeModals();await opsPost('/api/operations/shift/close',payload);pendingCloseShift=null}
+  finally{btn.disabled=false;btn.textContent='ยืนยันปิดกะ & พิมพ์'}
+};
+
 async function opsPost(url,payload){try{const r=await apiJson(url,'POST',payload);if(r.expected_cash!=null){toast(`ปิดกะแล้ว · ควรมี ${fmtMoney(r.expected_cash)} · ต่าง ${fmtMoney(r.difference)}`,'ok');await printShiftCloseReport(r);}else toast('บันทึกแล้ว','ok');$('#opsAmount').value='';$('#opsReason').value='';loadOperations();}catch(e){toast(e.message,'err')}}
 async function printShiftCloseReport(sh){let rs={};try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(currentBranchId))}catch(e){}const b=(boot.branches||[]).find(x=>Number(x.id)===Number(currentBranchId));const sm=sh.summary||{},pb=sm.payment_breakdown||{};$('#receiptPrintArea').className='receipt-print paper-'+(rs.paper_width||'80')+' font-'+(rs.font_scale||'normal')+' head-'+(rs.header_align||'center');$('#receiptPrintArea').innerHTML=`<div class="rp-brand">${escapeHtml(rs.shop_name||((me&&me.tenant&&me.tenant.name)||'ZaabOS'))}</div><div class="rp-brand-sub">SHIFT CLOSING REPORT · สรุปปิดกะ</div><div class="rp-center">${escapeHtml(rs.branch_name||(b&&b.name)||'')}</div><div class="rp-sep"></div><div class="rp-footrow"><span>เปิดกะ</span><span>${escapeHtml(formatDateTime(sh.opened_at))}</span></div><div class="rp-footrow"><span>ปิดกะ</span><span>${escapeHtml(formatDateTime(sh.closed_at))}</span></div><div class="rp-sep"></div><div class="rp-row"><span>จำนวนบิล</span><span>${Number(sm.bill_count||0)}</span></div><div class="rp-row"><span>ยอดรับชำระ</span><span>${fmtMoney(sm.gross_received||0)}</span></div><div class="rp-row"><span>เงินสด</span><span>${fmtMoney(pb.cash||0)}</span></div><div class="rp-row"><span>QR / โอน</span><span>${fmtMoney((pb.qr||0)+(pb.bank_transfer||0)+(pb.transfer||0))}</span></div><div class="rp-row"><span>คืนเงิน</span><span>−${fmtMoney(sm.refund_total||0)}</span></div><div class="rp-total"><span>ยอดสุทธิ</span><span>${fmtMoney(sm.net_received||0)}</span></div><div class="rp-sep"></div><div class="rp-row"><span>เงินทอนตั้งต้น</span><span>${fmtMoney((sm.expected_cash||0)-(sm.cash_sales||0)-(sm.cash_in||0)+(sm.cash_out||0)+(sm.cash_refunds||0)+(sm.cash_reversals||0))}</span></div><div class="rp-row"><span>เงินเข้า</span><span>${fmtMoney(sm.cash_in||0)}</span></div><div class="rp-row"><span>เงินออก</span><span>${fmtMoney(sm.cash_out||0)}</span></div><div class="rp-row"><span>เงินสดที่ควรมี</span><span>${fmtMoney(sh.expected_cash||sm.expected_cash||0)}</span></div><div class="rp-row"><span>เงินสดนับจริง</span><span>${fmtMoney(sh.counted_cash||0)}</span></div><div class="rp-total"><span>ขาด / เกิน</span><span>${fmtMoney(sh.difference||0)}</span></div>${sh.notes?`<div class="rp-note">หมายเหตุ: ${escapeHtml(sh.notes)}</div>`:''}<div class="rp-thanks">ลงชื่อผู้ปิดกะ __________________</div><div class="rp-powered">ZaabOS</div>`;printElement($('#receiptPrintArea'));}
 async function loadShiftHistory(){const el=$('#shiftHistoryList');if(!el)return;try{const rows=await api('/api/operations/shifts?branch_id='+currentBranchId);el.innerHTML=rows.length?rows.map(x=>`<div class="list-row shift-history-row"><div><b>${escapeHtml(formatDateTime(x.closed_at))}</b><div class="muted">${escapeHtml(x.opened_by_name||'')} · ${Number(x.summary?.bill_count||0)} บิล · สุทธิ ${fmtMoney(x.summary?.net_received||0)}</div></div><button class="ghost-btn" data-print-shift="${x.id}">🧾 พิมพ์</button></div>`).join(''):emptyState('🧾','ยังไม่มีประวัติกะที่ปิด');el.onclick=async e=>{const b=e.target.closest('[data-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.printShift));if(x)await printShiftCloseReport({...x,expected_cash:x.expected_cash,counted_cash:x.counted_cash,difference:x.difference})}}catch(e){el.innerHTML=`<div class="error-text">${escapeHtml(e.message)}</div>`}}
