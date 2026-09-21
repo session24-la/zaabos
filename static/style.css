@@ -901,6 +901,7 @@ main{max-width:1180px;padding-top:14px}
 @media (min-width:641px) and (max-width:999px){
   .pos-nav{max-width:100%!important;width:100%!important;grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:7px!important}
   .pos-nav>.nav-secondary{display:none!important}
+  .nav-more-menu .mobile-more-only{display:flex!important}
   .pos-nav>button,.pos-nav>.nav-more-wrap>.nav-primary{min-width:0!important;padding-left:8px!important;padding-right:8px!important}
   .pos-nav .tab-lb{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
