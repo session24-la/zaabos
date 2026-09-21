@@ -288,12 +288,19 @@
           <label><span>ขนาดกระดาษ</span><select id="rsPaper"><option value="80">80 mm</option><option value="58">58 mm</option></select></label>
           <label><span>ขนาดตัวอักษร</span><select id="rsFont"><option value="small">เล็ก</option><option value="normal">มาตรฐาน</option><option value="large">ใหญ่</option></select></label>
           <label><span>ตำแหน่งหัวใบเสร็จ</span><select id="rsAlign"><option value="center">กึ่งกลาง</option><option value="left">ชิดซ้าย</option></select></label>
-        </div><div class="settings-checks">
-          <label><input id="rsShowBranch" type="checkbox"> แสดงสาขา</label><label><input id="rsShowGuest" type="checkbox"> แสดงจำนวนลูกค้า</label>
-          <label><input id="rsShowCashier" type="checkbox"> แสดงแคชเชียร์</label><label><input id="rsShowPayments" type="checkbox"> แยกช่องทางชำระ</label>
-          <label><input id="rsShowOrderTime" type="checkbox"> เวลาเปิดบิล</label><label><input id="rsShowPaidTime" type="checkbox"> เวลาชำระ</label>
+        </div><div class="settings-checks settings-toggle-grid">
+          <label><input id="rsShowBranch" type="checkbox"><span><b>สาขา</b><small>แสดงชื่อสาขา</small></span></label>
+          <label><input id="rsShowGuest" type="checkbox"><span><b>ลูกค้า</b><small>แสดงจำนวนลูกค้า</small></span></label>
+          <label><input id="rsShowCashier" type="checkbox"><span><b>แคชเชียร์</b><small>แสดงผู้รับเงิน</small></span></label>
+          <label><input id="rsShowPayments" type="checkbox"><span><b>การชำระ</b><small>แยกช่องทางรับเงิน</small></span></label>
+          <label><input id="rsShowOrderTime" type="checkbox"><span><b>เวลาเปิดบิล</b><small>แสดงเวลาเปิดออเดอร์</small></span></label>
+          <label><input id="rsShowPaidTime" type="checkbox"><span><b>เวลาชำระ</b><small>แสดงเวลาปิดบิล</small></span></label>
         </div></div>
-        <button class="save" id="saveReceiptSettingsBtn" type="button">บันทึกการตั้งค่าสาขานี้</button>
+        <div class="settings-section printer-routing-section"><h3>เส้นทางเครื่องพิมพ์</h3><div class="muted printer-help">แยกงานพิมพ์หน้าร้านกับห้องครัวคนละช่องทาง เพื่อรองรับเครื่องพิมพ์ 2 เครื่อง</div><div class="printer-route-grid">
+          <label><span>🧾 ใบเสร็จลูกค้า</span><select id="rsReceiptPrinterRoute"><option value="front">เครื่องหน้าร้าน</option><option value="browser">เลือกเครื่องจากระบบพิมพ์</option></select><small>ใช้สำหรับใบเสร็จและใบชำระเงิน</small></label>
+          <label><span>👨‍🍳 ใบสั่งห้องครัว</span><select id="rsKitchenPrinterRoute"><option value="kitchen">เครื่องห้องครัว</option><option value="browser">เลือกเครื่องจากระบบพิมพ์</option></select><small>งานครัวถูกแยกเป็น Kitchen Print Queue อยู่แล้ว</small></label>
+        </div><label class="printer-queue-toggle"><input id="rsKitchenAutoQueue" type="checkbox"><span><b>ส่งงานครัวเข้าคิวอัตโนมัติ</b><small>เมื่อส่งรายการเข้าครัว ให้สร้างงานพิมพ์แยกตามสถานีครัว</small></span></label><div class="printer-agent-note">หมายเหตุ: ZaabOS แยกคิวหน้าร้าน/ห้องครัวไว้แล้ว แต่การส่งตรงไปยังเครื่องพิมพ์จริงแบบไม่ขึ้นหน้าต่าง Print ต้องเชื่อม Local Print Agent ตามรุ่น/เครือข่ายของเครื่องพิมพ์ในขั้นติดตั้งฮาร์ดแวร์</div></div>
+        <button class="save settings-save-compact" id="saveReceiptSettingsBtn" type="button">บันทึกการตั้งค่าสาขานี้</button>
       </div>
       <div class="panel receipt-preview-panel"><div class="panel-head"><div><h3>ตัวอย่างใบเสร็จ</h3><div class="muted">ตัวอย่างจะเปลี่ยนตามค่าที่เลือก</div></div></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
     </div>
