@@ -5,3 +5,6 @@ zaabos.db
 backups/*.db
 backups/*.sql
 .env
+
+backups/*.dump
+backups/*.dump.json
