@@ -510,7 +510,7 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS reversal_reason TEXT NOT NULL DEFAULT ''")
         conn.execute('ALTER TABLE payments ADD COLUMN IF NOT EXISTS reversed_shift_id INTEGER')
         conn.execute('DROP INDEX IF EXISTS uq_payments_tenant_order')
-        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_tenant_order_active ON payments(tenant_id,order_id) WHERE reversed_at IS NULL')
+        # Split payments allow multiple active payment rows per order; never recreate the legacy one-payment index.
     else:
         pcols=[r[1] for r in conn.execute('PRAGMA table_info(payments)').fetchall()]
         if 'reversed_at' not in pcols: conn.execute('ALTER TABLE payments ADD COLUMN reversed_at TEXT')
@@ -518,7 +518,7 @@ def ensure_schema_migrations(conn):
         if 'reversal_reason' not in pcols: conn.execute("ALTER TABLE payments ADD COLUMN reversal_reason TEXT NOT NULL DEFAULT ''")
         if 'reversed_shift_id' not in pcols: conn.execute('ALTER TABLE payments ADD COLUMN reversed_shift_id INTEGER')
         conn.execute('DROP INDEX IF EXISTS uq_payments_tenant_order')
-        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_tenant_order_active ON payments(tenant_id,order_id) WHERE reversed_at IS NULL')
+        # Split payments allow multiple active payment rows per order; never recreate the legacy one-payment index.
     conn.execute('CREATE INDEX IF NOT EXISTS idx_payments_reversed_shift ON payments(tenant_id,reversed_shift_id)')
     conn.commit()
     record_migration(conn, 21, 'pos_workspace_payment_reversal')
@@ -1530,6 +1530,14 @@ def _order_with_items(conn, order):
         opts = conn.execute('SELECT * FROM order_item_options WHERE order_item_id=? ORDER BY id', (it['id'],)).fetchall()
         item_d['options'] = [dict(o) for o in opts]
         d['items'].append(item_d)
+    # Receipt/report clients need the real active payment legs, especially for split payment.
+    try:
+        pays = conn.execute('SELECT id,amount,payment_method,cash_received,reference,paid_at FROM payments WHERE tenant_id=? AND order_id=? AND reversed_at IS NULL ORDER BY id',
+                            (order['tenant_id'], order['id'])).fetchall()
+        d['payments'] = [dict(x) for x in pays]
+    except Exception:
+        # Fresh/legacy bootstrap may call this before payment reversal columns exist.
+        d['payments'] = []
     return d
 
 def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
@@ -1814,6 +1822,9 @@ def list_orders():
     if g.tenant_id is None: return jsonify(orders=[])
     status = request.args.get('status')
     branch_id = request.args.get('branch_id')
+    if branch_id not in (None, ''):
+        try: branch_id = int(branch_id)
+        except (TypeError, ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'), 400
     q = '''SELECT orders.*, u.display_name AS created_by_name
            FROM orders LEFT JOIN users u ON u.id = orders.created_by_user_id
            WHERE orders.tenant_id=?'''
@@ -2022,6 +2033,16 @@ def send_order_items_to_kitchen(oid):
     ts = now()
     for iid in item_ids:
         conn.execute('UPDATE order_items SET kitchen_sent_at=? WHERE id=?', (ts, iid))
+    # Server-side kitchen print queue: create one job per station touched by this send.
+    placeholders=','.join('?' for _ in item_ids)
+    station_rows=conn.execute(f'''SELECT DISTINCT mi.kitchen_station_id AS station_id
+        FROM order_items oi LEFT JOIN menu_items mi ON mi.id=oi.menu_item_id AND mi.tenant_id=?
+        WHERE oi.order_id=? AND oi.id IN ({placeholders})''', [g.tenant_id,oid,*item_ids]).fetchall()
+    station_ids=[r['station_id'] for r in station_rows] or [None]
+    for station_id in station_ids:
+        conn.execute('''INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at)
+                        VALUES(?,?,?,?,?,?,?,?)''',
+                     (g.tenant_id,order['branch_id'],oid,station_id,'pending',0,'',ts))
     log_action('send_order_items_to_kitchen', detail=f'{oid}: {item_ids}')
     conn.commit()
     return jsonify(ok=True, sent_at=ts, item_ids=item_ids)
@@ -2245,7 +2266,8 @@ def cancel_order_item(oid,iid):
     conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ปิดแล้ว'),409
-    it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,oid)).fetchone()
+    item_sql='SELECT * FROM order_items WHERE id=? AND order_id=?' + (' FOR UPDATE' if IS_POSTGRES else '')
+    it=conn.execute(item_sql,(iid,oid)).fetchone()
     if not it: return jsonify(error='ไม่พบรายการ'),404
     d=request.get_json() or {}; remaining=max(0,int(it['quantity'])-int(it['cancelled_quantity'] or 0))
     reason=(d.get('reason') or '').strip()[:300]
@@ -2304,7 +2326,8 @@ def move_order_table(oid):
     if order['order_type']!='dine_in' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ไม่สามารถย้ายโต๊ะได้'),409
     try: table_id=int((request.get_json() or {}).get('table_id'))
     except: return jsonify(error='กรุณาเลือกโต๊ะปลายทาง'),400
-    tb=conn.execute('SELECT * FROM dining_tables WHERE id=? AND tenant_id=? AND branch_id=? AND active=1',(table_id,g.tenant_id,order['branch_id'])).fetchone()
+    table_sql='SELECT * FROM dining_tables WHERE id=? AND tenant_id=? AND branch_id=? AND active=1' + (' FOR UPDATE' if IS_POSTGRES else '')
+    tb=conn.execute(table_sql,(table_id,g.tenant_id,order['branch_id'])).fetchone()
     if not tb: return jsonify(error='โต๊ะปลายทางไม่ถูกต้อง'),400
     occupied=conn.execute("SELECT id FROM orders WHERE tenant_id=? AND branch_id=? AND table_id=? AND id<>? AND status NOT IN ('completed','cancelled') LIMIT 1",(g.tenant_id,order['branch_id'],table_id,oid)).fetchone()
     if occupied: return jsonify(error='โต๊ะปลายทางมีออเดอร์อยู่ กรุณาปิดหรือรวมออเดอร์ก่อน'),409
@@ -2562,13 +2585,14 @@ def ingredient_adjust(iid):
     try: delta=float(d.get('quantity') or 0)
     except:return jsonify(error='จำนวนไม่ถูกต้อง'),400
     if not delta or not reason:return jsonify(error='กรุณาระบุจำนวนและเหตุผล'),400
-    conn=db(); ing=conn.execute('SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone()
+    conn=db(); ing_sql='SELECT * FROM ingredients WHERE id=? AND tenant_id=?' + (' FOR UPDATE' if IS_POSTGRES else '')
+    ing=conn.execute(ing_sql,(iid,g.tenant_id)).fetchone()
     if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
-    new=max(0,float(ing['stock_qty'])+delta); ts=now()
+    old_qty=float(ing['stock_qty']); new=max(0,old_qty+delta); applied=new-old_qty; ts=now()
     conn.execute('UPDATE ingredients SET stock_qty=?,updated_at=? WHERE id=?',(new,ts,iid))
     conn.execute('INSERT INTO inventory_movements(tenant_id,branch_id,ingredient_id,movement_type,quantity,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',
-        (g.tenant_id,ing['branch_id'],iid,'adjustment',delta,reason,g.user['id'],ts)); conn.commit()
-    return jsonify(ok=True,stock_qty=new)
+        (g.tenant_id,ing['branch_id'],iid,'adjustment',applied,reason,g.user['id'],ts)); conn.commit()
+    return jsonify(ok=True,stock_qty=new,applied_quantity=applied)
 
 @app.get('/api/inventory/recipes/<int:mid>')
 @login_required
@@ -2783,6 +2807,9 @@ def reports_summary():
     conn = db()
     frm, to = _report_date_range()
     branch_id = request.args.get('branch_id')
+    if branch_id not in (None, ''):
+        try: branch_id = int(branch_id)
+        except (TypeError, ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'), 400
 
     range_start, range_end = local_range_bounds_utc(frm, to)
     q = '''SELECT COUNT(*) AS c, COALESCE(SUM(total_amount),0) AS subtotal, COALESCE(SUM(tax_amount),0) AS tax,
