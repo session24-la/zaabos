@@ -113,6 +113,7 @@ def add_security_headers(response):
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    response.headers.setdefault('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
     if request.is_secure:
         response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return response
@@ -746,14 +747,43 @@ def log_action(action, detail='', tenant_id=None):
 def gen_qr_token():
     return secrets.token_urlsafe(12)
 
-def gen_order_no(conn, tenant_id):
-    """Return the next daily order number inside one tenant.
+def _lock_tx(conn, namespace, key):
+    """Serialize a small critical section on PostgreSQL for this transaction.
+    SQLite is only a development fallback; production PostgreSQL gets the DB-level lock."""
+    if IS_POSTGRES:
+        # Two-int advisory lock: stable across workers/instances and released on commit/rollback.
+        import zlib
+        ns = zlib.crc32(str(namespace).encode('utf-8')) & 0x7fffffff
+        kval = zlib.crc32(str(key).encode('utf-8')) & 0x7fffffff
+        conn.execute('SELECT pg_advisory_xact_lock(?,?)', (ns, kval)).fetchone()
 
-    Do not use COUNT(): if an older order was removed, COUNT can point at an
-    already-used suffix. Reading the highest fixed-width number also makes the
-    retry path advance correctly after a concurrent insert commits.
+def _row_for_update(conn, sql, params=()):
+    if IS_POSTGRES:
+        sql = sql.rstrip().rstrip(';') + ' FOR UPDATE'
+    return conn.execute(sql, params).fetchone()
+
+def _query_int_arg(name, required=False):
+    raw = request.args.get(name)
+    if raw in (None, ''):
+        if required:
+            raise ValueError(f'{name} is required')
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f'{name} must be an integer')
+    if value <= 0:
+        raise ValueError(f'{name} must be a positive integer')
+    return value
+
+def gen_order_no(conn, tenant_id):
+    """Return the next daily tenant order number atomically in production.
+
+    PostgreSQL advisory transaction locking serializes number allocation across
+    workers/instances, removing the MAX-then-INSERT race seen at peak QR load.
     """
     today = restaurant_now().strftime('%Y%m%d')
+    _lock_tx(conn, 'order_no', f'{tenant_id}:{today}')
     prefix = f'Z-{today}-'
     row = conn.execute(
         "SELECT order_no FROM orders WHERE tenant_id=? AND order_no LIKE ? ORDER BY order_no DESC LIMIT 1",
@@ -767,7 +797,7 @@ def gen_order_no(conn, tenant_id):
             seq = 1
     return f'{prefix}{seq:04d}'
 
-MAX_ORDER_NO_RETRIES = 5
+MAX_ORDER_NO_RETRIES = 12
 
 def insert_order_row(conn, tenant_id, insert_sql, build_params):
     """Runs the INSERT for a new order, regenerating order_no and retrying if two
@@ -891,7 +921,7 @@ def login():
             attempts = (user['failed_attempts'] or 0) + 1
             locked = None
             if attempts >= 8:
-                locked = (datetime.now() + timedelta(minutes=5)).isoformat(timespec='seconds')
+                locked = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(timespec='seconds')
             conn.execute('UPDATE users SET failed_attempts=?,locked_until=? WHERE id=?', (attempts, locked, user['id']))
             conn.commit()
         return jsonify(error='ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง'), 401
@@ -1154,7 +1184,8 @@ def archive_branch(bid):
 def list_tables():
     conn = db()
     if g.tenant_id is None: return jsonify(tables=[])
-    branch_id = request.args.get('branch_id')
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     q = 'SELECT * FROM dining_tables WHERE tenant_id=? AND active=1'
     args = [g.tenant_id]
     if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
@@ -1245,7 +1276,8 @@ def archive_table(tbid):
 def list_menu_categories():
     conn = db()
     if g.tenant_id is None: return jsonify(categories=[])
-    branch_id = request.args.get('branch_id')
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     q = 'SELECT * FROM menu_categories WHERE tenant_id=? AND active=1'
     args = [g.tenant_id]
     if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
@@ -1311,7 +1343,8 @@ def _menu_item_with_options(conn, item):
 def list_menu_items():
     conn = db()
     if g.tenant_id is None: return jsonify(items=[])
-    branch_id = request.args.get('branch_id')
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     q = 'SELECT * FROM menu_items WHERE tenant_id=? AND active=1'
     args = [g.tenant_id]
     if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
@@ -1475,7 +1508,7 @@ def adjust_menu_item_stock(mid):
     without opening the full edit form. delta can be negative (e.g. correcting
     a miscount)."""
     conn = db()
-    old = conn.execute('SELECT * FROM menu_items WHERE id=? AND tenant_id=?', (mid, g.tenant_id)).fetchone()
+    old = _row_for_update(conn, 'SELECT * FROM menu_items WHERE id=? AND tenant_id=?', (mid, g.tenant_id))
     if not old: return jsonify(error='ไม่พบเมนู'), 404
     if not old['track_stock']: return jsonify(error='เมนูนี้ไม่ได้เปิดใช้การนับสต็อก'), 400
     d = request.get_json() or {}
@@ -1558,6 +1591,8 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
     totals. Returns (order_items_to_insert, total) or raises ValueError(msg)."""
     if not cart:
         raise ValueError('ตะกร้าว่างเปล่า กรุณาเลือกเมนูก่อนสั่ง')
+    if not isinstance(cart, list) or len(cart) > 100:
+        raise ValueError('หนึ่งออเดอร์มีรายการได้ไม่เกิน 100 รายการ')
     prepared = []
     total = Decimal('0.00')
     for line in cart:
@@ -1663,7 +1698,8 @@ def public_menu():
     QR that isn't tied to one physical table)."""
     conn = db()
     table_token = request.args.get('table')
-    branch_id = request.args.get('branch_id')
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     table = None
     if table_token:
         table = conn.execute('SELECT * FROM dining_tables WHERE qr_token=? AND active=1', (table_token,)).fetchone()
@@ -1697,9 +1733,8 @@ def public_tables():
     customer can explicitly pick their table before confirming — never exposes
     QR tokens, just id+name for the picker."""
     conn = db()
-    branch_id = request.args.get('branch_id')
-    if not branch_id:
-        return jsonify(error='ไม่พบข้อมูลสาขา'), 400
+    try: branch_id = _query_int_arg('branch_id', required=True)
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     branch = conn.execute('SELECT tenant_id FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
     if not branch:
         return jsonify(error='ไม่พบสาขานี้'), 404
@@ -1776,6 +1811,17 @@ def public_create_order():
         prepared_items, total = _validate_and_price_cart(conn, tenant_id, branch_id, d.get('cart') or [])
     except ValueError as e:
         return jsonify(error=str(e)), 400
+
+    # Public QR abuse guard. Serialize the counter per table (or generic branch QR)
+    # so concurrent bursts cannot all pass the same pre-insert count.
+    rate_key = f'{tenant_id}:{branch_id}:{table_id or 0}'
+    _lock_tx(conn, 'public_order_rate', rate_key)
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat(timespec='seconds')
+    recent = conn.execute('SELECT COUNT(*) AS c FROM orders WHERE tenant_id=? AND branch_id=? AND placed_by=? AND created_at>=? AND COALESCE(table_id,0)=?',
+                          (tenant_id, branch_id, 'customer', cutoff, table_id or 0)).fetchone()['c']
+    if int(recent or 0) >= 15:
+        conn.rollback()
+        return jsonify(error='มีการสั่งถี่เกินไป กรุณารอสักครู่แล้วลองใหม่'), 429
 
     try:
         order_no, cur = insert_order_row(conn, tenant_id,
@@ -1856,7 +1902,8 @@ def kitchen_orders():
     been sent to the kitchen are returned. This keeps draft/unsent items off KDS."""
     conn = db()
     if g.tenant_id is None: return jsonify(orders=[])
-    branch_id = request.args.get('branch_id')
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     station_id = request.args.get('station_id')
     q = '''SELECT DISTINCT o.* FROM orders o
            JOIN order_items oi ON oi.order_id=o.id
@@ -2666,7 +2713,7 @@ def ingredient_waste(iid):
     try: qty=float(d.get('quantity') or 0)
     except:return jsonify(error='จำนวนไม่ถูกต้อง'),400
     if qty<=0 or not reason:return jsonify(error='กรุณาระบุจำนวนและเหตุผล'),400
-    conn=db(); ing=conn.execute('SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone()
+    conn=db(); ing=_row_for_update(conn,'SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id))
     if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
     if qty>float(ing['stock_qty']):return jsonify(error='จำนวนทิ้งมากกว่าสต็อกคงเหลือ'),409
     ts=now(); new=float(ing['stock_qty'])-qty
@@ -2683,7 +2730,7 @@ def ingredient_stock_count(iid):
     try: counted=float(d.get('counted_qty'))
     except:return jsonify(error='จำนวนตรวจนับไม่ถูกต้อง'),400
     if counted<0:return jsonify(error='จำนวนตรวจนับไม่ถูกต้อง'),400
-    conn=db(); ing=conn.execute('SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id)).fetchone()
+    conn=db(); ing=_row_for_update(conn,'SELECT * FROM ingredients WHERE id=? AND tenant_id=?',(iid,g.tenant_id))
     if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
     system=float(ing['stock_qty']); diff=counted-system; ts=now()
     conn.execute('INSERT INTO inventory_counts(tenant_id,branch_id,ingredient_id,system_qty,counted_qty,difference,note,counted_by_user_id,counted_at) VALUES(?,?,?,?,?,?,?,?,?)',
@@ -2947,8 +2994,9 @@ def _shift_live_summary(conn, sh, user_id):
 @login_required
 @role_required('owner','manager','staff')
 def current_shift():
-    conn=db(); branch_id=request.args.get('branch_id')
-    if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
+    conn=db()
+    try: branch_id=_query_int_arg('branch_id', required=True)
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     branch=conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'),404
     sh=conn.execute("SELECT s.*,u.display_name AS opened_by_name FROM work_shifts s LEFT JOIN users u ON u.id=s.opened_by_user_id WHERE s.tenant_id=? AND s.branch_id=? AND s.opened_by_user_id=? AND s.status='open' ORDER BY s.id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
@@ -2994,11 +3042,17 @@ def add_cash_movement():
 @login_required
 @role_required('owner','manager','staff')
 def shift_history():
-    conn=db(); branch_id=request.args.get('branch_id')
-    if not branch_id: return jsonify(error='กรุณาเลือกสาขา'),400
-    rows=conn.execute("""SELECT s.*,u.display_name AS opened_by_name,c.display_name AS closed_by_name
+    conn=db()
+    try: branch_id=_query_int_arg('branch_id', required=True)
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
+    q="""SELECT s.*,u.display_name AS opened_by_name,c.display_name AS closed_by_name
         FROM work_shifts s LEFT JOIN users u ON u.id=s.opened_by_user_id LEFT JOIN users c ON c.id=s.closed_by_user_id
-        WHERE s.tenant_id=? AND s.branch_id=? AND s.status='closed' ORDER BY s.id DESC LIMIT 30""",(g.tenant_id,branch_id)).fetchall()
+        WHERE s.tenant_id=? AND s.branch_id=? AND s.status='closed'"""
+    args=[g.tenant_id,branch_id]
+    if g.user['role']=='staff':
+        q += ' AND s.opened_by_user_id=?'; args.append(g.user['id'])
+    q += ' ORDER BY s.id DESC LIMIT 30'
+    rows=conn.execute(q,args).fetchall()
     out=[]
     for row in rows:
         d=dict(row)
@@ -3088,7 +3142,8 @@ def list_expenses():
     if err: return err
     conn = db()
     frm, to = _report_date_range()
-    branch_id = request.args.get('branch_id')
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'),400
     q = '''SELECT expenses.*, u.display_name AS created_by_name FROM expenses
            LEFT JOIN users u ON u.id = expenses.created_by_user_id
            WHERE expenses.tenant_id=? AND expenses.expense_date BETWEEN ? AND ?'''
