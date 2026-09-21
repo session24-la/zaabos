@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request, jsonify, g, session, send_from_directory
-import sqlite3, os, functools, secrets, shutil, random, string, json
+from flask import Flask, render_template, request, jsonify, g, session, send_from_directory, send_file
+import sqlite3, os, functools, secrets, shutil, random, string, json, hashlib, subprocess
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -162,30 +162,61 @@ STATUS_TRANSITIONS = {
     'served': {'completed','cancelled'},
     'completed': set(), 'cancelled': set(),
 }
-BACKUP_DIR = BASE / 'backups'
+BACKUP_DIR = Path(os.getenv('ZAABOS_BACKUP_DIR') or (BASE / 'backups')).expanduser()
 
+def _safe_backup_label(label='manual'):
+    raw = ''.join(ch for ch in str(label or 'manual') if ch.isalnum() or ch in ('-', '_'))[:32]
+    return raw or 'manual'
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 def backup_db(label='auto'):
+    """Create a local backup artifact. PostgreSQL uses pg_dump custom format.
+    This is an operational copy, not a replacement for provider/off-site backups.
+    Returns metadata and raises on failure so callers never mistake failure for success."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+    label = _safe_backup_label(label)
     if IS_POSTGRES:
-        try:
-            import subprocess
-            BACKUP_DIR.mkdir(exist_ok=True)
-            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-            dest = BACKUP_DIR / f'zaabos_{label}_{ts}.sql'
-            with open(dest, 'w') as f:
-                subprocess.run(['pg_dump', os.getenv('DATABASE_URL')], stdout=f, check=True, timeout=60)
-            return dest.name
-        except Exception:
-            return None
-    try:
-        if not DB.exists(): return None
-        BACKUP_DIR.mkdir(exist_ok=True)
-        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        pg_dump = shutil.which('pg_dump')
+        if not pg_dump:
+            raise RuntimeError('ไม่พบ pg_dump บนเซิร์ฟเวอร์ กรุณาติดตั้ง PostgreSQL client หรือใช้ provider backup')
+        dest = BACKUP_DIR / f'zaabos_{label}_{ts}.dump'
+        subprocess.run([pg_dump, '--format=custom', '--no-owner', '--no-acl', '--file', str(dest), os.getenv('DATABASE_URL')],
+                       check=True, timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        kind = 'postgresql-custom'
+    else:
+        if not DB.exists(): raise RuntimeError('ไม่พบฐานข้อมูล SQLite')
         dest = BACKUP_DIR / f'zaabos_{label}_{ts}.db'
         shutil.copy2(DB, dest)
-        return dest.name
-    except Exception:
-        return None
+        kind = 'sqlite'
+    size = dest.stat().st_size
+    if size < 1024:
+        dest.unlink(missing_ok=True)
+        raise RuntimeError('ไฟล์สำรองมีขนาดผิดปกติ')
+    meta = {'file': dest.name, 'kind': kind, 'bytes': size, 'sha256': _sha256_file(dest),
+            'created_at': datetime.now(timezone.utc).isoformat(timespec='seconds')}
+    (dest.with_suffix(dest.suffix + '.json')).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+    return meta
+
+def list_backup_artifacts():
+    if not BACKUP_DIR.exists(): return []
+    rows=[]
+    for p in sorted(BACKUP_DIR.glob('zaabos_*'), key=lambda x: x.stat().st_mtime, reverse=True):
+        if not p.is_file() or p.name.endswith('.json'): continue
+        try:
+            rows.append({'file': p.name, 'bytes': p.stat().st_size,
+                         'created_at': datetime.fromtimestamp(p.stat().st_mtime, timezone.utc).isoformat(timespec='seconds'),
+                         'sha256': _sha256_file(p)})
+        except OSError:
+            pass
+    return rows[:50]
+
 
 
 def db():
@@ -863,6 +894,40 @@ def track_page():
 def kitchen_page():
     return render_template('kitchen.html')
 
+# Backup operations are super-admin only. Restore is deliberately NOT exposed over HTTP:
+# recovery must target a separate database first and be performed by an operator.
+@app.get('/api/admin/backups')
+@login_required
+@super_admin_required
+def admin_backups_list():
+    return jsonify(ok=True, backup_dir=str(BACKUP_DIR), backups=list_backup_artifacts(),
+                   pg_dump_available=bool(shutil.which('pg_dump')) if IS_POSTGRES else True,
+                   note='Local backup artifacts do not replace provider/off-site PostgreSQL backups.')
+
+@app.post('/api/admin/backups')
+@login_required
+@super_admin_required
+def admin_backups_create():
+    try:
+        meta = backup_db('manual')
+        return jsonify(ok=True, backup=meta)
+    except subprocess.CalledProcessError as e:
+        msg=(e.stderr or '').strip()[-500:]
+        return jsonify(error='สร้าง PostgreSQL backup ไม่สำเร็จ', detail=msg), 500
+    except Exception as e:
+        return jsonify(error=str(e)), 500
+
+@app.get('/api/admin/backups/<path:filename>/download')
+@login_required
+@super_admin_required
+def admin_backups_download(filename):
+    safe = Path(filename).name
+    if safe != filename or not safe.startswith('zaabos_') or safe.endswith('.json'):
+        return jsonify(error='ชื่อไฟล์ไม่ถูกต้อง'), 400
+    target = BACKUP_DIR / safe
+    if not target.is_file(): return jsonify(error='ไม่พบไฟล์สำรอง'), 404
+    return send_file(target, as_attachment=True, download_name=safe)
+
 # Production health probes. They expose no tenant/business data.
 @app.get('/api/admin/production-readiness')
 @login_required
@@ -874,6 +939,8 @@ def production_readiness():
         'admin_password_env': bool(os.environ.get('ZAABOS_ADMIN_PASSWORD')),
         'https_expected': bool(IS_POSTGRES or os.environ.get('RAILWAY_ENVIRONMENT')),
         'backup_dir_configured': bool(os.environ.get('ZAABOS_BACKUP_DIR')),
+        'pg_dump_available': bool(shutil.which('pg_dump')) if IS_POSTGRES else True,
+        'backup_artifacts': len(list_backup_artifacts()),
     }
     # Backup directory alone is not counted as disaster recovery: production
     # needs provider/off-site backups and a tested restore procedure.
@@ -881,7 +948,11 @@ def production_readiness():
     if IS_POSTGRES and not checks['secret_key_env']:
         warnings.append('ตั้ง ZAABOS_SECRET_KEY แบบคงที่ใน Railway เพื่อไม่ให้ session เปลี่ยนเมื่อ redeploy')
     if IS_POSTGRES and not checks['backup_dir_configured']:
-        warnings.append('ยังไม่ได้กำหนด ZAABOS_BACKUP_DIR; และควรมี off-site/provider PostgreSQL backup แยกจาก app')
+        warnings.append('ยังไม่ได้กำหนด ZAABOS_BACKUP_DIR; local filesystem บน cloud อาจไม่ถาวร')
+    if IS_POSTGRES and not checks['pg_dump_available']:
+        warnings.append('ไม่พบ pg_dump; application-level PostgreSQL backup จะยังสร้างไม่ได้')
+    if IS_POSTGRES:
+        warnings.append('ต้องเปิด provider/off-site PostgreSQL backup และทดสอบ restore ไปฐานข้อมูลแยกอย่างน้อยหนึ่งครั้ง')
     return jsonify(ok=True, checks=checks, warnings=warnings)
 
 @app.get('/api/system/timezone')
@@ -1890,16 +1961,6 @@ def list_orders():
     args = [g.tenant_id]
     if status: q += ' AND orders.status=?'; args.append(status)
     if branch_id: q += ' AND orders.branch_id=?'; args.append(branch_id)
-    date_from = request.args.get('date_from')
-    date_to = request.args.get('date_to')
-    if date_from or date_to:
-        try:
-            frm = date_from or date_to
-            to = date_to or date_from
-            start_utc, end_utc = local_range_bounds_utc(frm, to)
-        except (ValueError, TypeError):
-            return jsonify(error='ช่วงวันที่ไม่ถูกต้อง'), 400
-        q += ' AND orders.created_at>=? AND orders.created_at<?'; args.extend([start_utc, end_utc])
     q += ' ORDER BY orders.id DESC LIMIT 200'
     rows = conn.execute(q, args).fetchall()
     return jsonify(orders=[_order_with_items(conn, r) for r in rows])
