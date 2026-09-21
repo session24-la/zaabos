@@ -833,3 +833,13 @@ main{max-width:1180px;padding-top:14px}
 #takeOrderModal .sheet{max-height:min(92vh,900px);overflow:auto;overscroll-behavior:contain}#takeOrderModal .sheet-head{position:sticky;top:0;z-index:5;background:var(--surface);padding-bottom:10px}#takeOrderSubmit{position:sticky;bottom:0;z-index:5;box-shadow:0 -10px 24px var(--surface)}
 @media(min-width:761px){.action-dialog .sheet{border-radius:24px}.payment-advanced>summary{padding:10px 12px}#confirmPaymentModal .sheet{max-height:88vh;overflow:auto}}
 @media(max-width:760px){.payment-live-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.payment-live-summary>div{padding:8px}.payment-live-summary b{font-size:13px}.payment-advanced>summary small{display:none}.dialog-actions{grid-template-columns:1fr 1fr}}
+
+/* Round 26 — live shift dashboard + reopen cash-shift bridge */
+.shift-sub{display:block;color:var(--muted);font-size:11px;line-height:1.35;margin-top:2px}
+.shift-state-card.shift-kpi b{font-size:21px;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shift-state-card.shift-kpi.accent{border-color:rgba(49,207,190,.34);background:rgba(49,207,190,.07)}
+.shift-state-card.shift-kpi.accent b{color:#31cfbe}
+.shift-state-card.cash-expected{grid-column:span 2;border-color:rgba(255,143,56,.28);background:rgba(255,143,56,.055)}
+.reopen-quick-shift{margin:12px 0;padding:14px;border:1px solid rgba(255,143,56,.38);border-radius:14px;background:rgba(255,143,56,.07);display:grid;gap:12px}
+.reopen-shift-row{display:grid;grid-template-columns:1fr auto;gap:9px}.reopen-shift-row input{min-width:0}
+@media(max-width:760px){.shift-state-card.cash-expected{grid-column:1/-1}.shift-state-card.shift-kpi b{font-size:18px}.reopen-shift-row{grid-template-columns:1fr}.reopen-shift-row button{width:100%}}

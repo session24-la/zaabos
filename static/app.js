@@ -1149,13 +1149,20 @@ wireOrderActionClicks($('#orderDetailBody'));
 
 async function reopenPaidOrder(orderId){
   const payload=await criticalActionPayload('การเปิดบิลที่ชำระแล้วกลับมาแก้ไข'); if(!payload) return;
-  reopenOrderId=orderId; reopenPayload=payload; $('#reopenError').textContent=''; openModal('#reopenModal');
+  reopenOrderId=orderId; reopenPayload=payload; $('#reopenError').textContent=''; $('#reopenQuickShift').classList.add('hidden'); $('#reopenOpeningCash').value=''; openModal('#reopenModal');
 }
 
 let refundOrderId=null,reopenOrderId=null,reopenPayload=null;
-$('#reopenSubmit').addEventListener('click',async()=>{
-  if(reopenOrderId==null)return; const id=reopenOrderId,payload=reopenPayload||{}; $('#reopenError').textContent='';
-  try{await apiJson(`/api/orders/${id}/reopen`,'POST',payload);closeModals();reopenOrderId=null;reopenPayload=null;toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok');onOrderActionDone();setTimeout(()=>switchTab('orders'),100)}catch(e){$('#reopenError').textContent=e.message}
+async function submitReopenOrder(){
+  if(reopenOrderId==null)return false; const id=reopenOrderId,payload=reopenPayload||{}; $('#reopenError').textContent='';
+  try{await apiJson(`/api/orders/${id}/reopen`,'POST',payload);closeModals();reopenOrderId=null;reopenPayload=null;toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok');onOrderActionDone();setTimeout(()=>switchTab('orders'),100);return true}
+  catch(e){$('#reopenError').textContent=e.message;if((e.message||'').includes('เปิดกะ'))$('#reopenQuickShift').classList.remove('hidden');return false}
+}
+$('#reopenSubmit').addEventListener('click',submitReopenOrder);
+$('#reopenOpenShiftBtn').addEventListener('click',async()=>{
+  if(!currentBranchId)return; const opening=Number($('#reopenOpeningCash').value||0);
+  if(!Number.isFinite(opening)||opening<0){$('#reopenError').textContent='เงินทอนตั้งต้นไม่ถูกต้อง';return}
+  try{await apiJson('/api/operations/shift/open','POST',{branch_id:currentBranchId,opening_cash:opening,notes:'เปิดกะจากขั้นตอน Reopen บิลเงินสด'});toast('เปิดกะแล้ว กำลังเปิดบิลกลับมาแก้ไข','ok');refreshPosShiftBadge();await submitReopenOrder()}catch(e){$('#reopenError').textContent=e.message}
 });
 
 async function refundOrder(orderId) {
@@ -1686,15 +1693,19 @@ async function loadOperations(){
   refreshPosShiftBadge();
   if(!currentBranchId)return;
   try{
-    const data=await api('/api/operations/shift?branch_id='+currentBranchId), sh=data.shift;
+    const data=await api('/api/operations/shift?branch_id='+currentBranchId), sh=data.shift, sum=data.summary||{};
     const status=$('#shiftStatus'), actions=$('#shiftActionArea');
     if(sh){
-      const opened=formatDateTime(sh.opened_at);
+      const opened=formatDateTime(sh.opened_at), pb=sum.payment_breakdown||{};
       status.innerHTML=`
-        <div class="shift-state-card is-open"><span class="shift-dot"></span><div><small>สถานะ</small><b>กะเปิดอยู่</b></div></div>
-        <div class="shift-state-card"><small>เปิดกะ</small><b>${escapeHtml(opened)}</b></div>
-        <div class="shift-state-card"><small>เงินทอนตั้งต้น</small><b>${fmtMoney(sh.opening_cash)}</b></div>
-        <div class="shift-state-card"><small>พนักงาน</small><b>${escapeHtml(sh.opened_by_name||'')}</b></div>`;
+        <div class="shift-state-card is-open"><span class="shift-dot"></span><div><small>สถานะ</small><b>กะเปิดอยู่</b><span class="shift-sub">${escapeHtml(opened)}</span></div></div>
+        <div class="shift-state-card shift-kpi"><small>ยอดรับชำระในกะ</small><b>${fmtMoney(sum.gross_received||0)}</b><span class="shift-sub">${Number(sum.bill_count||0)} บิล</span></div>
+        <div class="shift-state-card shift-kpi"><small>เงินสด</small><b>${fmtMoney(pb.cash||0)}</b><span class="shift-sub">รับเงินจริงในกะนี้</span></div>
+        <div class="shift-state-card shift-kpi"><small>QR / โอน</small><b>${fmtMoney((pb.qr||0)+(pb.transfer||0)+(pb.bank_transfer||0))}</b><span class="shift-sub">ไม่รวมในลิ้นชักเงินสด</span></div>
+        <div class="shift-state-card shift-kpi"><small>คืนเงิน</small><b>${fmtMoney(sum.refund_total||0)}</b><span class="shift-sub">${Number(sum.refund_count||0)} รายการ</span></div>
+        <div class="shift-state-card shift-kpi accent"><small>ยอดสุทธิในกะ</small><b>${fmtMoney(sum.net_received||0)}</b><span class="shift-sub">รับชำระ − คืนเงิน</span></div>
+        <div class="shift-state-card shift-kpi cash-expected"><small>เงินสดที่ควรมีในลิ้นชัก</small><b>${fmtMoney(sum.expected_cash||0)}</b><span class="shift-sub">เริ่ม ${fmtMoney(sh.opening_cash)} · เข้า ${fmtMoney(sum.cash_in||0)} · ออก ${fmtMoney(sum.cash_out||0)}</span></div>
+        <div class="shift-state-card"><small>พนักงาน</small><b>${escapeHtml(sh.opened_by_name||'')}</b><span class="shift-sub">กะนี้ไม่ตัดยอดตอน 00:00</span></div>`;
       actions.innerHTML=`<div class="shift-close-box"><div><b>ปิดกะ</b><div class="muted">ให้นับเงินจริงในลิ้นชักเพียงครั้งเดียว ระบบจะเทียบกับยอดที่ควรมีอัตโนมัติ</div></div><div class="shift-close-controls"><input id="shiftCountedCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินสดนับจริง"><input id="shiftCloseNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="danger-btn" id="closeShiftBtn" type="button">ปิดกะ &amp; ตรวจยอด</button></div></div>`;
       $('#closeShiftBtn').onclick=()=>opsPost('/api/operations/shift/close',{branch_id:currentBranchId,counted_cash:Number($('#shiftCountedCash').value||0),notes:$('#shiftCloseNote').value});
     }else{
