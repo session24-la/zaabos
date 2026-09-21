@@ -99,10 +99,18 @@ def main():
 
     # The DSN goes through the environment, not argv, so it never shows up in a
     # process listing on a shared host.
+    u = urlsplit(dsn)
     env = dict(os.environ)
+    env.update({
+        'PGHOST': u.hostname or '',
+        'PGPORT': str(u.port or 5432),
+        'PGUSER': u.username or '',
+        'PGPASSWORD': u.password or '',
+        'PGDATABASE': (u.path or '/').lstrip('/'),
+    })
     r = subprocess.run(
         [pg_dump, '--format=custom', '--no-owner', '--no-acl',
-         '--file', str(dump_path), dsn],
+         '--file', str(dump_path)],
         capture_output=True, text=True, env=env)
     def discard_partial():
         # Never leave a half-written or empty .dump lying around: a later drill
