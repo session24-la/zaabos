@@ -1890,6 +1890,16 @@ def list_orders():
     args = [g.tenant_id]
     if status: q += ' AND orders.status=?'; args.append(status)
     if branch_id: q += ' AND orders.branch_id=?'; args.append(branch_id)
+    date_from = request.args.get('date_from')
+    date_to = request.args.get('date_to')
+    if date_from or date_to:
+        try:
+            frm = date_from or date_to
+            to = date_to or date_from
+            start_utc, end_utc = local_range_bounds_utc(frm, to)
+        except (ValueError, TypeError):
+            return jsonify(error='ช่วงวันที่ไม่ถูกต้อง'), 400
+        q += ' AND orders.created_at>=? AND orders.created_at<?'; args.extend([start_utc, end_utc])
     q += ' ORDER BY orders.id DESC LIMIT 200'
     rows = conn.execute(q, args).fetchall()
     return jsonify(orders=[_order_with_items(conn, r) for r in rows])

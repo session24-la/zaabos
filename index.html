@@ -106,6 +106,14 @@
       <div class="panel-head history-head">
         <div><span class="eyebrow" data-i18n="history_eyebrow">ค้นหาและตรวจสอบ</span><h2 data-i18n="history_title">ประวัติออเดอร์</h2></div>
         <div class="head-actions">
+          <select id="historyDateRange" aria-label="ช่วงวันที่ประวัติ">
+            <option value="today">วันนี้</option>
+            <option value="yesterday">เมื่อวาน</option>
+            <option value="7d">7 วันที่ผ่านมา</option>
+            <option value="month">เดือนนี้</option>
+            <option value="custom">กำหนดวันที่</option>
+          </select>
+          <div id="historyCustomDates" class="history-custom-dates hidden"><input id="historyDateFrom" type="date" aria-label="จากวันที่"><span>–</span><input id="historyDateTo" type="date" aria-label="ถึงวันที่"></div>
           <select id="orderStatusFilter">
             <option value="" data-i18n="status_all">ทุกสถานะ</option>
             <option value="received" data-i18n="status_received">รับออเดอร์แล้ว</option>
@@ -302,7 +310,7 @@
         </div><label class="printer-queue-toggle"><input id="rsKitchenAutoQueue" type="checkbox"><span><b>ส่งงานครัวเข้าคิวอัตโนมัติ</b><small>เมื่อส่งรายการเข้าครัว ให้สร้างงานพิมพ์แยกตามสถานีครัว</small></span></label><div class="printer-agent-note">หมายเหตุ: ZaabOS แยกคิวหน้าร้าน/ห้องครัวไว้แล้ว แต่การส่งตรงไปยังเครื่องพิมพ์จริงแบบไม่ขึ้นหน้าต่าง Print ต้องเชื่อม Local Print Agent ตามรุ่น/เครือข่ายของเครื่องพิมพ์ในขั้นติดตั้งฮาร์ดแวร์</div></div>
         <button class="save settings-save-compact" id="saveReceiptSettingsBtn" type="button">บันทึกการตั้งค่าสาขานี้</button>
       </div>
-      <div class="panel receipt-preview-panel"><div class="panel-head"><div><h3>ตัวอย่างใบเสร็จ</h3><div class="muted">ตัวอย่างจะเปลี่ยนตามค่าที่เลือก</div></div></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
+      <div class="panel receipt-preview-panel"><div class="panel-head receipt-preview-head"><div><h3 id="receiptPreviewTitle">ตัวอย่างใบเสร็จหน้าร้าน</h3><div class="muted">สลับดูตัวอย่างหน้าร้านและใบสั่งห้องครัวได้ทันที</div></div></div><div class="receipt-preview-switch" id="receiptPreviewSwitch"><button type="button" class="active" data-preview-mode="receipt">🧾 หน้าร้าน</button><button type="button" data-preview-mode="kitchen">👨‍🍳 ห้องครัว</button></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
     </div>
   </section>
 
