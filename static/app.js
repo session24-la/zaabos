@@ -959,14 +959,29 @@ const STATUS_FLOW = { received: 'preparing', preparing: 'ready', ready: 'served'
 function statusLabel(s) { return t('status_' + s) || s; }
 function orderTypeLabel(s) { return t('order_type_' + s) || s; }
 
+function historyDateBounds(){
+  const mode=$('#historyDateRange')?.value||'today', now=new Date(), ymd=d=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${day}`};
+  let from=new Date(now.getFullYear(),now.getMonth(),now.getDate()),to=new Date(from);
+  if(mode==='yesterday'){from.setDate(from.getDate()-1);to=new Date(from)}
+  else if(mode==='7d'){from.setDate(from.getDate()-6)}
+  else if(mode==='month'){from=new Date(now.getFullYear(),now.getMonth(),1)}
+  else if(mode==='custom'){return{from:$('#historyDateFrom')?.value||'',to:$('#historyDateTo')?.value||''}}
+  return{from:ymd(from),to:ymd(to)};
+}
+function syncHistoryDateControls(){const custom=$('#historyDateRange')?.value==='custom';$('#historyCustomDates')?.classList.toggle('hidden',!custom)}
 async function loadOrders() {
   const status = $('#orderStatusFilter').value;
   const qs = new URLSearchParams();
   if (status) qs.set('status', status);
+  if(currentBranchId)qs.set('branch_id',currentBranchId);
+  const d=historyDateBounds(); if(d.from)qs.set('date_from',d.from); if(d.to)qs.set('date_to',d.to);
   const r = await api('/api/orders?' + qs.toString());
   renderOrdersList(r.orders);
 }
 $('#orderStatusFilter').addEventListener('change', loadOrders);
+$('#historyDateRange')?.addEventListener('change',()=>{syncHistoryDateControls();loadOrders()});
+$('#historyDateFrom')?.addEventListener('change',loadOrders); $('#historyDateTo')?.addEventListener('change',loadOrders);
+syncHistoryDateControls();
 $('#refreshOrdersBtn').addEventListener('click',()=>{loadOrders();if(historyView==='kitchen')loadHistoryKitchen();});
 $('#refreshPosBtn').addEventListener('click', loadBoardData);
 async function loadHistoryKitchenStations(){if(!currentBranchId)return;try{const rows=await api('/api/kitchen/stations?branch_id='+currentBranchId),sel=$('#historyKitchenStation'),cur=sel.value;sel.innerHTML='<option value="">ทุกสถานี</option>'+rows.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');sel.value=rows.some(x=>String(x.id)===cur)?cur:'';}catch(e){}}
@@ -1034,10 +1049,11 @@ function orderCardHtml(o) {
     </div>`;
 }
 
+function historyDayLabel(iso){try{const d=new Date(iso),today=new Date(),yesterday=new Date();yesterday.setDate(today.getDate()-1);const key=x=>`${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;if(key(d)===key(today))return 'วันนี้';if(key(d)===key(yesterday))return 'เมื่อวาน';return new Intl.DateTimeFormat(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}).format(d)}catch(e){return ''}}
 function renderOrdersList(orders) {
   const list = $('#ordersList');
   if (!orders.length) { list.innerHTML = emptyState('🧾', t('empty_orders')); return; }
-  list.innerHTML = orders.map(o => `<div style="margin-top:12px">${orderCardHtml(o)}</div>`).join('');
+  let lastDay=''; list.innerHTML=orders.map(o=>{const d=new Date(o.created_at),day=`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`,head=day!==lastDay?`<div class="history-date-divider"><span>${escapeHtml(historyDayLabel(o.created_at))}</span><b>${escapeHtml(zaabosDateTime(o.created_at).split(' ')[0]||'')}</b></div>`:'';lastDay=day;return `${head}<div class="history-order-wrap">${orderCardHtml(o)}</div>`}).join('');
 }
 
 function updateSendKitchenBtnState(card) {
@@ -1764,7 +1780,9 @@ function rsEl(id){return document.getElementById(id)}
 function rsValue(id,fallback=''){const el=rsEl(id);return el&&typeof el.value==='string'?el.value:fallback}
 function rsChecked(id,fallback=true){const el=rsEl(id);return el?!!el.checked:fallback}
 function readReceiptSettingsForm(){return{branch_id:currentBranchId,shop_name:rsValue('rsShopName').trim(),branch_name:rsValue('rsBranchName').trim(),subtitle:rsValue('rsSubtitle').trim(),address:rsValue('rsAddress').trim(),phone:rsValue('rsPhone').trim(),tax_id:rsValue('rsTaxId').trim(),footer:rsValue('rsFooter').trim(),paper_width:rsValue('rsPaper','80'),font_scale:rsValue('rsFont','normal'),header_align:rsValue('rsAlign','center'),show_branch:rsChecked('rsShowBranch'),show_guest:rsChecked('rsShowGuest'),show_cashier:rsChecked('rsShowCashier'),show_payment_breakdown:rsChecked('rsShowPayments'),show_order_time:rsChecked('rsShowOrderTime'),show_paid_time:rsChecked('rsShowPaidTime'),receipt_printer_route:rsValue('rsReceiptPrinterRoute','front'),kitchen_printer_route:rsValue('rsKitchenPrinterRoute','kitchen'),kitchen_auto_queue:rsChecked('rsKitchenAutoQueue')}}
-function renderReceiptSettingsPreview(){const r=readReceiptSettingsForm(),el=$('#receiptSettingsPreview');if(!el)return;el.className=`receipt-settings-preview paper-${r.paper_width} font-${r.font_scale} head-${r.header_align}`;el.innerHTML=`<div class="rp-brand">${escapeHtml(r.shop_name||'ชื่อร้าน')}</div>${r.subtitle?`<div class="rp-brand-sub">${escapeHtml(r.subtitle)}</div>`:''}${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}${r.address?`<div class="rp-center rp-shop-detail">${escapeHtml(r.address)}</div>`:''}${r.phone?`<div class="rp-center rp-shop-detail">${escapeHtml(r.phone)}</div>`:''}<div class="rp-sep"></div><div class="rp-meta"><span>โต๊ะ</span><b>โต๊ะ 4</b>${r.show_guest?'<span>ลูกค้า</span><b>3</b>':''}</div><table class="rp-items"><tbody><tr><td>1</td><td>เมนูตัวอย่าง</td><td class="rp-price">₭50,000</td></tr></tbody></table><div class="rp-sep"></div><div class="rp-total"><span>รวม</span><span>₭50,000</span></div>${r.show_payment_breakdown?'<div class="rp-row"><span>Cash</span><span>₭50,000</span></div>':''}<div class="rp-thanks">${escapeHtml(r.footer||'ขอบใจที่ใช้บริการ')}</div><div class="rp-powered">ZaabOS</div>`}
+let receiptPreviewMode='receipt';
+function renderReceiptSettingsPreview(){const r=readReceiptSettingsForm(),el=$('#receiptSettingsPreview');if(!el)return;el.className=`receipt-settings-preview paper-${r.paper_width} font-${r.font_scale} head-${r.header_align} preview-${receiptPreviewMode}`;const title=$('#receiptPreviewTitle');if(receiptPreviewMode==='kitchen'){if(title)title.textContent='ตัวอย่างใบสั่งห้องครัว';el.innerHTML=`<div class="rp-brand">KITCHEN ORDER</div>${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}<div class="rp-sep"></div><div class="kp-order"><b>#Z-20260921-0058</b><strong>โต๊ะ 4</strong></div><div class="kp-time">20:45 · รับออเดอร์แล้ว</div><div class="rp-sep"></div><div class="kp-item"><b>2×</b><span>ข้าวผัดตัวอย่าง<small>ไม่ใส่เผ็ด · เพิ่มไข่</small></span></div><div class="kp-item"><b>1×</b><span>น้ำตัวอย่าง</span></div><div class="rp-sep"></div><div class="kp-note"><b>หมายเหตุ</b><br>ตัวอย่างหมายเหตุจากลูกค้า</div><div class="rp-powered">ZaabOS · Kitchen</div>`;return}if(title)title.textContent='ตัวอย่างใบเสร็จหน้าร้าน';el.innerHTML=`<div class="rp-brand">${escapeHtml(r.shop_name||'ชื่อร้าน')}</div>${r.subtitle?`<div class="rp-brand-sub">${escapeHtml(r.subtitle)}</div>`:''}${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}${r.address?`<div class="rp-center rp-shop-detail">${escapeHtml(r.address)}</div>`:''}${r.phone?`<div class="rp-center rp-shop-detail">${escapeHtml(r.phone)}</div>`:''}<div class="rp-sep"></div><div class="rp-meta"><span>โต๊ะ</span><b>โต๊ะ 4</b>${r.show_guest?'<span>ลูกค้า</span><b>3</b>':''}</div><table class="rp-items"><tbody><tr><td>1</td><td>เมนูตัวอย่าง</td><td class="rp-price">₭50,000</td></tr></tbody></table><div class="rp-sep"></div><div class="rp-total"><span>รวม</span><span>₭50,000</span></div>${r.show_payment_breakdown?'<div class="rp-row"><span>Cash</span><span>₭50,000</span></div>':''}<div class="rp-thanks">${escapeHtml(r.footer||'ขอบใจที่ใช้บริการ')}</div><div class="rp-powered">ZaabOS</div>`}
+$('#receiptPreviewSwitch')?.addEventListener('click',e=>{const b=e.target.closest('[data-preview-mode]');if(!b)return;receiptPreviewMode=b.dataset.previewMode;$('#receiptPreviewSwitch').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));renderReceiptSettingsPreview()});
 async function loadReceiptSettings(){if(!currentBranchId)return;try{const r=await api('/api/settings/receipt?branch_id='+currentBranchId);receiptSettingsCache=r;const vals={rsShopName:r.shop_name||'',rsBranchName:r.branch_name||'',rsSubtitle:r.subtitle||'',rsAddress:r.address||'',rsPhone:r.phone||'',rsTaxId:r.tax_id||'',rsFooter:r.footer||'',rsPaper:r.paper_width||'80',rsFont:r.font_scale||'normal',rsAlign:r.header_align||'center',rsReceiptPrinterRoute:r.receipt_printer_route||'front',rsKitchenPrinterRoute:r.kitchen_printer_route||'kitchen'};Object.entries(vals).forEach(([id,v])=>{const el=rsEl(id);if(el)el.value=v});const checks={rsShowBranch:r.show_branch!==false,rsShowGuest:r.show_guest!==false,rsShowCashier:r.show_cashier!==false,rsShowPayments:r.show_payment_breakdown!==false,rsShowOrderTime:r.show_order_time!==false,rsShowPaidTime:r.show_paid_time!==false,rsKitchenAutoQueue:r.kitchen_auto_queue!==false};Object.entries(checks).forEach(([id,v])=>{const el=rsEl(id);if(el)el.checked=v});renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}}
 $('#tab-receiptsettings').addEventListener('input',renderReceiptSettingsPreview);$('#tab-receiptsettings').addEventListener('change',renderReceiptSettingsPreview);$('#saveReceiptSettingsBtn').onclick=async()=>{try{const r=await apiJson('/api/settings/receipt','PUT',readReceiptSettingsForm());receiptSettingsCache=r.settings||{};toast('บันทึกการตั้งค่าร้านและใบเสร็จแล้ว','ok');renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}};
 
