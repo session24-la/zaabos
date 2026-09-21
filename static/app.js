@@ -1268,9 +1268,17 @@ function printReceipt(orderId) {
   const discount = Number(o.discount_amount || 0);
   const service = Number(o.service_charge_amount || 0);
   const grandTotal = Math.max(0, subtotal - discount) + service + tax;
-  const cash = (o.cash_received != null && o.cash_received !== '') ? Number(o.cash_received) : null;
-  const change = cash != null ? Math.max(0, cash - grandTotal) : null;
   const paymentNames = {cash:'Cash / ເງິນສົດ',qr:'QR',card:'Card',bank_transfer:'Bank transfer',other:'Other'};
+  const paymentRows = Array.isArray(o.payments) ? o.payments : [];
+  const activeCashRows = paymentRows.filter(p => p.payment_method === 'cash');
+  const cash = activeCashRows.length
+    ? activeCashRows.reduce((sum,p)=>sum+Number(p.cash_received != null ? p.cash_received : p.amount || 0),0)
+    : ((o.cash_received != null && o.cash_received !== '') ? Number(o.cash_received) : null);
+  const cashDue = activeCashRows.reduce((sum,p)=>sum+Number(p.amount||0),0);
+  const change = cash != null ? Math.max(0, cash - (activeCashRows.length ? cashDue : grandTotal)) : null;
+  const paymentBreakdown = paymentRows.length
+    ? paymentRows.map(p => `<div class=\"rp-row\"><span>${escapeHtml(paymentNames[p.payment_method] || p.payment_method)}</span><span>${fmtMoney(Number(p.amount||0))}</span></div>`).join('')
+    : (o.payment_method ? `<div class=\"rp-row\"><span>Payment</span><span>${escapeHtml(paymentNames[o.payment_method] || o.payment_method)}</span></div>` : '');
   const paidAt = o.paid_at ? new Date(o.paid_at) : null;
   const createdAt = o.created_at ? new Date(o.created_at) : new Date();
   const activeItems = (o.items || []).filter(it => Number(it.quantity || 0) - Number(it.cancelled_quantity || 0) > 0);
@@ -1298,7 +1306,7 @@ function printReceipt(orderId) {
     ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
     <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
     ${o.payment_status === 'paid' ? `<div class="rp-paid">【 PAID · ຊຳລະແລ້ວ 】</div>` : ''}
-    ${o.payment_method ? `<div class="rp-row"><span>Payment</span><span>${escapeHtml(paymentNames[o.payment_method] || o.payment_method)}</span></div>` : ''}
+    ${paymentBreakdown}
     ${cash != null ? `<div class="rp-row"><span>${escapeHtml(t('label_cash_received'))}</span><span>${fmtMoney(cash)}</span></div>` : ''}
     ${change != null ? `<div class="rp-row"><span>${escapeHtml(t('label_change'))}</span><span>${fmtMoney(change)}</span></div>` : ''}
     <div class="rp-sep"></div>
