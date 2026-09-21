@@ -1149,24 +1149,30 @@ wireOrderActionClicks($('#orderDetailBody'));
 
 async function reopenPaidOrder(orderId){
   const payload=await criticalActionPayload('การเปิดบิลที่ชำระแล้วกลับมาแก้ไข'); if(!payload) return;
-  if(!confirm('ยืนยันเปิดบิลนี้กลับมาแก้ไข? การชำระเดิมจะถูกเก็บเป็นประวัติและทำเครื่องหมายย้อนรายการ')) return;
-  try{await apiJson(`/api/orders/${orderId}/reopen`,'POST',payload); closeModals(); toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok'); onOrderActionDone(); setTimeout(()=>switchTab('orders'),100);}catch(e){toast(e.message,'err');}
+  reopenOrderId=orderId; reopenPayload=payload; $('#reopenError').textContent=''; openModal('#reopenModal');
 }
+
+let refundOrderId=null,reopenOrderId=null,reopenPayload=null;
+$('#reopenSubmit').addEventListener('click',async()=>{
+  if(reopenOrderId==null)return; const id=reopenOrderId,payload=reopenPayload||{}; $('#reopenError').textContent='';
+  try{await apiJson(`/api/orders/${id}/reopen`,'POST',payload);closeModals();reopenOrderId=null;reopenPayload=null;toast('เปิดบิลกลับมาแก้ไขแล้ว โต๊ะกลับมาใช้งานอีกครั้ง','ok');onOrderActionDone();setTimeout(()=>switchTab('orders'),100)}catch(e){$('#reopenError').textContent=e.message}
+});
 
 async function refundOrder(orderId) {
   const order=findOrderById(orderId);
-  const maxAmount=order ? Number(order.grand_total || order.total_amount || 0) : 0;
-  const raw=prompt(`ยอดคืนเงิน (เว้นว่าง = คืนเต็มจำนวน${maxAmount ? ' '+fmtMoney(maxAmount) : ''})`,'');
-  if(raw===null) return;
-  let amount=null;
-  if(raw.trim()!==''){ amount=Number(raw); if(!Number.isFinite(amount)||amount<=0){toast('ยอดคืนเงินไม่ถูกต้อง','err');return;} }
-  const reason=prompt('เหตุผลการคืนเงิน:'); if(reason===null) return;
-  if(!reason.trim()) { toast('กรุณาระบุเหตุผลการคืนเงิน','err'); return; }
-  if(!confirm(`ยืนยันคืนเงิน${amount ? ' '+fmtMoney(amount) : 'เต็มจำนวน'}?`)) return;
-  const payload={reason:reason.trim()}; if(amount) payload.amount=amount;
-  try { const r=await apiJson(`/api/orders/${orderId}/refund`,'POST',payload); toast(`คืนเงิน ${fmtMoney(r.amount)} แล้ว · คืนได้อีก ${fmtMoney(r.remaining_refundable||0)}`,'ok'); onOrderActionDone(); }
-  catch(e){ toast(e.message,'err'); }
+  const paidTotal=order ? Number(order.grand_total || order.total_amount || 0) : 0;
+  const alreadyRefunded=order ? Number(order.refund_total || 0) : 0;
+  const maxAmount=Math.max(0,paidTotal-alreadyRefunded);
+  refundOrderId=orderId; $('#refundMax').textContent=fmtMoney(maxAmount); $('#refundAmount').value=''; $('#refundAmount').max=maxAmount||''; $('#refundReason').value=''; $('#refundError').textContent=''; openModal('#refundModal');
 }
+$('#refundSubmit').addEventListener('click',async()=>{
+  if(refundOrderId==null)return; const raw=$('#refundAmount').value.trim(),amount=raw===''?null:Number(raw),reason=$('#refundReason').value.trim(); $('#refundError').textContent='';
+  if(amount!==null&&(!Number.isFinite(amount)||amount<=0)){ $('#refundError').textContent='ยอดคืนเงินไม่ถูกต้อง'; return; }
+  const max=Number($('#refundAmount').max||0); if(amount!==null&&max>0&&amount>max){$('#refundError').textContent='ยอดคืนเงินเกินยอดที่คืนได้';return;}
+  if(!reason){$('#refundError').textContent='กรุณาระบุเหตุผลการคืนเงิน';return;}
+  const payload={reason};if(amount!==null)payload.amount=amount;const id=refundOrderId;
+  try{const r=await apiJson(`/api/orders/${id}/refund`,'POST',payload);closeModals();refundOrderId=null;toast(`คืนเงิน ${fmtMoney(r.amount)} แล้ว · คืนได้อีก ${fmtMoney(r.remaining_refundable||0)}`,'ok');onOrderActionDone()}catch(e){$('#refundError').textContent=e.message}
+});
 
 let billManagerSource=null,billManagerMode='move';
 function openBillManager(sourceId){
@@ -1240,7 +1246,7 @@ function cpBaseDue(){const o=findOrderById(cpOrderId);if(!o)return 0;return Math
 function paymentMethodName(m){return({cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'})[m]||m}
 function updateCpPaymentSummary(){const due=cpBaseDue(),method=$('#cpMethod').value;$('#cpCashLabel').classList.toggle('hidden',method!=='cash');const primary=Math.max(0,Number($('#cpPrimaryAmount').value||0)),extras=extraPaymentParts.reduce((a,x)=>a+Math.max(0,Number(x.amount||0)),0),paid=primary+extras,remaining=Math.max(0,due-paid),cash=method==='cash'?Math.max(0,Number($('#cpCash').value||0)):0;$('#cpPaidTotal').textContent=fmtMoney(paid);$('#cpRemaining').textContent=fmtMoney(remaining);$('#cpRemaining').classList.toggle('payment-ok',Math.abs(paid-due)<.005);$('#cpChange').textContent=fmtMoney(method==='cash'?Math.max(0,cash-primary):0);}
 function renderPaymentParts(){const el=$('#cpPaymentParts');if(!el)return;el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="ยอดช่องทางนี้" value="${p.amount||''}"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method});updateCpPaymentSummary();}
-function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';renderPaymentParts();openModal('#confirmPaymentModal');}
+function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpAdvanced').open=false;$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';renderPaymentParts();openModal('#confirmPaymentModal');}
 $('#cpMethod').addEventListener('change',()=>{if($('#cpMethod').value==='cash'&&!$('#cpCash').value)$('#cpCash').value=$('#cpPrimaryAmount').value;updateCpPaymentSummary()});$('#cpPrimaryAmount').addEventListener('input',updateCpPaymentSummary);$('#cpCash').addEventListener('input',updateCpPaymentSummary);
 $('#cpDiscount').addEventListener('input',()=>{const due=cpBaseDue(),extras=extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);$('#cpPrimaryAmount').value=String(Math.max(0,due-extras));updateCpPaymentSummary()});
 $('#cpAddPayment').addEventListener('click',()=>{const due=cpBaseDue(),paid=Number($('#cpPrimaryAmount').value||0)+extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);extraPaymentParts.push({method:'qr',amount:Math.max(0,due-paid)});renderPaymentParts()});
