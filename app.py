@@ -2419,15 +2419,33 @@ def merge_orders(source_id):
 @login_required
 @role_required('owner','manager','staff')
 def split_order(source_id):
-    """Split selected active quantities into a new unpaid bill without changing stock."""
+    """Split selected active quantities into a new bill OR transfer them into an existing unpaid bill.
+    Inventory is not changed because the same sold items are only being reassigned between bills.
+    """
     conn=db(); d=request.get_json() or {}
     lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''
     source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(source_id,g.tenant_id)).fetchone()
     if not source: return jsonify(error='ไม่พบบิลต้นทาง'),404
     if source['payment_status']!='unpaid' or source['status'] in ('completed','cancelled'):
-        return jsonify(error='แยกได้เฉพาะบิลที่ยังเปิดและยังไม่ชำระ'),409
+        return jsonify(error='ย้ายรายการได้เฉพาะบิลที่ยังเปิดและยังไม่ชำระ'),409
+
+    target=None
+    target_id=d.get('target_order_id')
+    if target_id not in (None,''):
+        try: target_id=int(target_id)
+        except (TypeError,ValueError): return jsonify(error='บิลปลายทางไม่ถูกต้อง'),400
+        if target_id==source_id: return jsonify(error='บิลต้นทางและปลายทางต้องไม่ใช่บิลเดียวกัน'),400
+        target=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(target_id,g.tenant_id)).fetchone()
+        if not target: return jsonify(error='ไม่พบบิลปลายทาง'),404
+        if target['branch_id']!=source['branch_id']:
+            return jsonify(error='ย้ายรายการข้ามสาขาไม่ได้'),409
+        if target['payment_status']!='unpaid' or target['status'] in ('completed','cancelled'):
+            return jsonify(error='ย้ายรายการได้เฉพาะไปยังบิลที่ยังเปิดและยังไม่ชำระ'),409
+        if source['order_type']!='dine_in' or target['order_type']!='dine_in':
+            return jsonify(error='การย้ายรายการระหว่างโต๊ะใช้ได้กับออเดอร์ทานที่ร้านเท่านั้น'),409
+
     req=d.get('items') or []
-    if not isinstance(req,list) or not req: return jsonify(error='กรุณาเลือกรายการที่ต้องการแยกบิล'),400
+    if not isinstance(req,list) or not req: return jsonify(error='กรุณาเลือกรายการที่ต้องการย้าย'),400
     selections=[]; seen=set()
     for x in req:
         try: iid=int(x.get('item_id')); qty=int(x.get('quantity'))
@@ -2437,33 +2455,52 @@ def split_order(source_id):
         it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?'+lock_suffix,(iid,source_id)).fetchone()
         if not it: return jsonify(error='ไม่พบรายการในบิลต้นทาง'),404
         active=max(0,int(it['quantity'] or 0)-int(it['cancelled_quantity'] or 0))
-        if qty<1 or qty>active: return jsonify(error='จำนวนที่แยกไม่ถูกต้อง'),400
+        if qty<1 or qty>active: return jsonify(error='จำนวนที่ย้ายไม่ถูกต้อง'),400
         selections.append((it,qty,active))
+
     total_active=int(conn.execute('SELECT COALESCE(SUM(quantity-COALESCE(cancelled_quantity,0)),0) q FROM order_items WHERE order_id=?',(source_id,)).fetchone()['q'] or 0)
-    if sum(q for _,q,_ in selections)>=total_active: return jsonify(error='ต้องเหลืออย่างน้อย 1 รายการในบิลเดิม'),409
+    if sum(q for _,q,_ in selections)>=total_active:
+        return jsonify(error='ต้องเหลืออย่างน้อย 1 รายการในบิลเดิม ถ้าจะย้ายทั้งบิลให้ใช้เมนูย้ายโต๊ะหรือรวมบิล'),409
+
     ts=now()
     try:
-        no,cur=insert_order_row(conn,g.tenant_id,
-          """INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,customer_name,customer_phone,customer_address,total_amount,guest_count,scheduled_for,delivery_fee,fulfillment_status,delivery_status,driver_name,driver_phone,delivery_note,status,notes,placed_by,created_by_user_id,created_at,updated_at)
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-          lambda n:(g.tenant_id,source['branch_id'],n,source['order_type'],source['table_id'],source['table_name_snapshot'],source['customer_name'],source['customer_phone'],source['customer_address'],0,None,source['scheduled_for'],0,source['fulfillment_status'],source['delivery_status'],source['driver_name'],source['driver_phone'],source['delivery_note'],source['status'],f'แยกจากบิล #{source["order_no"]}','staff',g.user['id'],ts,ts))
-        new_id=cur.lastrowid
+        if target:
+            destination_id=target['id']; destination_no=target['order_no']
+        else:
+            destination_no,cur=insert_order_row(conn,g.tenant_id,
+              """INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,customer_name,customer_phone,customer_address,total_amount,guest_count,scheduled_for,delivery_fee,fulfillment_status,delivery_status,driver_name,driver_phone,delivery_note,status,notes,placed_by,created_by_user_id,created_at,updated_at)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              lambda n:(g.tenant_id,source['branch_id'],n,source['order_type'],source['table_id'],source['table_name_snapshot'],source['customer_name'],source['customer_phone'],source['customer_address'],0,None,source['scheduled_for'],0,source['fulfillment_status'],source['delivery_status'],source['driver_name'],source['driver_phone'],source['delivery_note'],source['status'],f'แยกจากบิล #{source["order_no"]}','staff',g.user['id'],ts,ts))
+            destination_id=cur.lastrowid
+
         for it,qty,active in selections:
             cancelled=int(it['cancelled_quantity'] or 0)
             if qty==active and cancelled==0:
-                conn.execute('UPDATE order_items SET order_id=? WHERE id=?',(new_id,it['id']))
+                conn.execute('UPDATE order_items SET order_id=? WHERE id=?',(destination_id,it['id']))
             else:
                 remain=int(it['quantity'])-qty
                 conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(remain,remain*float(it['unit_price']),it['id']))
                 nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at)
-                                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(new_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],qty*float(it['unit_price']),it['notes'],it['kitchen_sent_at'],0,'',None))
+                                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],qty*float(it['unit_price']),it['notes'],it['kitchen_sent_at'],0,'',None))
                 for op in conn.execute('SELECT * FROM order_item_options WHERE order_item_id=?',(it['id'],)).fetchall():
                     conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(nc.lastrowid,op['group_name_snapshot'],op['option_name_snapshot'],op['price_delta_snapshot']))
-        a=_recalculate_order_total(conn,source_id); b=_recalculate_order_total(conn,new_id)
-        log_action('split_order',detail=f'{source_id}->{new_id}; items={len(selections)}'); conn.commit()
-        return jsonify(ok=True,new_order_id=new_id,new_order_no=no,source_total=a,new_total=b)
+
+        source_total=_recalculate_order_total(conn,source_id)
+        destination_total=_recalculate_order_total(conn,destination_id)
+        action='transfer_order_items' if target else 'split_order'
+        log_action(action,detail=f'{source_id}->{destination_id}; items={len(selections)}')
+        conn.commit()
+        return jsonify(ok=True,
+                       target_order_id=destination_id if target else None,
+                       new_order_id=None if target else destination_id,
+                       new_order_no=None if target else destination_no,
+                       target_order_no=destination_no,
+                       source_total=source_total,
+                       target_total=destination_total,
+                       new_total=destination_total)
     except Exception:
-        conn.rollback(); app.logger.exception('split_order failed'); return jsonify(error='ไม่สามารถแยกบิลได้'),500
+        conn.rollback(); app.logger.exception('split/transfer order items failed')
+        return jsonify(error='ไม่สามารถย้ายรายการได้'),500
 
 
 # ---------- Round 15: kitchen stations + ingredient inventory ----------
