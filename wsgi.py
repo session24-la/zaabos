@@ -25,13 +25,17 @@ def inject_browser_helpers(response):
     # Admin/table-management QR images: local renderer, no third-party host.
     app_tag = '<script src="/static/app.js?v=27.3"></script>'
     qr_tag = '<script src="/static/qr-local.js?v=1"></script>'
+    exports_tag = '<script src="/static/pos-runtime-exports.js?v=1"></script>'
     table_check_tag = '<script src="/static/table-checks.js?v=1"></script>'
     if app_tag in html and qr_tag not in html:
         html = html.replace(app_tag, app_tag + qr_tag, 1)
-    if app_tag in html and table_check_tag not in html:
-        # Load after the core SPA so the grouped-table layer can wrap the existing
-        # order-detail flow without duplicating the whole application bundle.
+    if app_tag in html and exports_tag not in html:
         anchor = qr_tag if qr_tag in html else app_tag
+        html = html.replace(anchor, anchor + exports_tag, 1)
+    if app_tag in html and table_check_tag not in html:
+        # Load after the core SPA and state bridge so the grouped-table layer can
+        # wrap the existing order-detail flow without duplicating the whole SPA.
+        anchor = exports_tag if exports_tag in html else (qr_tag if qr_tag in html else app_tag)
         html = html.replace(anchor, anchor + table_check_tag, 1)
 
     # Customer QR ordering: browser-session order history + "order more" flow.
