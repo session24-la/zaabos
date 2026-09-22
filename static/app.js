@@ -547,7 +547,7 @@ $('#branchSave').addEventListener('click', async () => {
 
 // ===================== Tables & QR =====================
 
-function tableOrderUrl(token) { return location.origin + '/order/' + token; }
+function tableOrderUrl(token) { return ((boot && boot.public_url) || location.origin) + '/order/' + token; }
 
 function renderTables() {
   const grid = $('#tableGrid');

@@ -166,7 +166,7 @@ STATUS_TRANSITIONS = {
     'served': {'completed','cancelled'},
     'completed': set(), 'cancelled': set(),
 }
-BACKUP_DIR = Path(os.getenv('ZAABOS_BACKUP_DIR') or (BASE / 'backups')).expanduser()
+BACKUP_DIR = Path(os.getenv('ZAABOS_BACKUP_DIR') or (DATA_DIR / 'backups')).expanduser()
 
 def _safe_backup_label(label='manual'):
     raw = ''.join(ch for ch in str(label or 'manual') if ch.isalnum() or ch in ('-', '_'))[:32]
@@ -199,7 +199,14 @@ def backup_db(label='auto'):
     else:
         if not DB.exists(): raise RuntimeError('ไม่พบฐานข้อมูล SQLite')
         dest = BACKUP_DIR / f'zaabos_{label}_{ts}.db'
-        shutil.copy2(DB, dest)
+        # SQLite online-backup API: a consistent copy even while tablets are writing (a plain
+        # file copy can catch a half-written page or miss rows still in the WAL file).
+        src = sqlite3.connect(DB, timeout=30)
+        try:
+            out = sqlite3.connect(dest)
+            try: src.backup(out)
+            finally: out.close()
+        finally: src.close()
         kind = 'sqlite'
     size = dest.stat().st_size
     if size < 1024:
@@ -230,9 +237,13 @@ def db():
         if IS_POSTGRES:
             g.db = PGConn(os.getenv('DATABASE_URL'))
         else:
-            g.db = sqlite3.connect(DB)
+            # Shop PC serves several tablets: wait for the write lock instead of failing at once,
+            # and use WAL so readers (KDS, reports) never block the cashier's writes.
+            g.db = sqlite3.connect(DB, timeout=15)
             g.db.row_factory = sqlite3.Row
             g.db.execute('PRAGMA foreign_keys=ON')
+            g.db.execute('PRAGMA journal_mode=WAL')
+            g.db.execute('PRAGMA synchronous=NORMAL')
     return g.db
 
 @app.teardown_appcontext
@@ -1691,7 +1702,9 @@ def bootstrap():
     categories = [dict(x) for x in conn.execute('SELECT * FROM menu_categories WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,))]
     items_rows = conn.execute('SELECT * FROM menu_items WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,)).fetchall()
     items = [_menu_item_with_options(conn, r) for r in items_rows]
-    return jsonify(branches=branches, tables=tables, categories=categories, items=items)
+    # Local shop server: QR codes must point at the shop PC's network address, not localhost.
+    return jsonify(branches=branches, tables=tables, categories=categories, items=items,
+                   public_url=(os.getenv('ZAABOS_PUBLIC_URL') or '').rstrip('/') or None)
 
 # =====================================================================
 # Orders — public (customer QR ordering, no login) + staff-side management
