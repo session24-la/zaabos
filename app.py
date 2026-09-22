@@ -543,6 +543,8 @@ def ensure_schema_migrations(conn):
         conn.execute('ALTER TABLE payments ADD COLUMN IF NOT EXISTS reversed_by_user_id INTEGER')
         conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS reversal_reason TEXT NOT NULL DEFAULT ''")
         conn.execute('ALTER TABLE payments ADD COLUMN IF NOT EXISTS reversed_shift_id INTEGER')
+        conn.execute('ALTER TABLE payments ADD COLUMN IF NOT EXISTS shift_id INTEGER')
+        conn.execute('ALTER TABLE payments ADD COLUMN IF NOT EXISTS client_request_id TEXT')
         conn.execute('DROP INDEX IF EXISTS uq_payments_tenant_order')
         # Split payments allow multiple active payment rows per order; never recreate the legacy one-payment index.
     else:
@@ -551,9 +553,13 @@ def ensure_schema_migrations(conn):
         if 'reversed_by_user_id' not in pcols: conn.execute('ALTER TABLE payments ADD COLUMN reversed_by_user_id INTEGER')
         if 'reversal_reason' not in pcols: conn.execute("ALTER TABLE payments ADD COLUMN reversal_reason TEXT NOT NULL DEFAULT ''")
         if 'reversed_shift_id' not in pcols: conn.execute('ALTER TABLE payments ADD COLUMN reversed_shift_id INTEGER')
+        if 'shift_id' not in pcols: conn.execute('ALTER TABLE payments ADD COLUMN shift_id INTEGER')
+        if 'client_request_id' not in pcols: conn.execute('ALTER TABLE payments ADD COLUMN client_request_id TEXT')
         conn.execute('DROP INDEX IF EXISTS uq_payments_tenant_order')
         # Split payments allow multiple active payment rows per order; never recreate the legacy one-payment index.
     conn.execute('CREATE INDEX IF NOT EXISTS idx_payments_reversed_shift ON payments(tenant_id,reversed_shift_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_payments_shift ON payments(tenant_id,shift_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_payments_request ON payments(tenant_id,order_id,client_request_id)')
     conn.commit()
     record_migration(conn, 21, 'pos_workspace_payment_reversal')
 
@@ -791,9 +797,18 @@ def _lock_tx(conn, namespace, key):
         kval = zlib.crc32(str(key).encode('utf-8')) & 0x7fffffff
         conn.execute('SELECT pg_advisory_xact_lock(?,?)', (ns, kval)).fetchone()
 
-def _row_for_update(conn, sql, params=()):
+def _for_update(conn):
+    """Row-lock suffix for a read-then-write. PostgreSQL locks the row with FOR UPDATE.
+    SQLite has no row locks, so take the database write lock up front (BEGIN IMMEDIATE):
+    otherwise two devices can both read "unpaid" and both write (e.g. merge vs checkout)."""
     if IS_POSTGRES:
-        sql = sql.rstrip().rstrip(';') + ' FOR UPDATE'
+        return ' FOR UPDATE'
+    if not getattr(conn, 'in_transaction', True):
+        conn.execute('BEGIN IMMEDIATE')
+    return ''
+
+def _row_for_update(conn, sql, params=()):
+    sql = sql.rstrip().rstrip(';') + _for_update(conn)
     return conn.execute(sql, params).fetchone()
 
 def _query_int_arg(name, required=False):
@@ -1215,7 +1230,7 @@ def add_branch():
     d = request.get_json() or {}
     name = (d.get('name') or '').strip()
     if not name: return jsonify(error='กรุณาใส่ชื่อสาขา'), 400
-    conn=db(); tenant=conn.execute('SELECT max_branches FROM tenants WHERE id=?'+(' FOR UPDATE' if IS_POSTGRES else ''),(g.tenant_id,)).fetchone()
+    conn=db(); tenant=conn.execute('SELECT max_branches FROM tenants WHERE id=?'+_for_update(conn),(g.tenant_id,)).fetchone()
     used=conn.execute('SELECT COUNT(*) c FROM branches WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
     if tenant and used>=int(tenant['max_branches'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_branches']} สาขา กรุณาอัปเกรดแพ็กเกจ"),409
     cur = conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',
@@ -2283,6 +2298,14 @@ def update_order_payment(oid):
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     d=request.get_json() or {}
     if d.get('payment_status')!='paid': return jsonify(error='ใช้ขั้นตอนคืนเงิน/เปิดบิลกลับสำหรับการย้อนการชำระ'),400
+    request_key=(d.get('client_request_id') or '').strip()[:100] or None
+    if request_key and order['payment_status']=='paid':
+        # Same checkout retried after a lost response: answer with the payment that already exists.
+        same=conn.execute('SELECT payment_method,amount,cash_received FROM payments WHERE tenant_id=? AND order_id=? AND client_request_id=? AND reversed_at IS NULL ORDER BY id',(g.tenant_id,oid,request_key)).fetchall()
+        if same:
+            conn.rollback(); due_paid=money_sum(p['amount'] for p in same)
+            change=money_sum(max(Decimal('0.00'),money_decimal(p['cash_received'] or 0)-money_decimal(p['amount'])) for p in same if p['payment_method']=='cash')
+            return jsonify(ok=True,idempotent=True,amount=money_float(due_paid),payments=[{'method':p['payment_method'],'amount':money_float(p['amount'])} for p in same],change=money_float(change))
     if order['status']=='cancelled' or order['payment_status']=='paid': return jsonify(error='บิลนี้ไม่สามารถชำระซ้ำได้'),409
     def money(v, default=0):
         x=money_decimal(default if v in (None,'') else v)
@@ -2326,6 +2349,11 @@ def update_order_payment(oid):
             if cr: cash_received_total+=cr
         if total != due: raise ValueError(f'ยอดชำระรวมต้องเท่ากับ {due:.2f}')
     except (ValueError,TypeError) as e:return jsonify(error=str(e)),400
+    # Step 1 correctness: cash must land in an open drawer, otherwise no shift can ever reconcile it.
+    open_sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
+    if any(m=='cash' for m,_,_,_ in normalized) and not open_sh:
+        conn.rollback(); return jsonify(error='กรุณาเปิดกะก่อนรับเงินสด เพื่อให้ยอดเงินในลิ้นชักตรง',code='shift_required'),409
+    pay_shift_id=open_sh['id'] if open_sh else None
     ts=now()
     claimed=conn.execute("""UPDATE orders SET payment_status='paid',payment_method=?,tax_amount=?,service_charge_amount=?,discount_amount=?,discount_label=?,promotion_id=?,cash_received=?,paid_at=?,updated_at=?,status='completed'
         WHERE id=? AND tenant_id=? AND payment_status='unpaid' AND status<>'cancelled'""",
@@ -2333,8 +2361,8 @@ def update_order_payment(oid):
     if getattr(claimed,'rowcount',1)!=1: conn.rollback(); return jsonify(error='บิลถูกเปลี่ยนจากอุปกรณ์อื่น กรุณารีเฟรช'),409
     try:
         for method,amount,cr,ref in normalized:
-            conn.execute("""INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at)
-                            VALUES(?,?,?,?,?,?,?,?,?)""",(g.tenant_id,order['branch_id'],oid,money_float(amount),method,money_float(cr) if cr is not None else None,ref,g.user['id'],ts))
+            conn.execute("""INSERT INTO payments(tenant_id,branch_id,order_id,amount,payment_method,cash_received,reference,paid_by_user_id,paid_at,shift_id,client_request_id)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(g.tenant_id,order['branch_id'],oid,money_float(amount),method,money_float(cr) if cr is not None else None,ref,g.user['id'],ts,pay_shift_id,request_key))
         log_action('payment_completed',detail=f'{oid}: split={len(normalized)} due={due}'); conn.commit()
     except Exception:
         conn.rollback(); app.logger.exception('payment 2.0 failed'); return jsonify(error='บันทึกการชำระเงินไม่สำเร็จ'),500
@@ -2403,7 +2431,7 @@ def cancel_order_item(oid,iid):
     conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ปิดแล้ว'),409
-    item_sql='SELECT * FROM order_items WHERE id=? AND order_id=?' + (' FOR UPDATE' if IS_POSTGRES else '')
+    item_sql='SELECT * FROM order_items WHERE id=? AND order_id=?' + _for_update(conn)
     it=conn.execute(item_sql,(iid,oid)).fetchone()
     if not it: return jsonify(error='ไม่พบรายการ'),404
     d=request.get_json() or {}; remaining=max(0,int(it['quantity'])-int(it['cancelled_quantity'] or 0))
@@ -2463,7 +2491,7 @@ def move_order_table(oid):
     if order['order_type']!='dine_in' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ไม่สามารถย้ายโต๊ะได้'),409
     try: table_id=int((request.get_json() or {}).get('table_id'))
     except: return jsonify(error='กรุณาเลือกโต๊ะปลายทาง'),400
-    table_sql='SELECT * FROM dining_tables WHERE id=? AND tenant_id=? AND branch_id=? AND active=1' + (' FOR UPDATE' if IS_POSTGRES else '')
+    table_sql='SELECT * FROM dining_tables WHERE id=? AND tenant_id=? AND branch_id=? AND active=1' + _for_update(conn)
     tb=conn.execute(table_sql,(table_id,g.tenant_id,order['branch_id'])).fetchone()
     if not tb: return jsonify(error='โต๊ะปลายทางไม่ถูกต้อง'),400
     occupied=conn.execute("SELECT id FROM orders WHERE tenant_id=? AND branch_id=? AND table_id=? AND id<>? AND status NOT IN ('completed','cancelled') LIMIT 1",(g.tenant_id,order['branch_id'],table_id,oid)).fetchone()
@@ -2517,7 +2545,7 @@ def create_operation_reason():
 @role_required('owner','manager')
 def refund_order(oid):
     """Partial refund across active payment rows; preserves every payment/refund for audit."""
-    conn=db(); lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''; order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(oid,g.tenant_id)).fetchone()
+    conn=db(); lock_suffix=_for_update(conn); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(oid,g.tenant_id)).fetchone()
     if not order or order['payment_status']!='paid': return jsonify(error='คืนเงินได้เฉพาะบิลที่ชำระแล้ว'),409
     payments=conn.execute('SELECT * FROM payments WHERE order_id=? AND tenant_id=? AND reversed_at IS NULL ORDER BY id',(oid,g.tenant_id)).fetchall()
     if not payments:return jsonify(error='ไม่พบข้อมูลการชำระเงิน'),409
@@ -2529,21 +2557,26 @@ def refund_order(oid):
     if len(reason)<2 or amount<=0 or amount>(paid-refunded):return jsonify(error='เหตุผลหรือยอดคืนเงินไม่ถูกต้อง'),400
     approved_by,err=_critical_approval(conn,d)
     if err:return err
-    cash_active=any(p['payment_method']=='cash' for p in payments)
+    # Which payment leg the money goes back through. Omitted = original order of payment rows.
+    method=(d.get('method') or '').strip()
+    if method:
+        if method not in PAYMENT_METHODS or not any(p['payment_method']==method for p in payments):
+            return jsonify(error='บิลนี้ไม่มีการชำระด้วยช่องทางที่เลือก'),400
+        payments=[p for p in payments if p['payment_method']==method]
+    plan=[]; left=amount
+    for p in payments:
+        if left<=Decimal('0.00'): break
+        already=money_decimal(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE tenant_id=? AND payment_id=?',(g.tenant_id,p['id'])).fetchone()['t'] or 0)
+        part=min(left,max(Decimal('0.00'),money_decimal(p['amount'])-already))
+        if part>0: plan.append((p,part)); left-=part
+    if left>Decimal('0.00'): return jsonify(error='ยอดคืนเกินยอดที่ชำระผ่านช่องทางนี้'),400
     sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
-    if cash_active and not sh:return jsonify(error='กรุณาเปิดกะก่อนคืนเงินจากบิลที่มีเงินสด'),409
-    # Attribute refund to payment rows in order until requested amount is covered.
-    left=amount; ts=now()
+    if any(p['payment_method']=='cash' for p,_ in plan) and not sh:return jsonify(error='กรุณาเปิดกะก่อนคืนเงินสด'),409
+    ts=now()
     try:
-        for p in payments:
-            if left<=Decimal('0.00'): break
-            already=money_decimal(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM refunds WHERE tenant_id=? AND payment_id=?',(g.tenant_id,p['id'])).fetchone()['t'] or 0)
-            available=max(Decimal('0.00'),money_decimal(p['amount'])-already)
-            part=min(left,available)
-            if part<=0: continue
+        for p,part in plan:
             conn.execute('INSERT INTO refunds(tenant_id,branch_id,order_id,payment_id,amount,reason,refunded_by_user_id,refunded_at,shift_id) VALUES(?,?,?,?,?,?,?,?,?)',
                          (g.tenant_id,order['branch_id'],oid,p['id'],money_float(part),reason,g.user['id'],ts,sh['id'] if sh and p['payment_method']=='cash' else None))
-            left-=part
         _record_critical(conn,'refund',order['branch_id'],'order',oid,reason,approved_by,f'amount={amount}')
         log_action('payment_refunded',detail=f'{oid}: {amount} / {reason}'); conn.commit()
     except Exception:
@@ -2559,9 +2592,11 @@ def merge_orders(source_id):
     try: target_id=int(d.get('target_order_id'))
     except: return jsonify(error='กรุณาเลือกบิลปลายทาง'),400
     if target_id==source_id: return jsonify(error='ไม่สามารถรวมบิลเดียวกันได้'),400
-    lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''
-    source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(source_id,g.tenant_id)).fetchone()
-    target=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(target_id,g.tenant_id)).fetchone()
+    lock_suffix=_for_update(conn)
+    locked={}
+    for lid in sorted((source_id,target_id)):
+        locked[lid]=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(lid,g.tenant_id)).fetchone()
+    source,target=locked[source_id],locked[target_id]
     if not source or not target: return jsonify(error='ไม่พบบิลต้นทางหรือปลายทาง'),404
     if source['branch_id']!=target['branch_id']: return jsonify(error='รวมบิลข้ามสาขาไม่ได้'),409
     for o in (source,target):
@@ -2583,7 +2618,7 @@ def split_order(source_id):
     Inventory is not changed because the same sold items are only being reassigned between bills.
     """
     conn=db(); d=request.get_json() or {}
-    lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''
+    lock_suffix=_for_update(conn)
     source=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?'+lock_suffix,(source_id,g.tenant_id)).fetchone()
     if not source: return jsonify(error='ไม่พบบิลต้นทาง'),404
     if source['payment_status']!='unpaid' or source['status'] in ('completed','cancelled'):
@@ -2722,7 +2757,7 @@ def ingredient_adjust(iid):
     try: delta=float(d.get('quantity') or 0)
     except:return jsonify(error='จำนวนไม่ถูกต้อง'),400
     if not delta or not reason:return jsonify(error='กรุณาระบุจำนวนและเหตุผล'),400
-    conn=db(); ing_sql='SELECT * FROM ingredients WHERE id=? AND tenant_id=?' + (' FOR UPDATE' if IS_POSTGRES else '')
+    conn=db(); ing_sql='SELECT * FROM ingredients WHERE id=? AND tenant_id=?' + _for_update(conn)
     ing=conn.execute(ing_sql,(iid,g.tenant_id)).fetchone()
     if not ing:return jsonify(error='ไม่พบวัตถุดิบ'),404
     old_qty=float(ing['stock_qty']); new=max(0,old_qty+delta); applied=new-old_qty; ts=now()
@@ -2875,7 +2910,7 @@ def add_user():
     if not username or not display_name or not password: return jsonify(error='กรุณาใส่ชื่อผู้ใช้ ชื่อที่แสดง และรหัสผ่าน'), 400
     if role not in ('owner', 'manager', 'staff'): return jsonify(error='สิทธิ์ไม่ถูกต้อง'), 400
     if len(password) < 10: return jsonify(error='รหัสผ่านต้องยาวอย่างน้อย 10 ตัวอักษร'), 400
-    conn=db(); tenant=conn.execute('SELECT max_users FROM tenants WHERE id=?'+(' FOR UPDATE' if IS_POSTGRES else ''),(g.tenant_id,)).fetchone()
+    conn=db(); tenant=conn.execute('SELECT max_users FROM tenants WHERE id=?'+_for_update(conn),(g.tenant_id,)).fetchone()
     used=conn.execute('SELECT COUNT(*) c FROM users WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
     if tenant and used>=int(tenant['max_users'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_users']} ผู้ใช้ กรุณาอัปเกรดแพ็กเกจ"),409
     try:
@@ -3042,8 +3077,11 @@ def _shift_live_summary(conn, sh, user_id):
     """Single source of truth for open/closed shift totals and reconciliation."""
     tenant_id=sh['tenant_id']; branch_id=sh['branch_id']; opened_at=sh['opened_at']; shift_id=sh['id']
     closed_at=sh['closed_at'] if 'closed_at' in sh.keys() else None
-    time_clause=' AND paid_at<?' if closed_at else ''
-    pay_args=(tenant_id,branch_id,user_id,opened_at,closed_at) if closed_at else (tenant_id,branch_id,user_id,opened_at)
+    # Payments stamped with shift_id belong to that shift exactly. Legacy rows (shift_id NULL) keep the old
+    # user + time-window attribution so historical shifts still reconcile.
+    legacy_window=' AND paid_at<?' if closed_at else ''
+    time_clause=f' AND (shift_id=? OR (shift_id IS NULL{legacy_window}))'
+    pay_args=(tenant_id,branch_id,user_id,opened_at,shift_id,closed_at) if closed_at else (tenant_id,branch_id,user_id,opened_at,shift_id)
     pay_rows=conn.execute(f"""SELECT payment_method, COALESCE(SUM(amount),0) AS total, COUNT(*) AS payment_count
         FROM payments WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=?{time_clause} AND reversed_at IS NULL
         GROUP BY payment_method""",pay_args).fetchall()
@@ -3060,12 +3098,16 @@ def _shift_live_summary(conn, sh, user_id):
         if r['movement_type']=='cash_in': cash_in=money_float(r['total'] or 0)
         elif r['movement_type']=='cash_out': cash_out=money_float(r['total'] or 0)
     cash_sales=money_float(payment_breakdown.get('cash',0))
+    # Cash physically taken in this shift, including payments that were later reversed (by anyone, any shift).
+    cash_taken=conn.execute(f"""SELECT COALESCE(SUM(amount),0) AS total FROM payments
+        WHERE tenant_id=? AND branch_id=? AND paid_by_user_id=? AND paid_at>=?{time_clause} AND payment_method='cash'""",pay_args).fetchone()['total'] or 0
     cash_refunds=conn.execute("SELECT COALESCE(SUM(r.amount),0) AS total FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE r.tenant_id=? AND r.shift_id=? AND p.payment_method='cash'",(tenant_id,shift_id)).fetchone()['total'] or 0
-    cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL AND paid_at<?",(tenant_id,shift_id,opened_at)).fetchone()['total'] or 0
-    expected=money_float(money_decimal(sh['opening_cash'])+money_decimal(cash_sales)+money_decimal(cash_in)-money_decimal(cash_out)-money_decimal(cash_refunds)-money_decimal(cash_reversals))
+    # Every cash reversal is charged to the shift that performed it (reopen requires an open shift).
+    cash_reversals=conn.execute("SELECT COALESCE(SUM(amount),0) AS total FROM payments WHERE tenant_id=? AND reversed_shift_id=? AND payment_method='cash' AND reversed_at IS NOT NULL",(tenant_id,shift_id)).fetchone()['total'] or 0
+    expected=money_float(money_decimal(sh['opening_cash'])+money_decimal(cash_taken)+money_decimal(cash_in)-money_decimal(cash_out)-money_decimal(cash_refunds)-money_decimal(cash_reversals))
     return dict(gross_received=gross_received, refund_total=refund_total, net_received=money_float(money_decimal(gross_received)-money_decimal(refund_total)),
         bill_count=int(bill_row['c'] or 0), payment_breakdown=payment_breakdown, cash_sales=cash_sales, cash_in=cash_in, cash_out=cash_out,
-        cash_refunds=money_float(cash_refunds), cash_reversals=money_float(cash_reversals), expected_cash=expected, refund_count=int(refund_row['c'] or 0))
+        cash_taken=money_float(cash_taken), cash_refunds=money_float(cash_refunds), cash_reversals=money_float(cash_reversals), expected_cash=expected, refund_count=int(refund_row['c'] or 0))
 
 @app.get('/api/operations/shift')
 @login_required

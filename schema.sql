@@ -201,6 +201,8 @@ CREATE TABLE IF NOT EXISTS payments (
  reversed_by_user_id INTEGER,
  reversal_reason TEXT NOT NULL DEFAULT '',
  reversed_shift_id INTEGER,
+ shift_id INTEGER,
+ client_request_id TEXT,
  paid_at TEXT NOT NULL,
  FOREIGN KEY(order_id) REFERENCES orders(id)
 );
