@@ -80,6 +80,7 @@ def prepare_environment(data_dir, port):
     os.environ['ZAABOS_DATA_DIR'] = str(data_dir)
     os.environ.pop('DATABASE_URL', None)          # local mode is always SQLite on this PC
     os.environ.setdefault('ZAABOS_PUBLIC_URL', f'http://{lan_ip()}:{port}')
+    os.environ['ZAABOS_LOCAL_PRINT'] = '1'           # this PC sends tickets to the Wi-Fi printers
     note = data_dir / 'first-login.txt'
     if note.exists() and first_password_changed(data_dir / 'zaabos.db'):
         note.unlink(missing_ok=True)   # the one-time password is dead; don't leave it lying around
@@ -138,8 +139,10 @@ def main(argv=None):
     import app as core   # noqa: E402  (environment must be ready first)
     import wsgi          # noqa: E402,F401  registers QR history + one-open-bill hooks
 
+    import printing      # noqa: E402
     stop = threading.Event()
     threading.Thread(target=backup_loop, args=(core, stop), daemon=True).start()
+    print_stop = printing.start_worker(core)
 
     print('=' * 60)
     print(f'  ZaabOS is running on this computer')
@@ -161,6 +164,7 @@ def main(argv=None):
         serve(wsgi.app, host='0.0.0.0', port=args.port, threads=12, ident=APP_NAME)
     finally:
         stop.set()
+        print_stop.set()
     return 0
 
 

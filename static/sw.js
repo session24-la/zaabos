@@ -1,4 +1,4 @@
-const CACHE='zaabos-shell-r33-local';
+const CACHE='zaabos-shell-r34-print';
 const SHELL=['/offline','/static/style.css','/static/app.js','/static/i18n.js','/static/favicon-64.png','/static/zaabos-icon-192.png','/static/zaabos-icon-512.png','/static/manifest.webmanifest'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('zaabos-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

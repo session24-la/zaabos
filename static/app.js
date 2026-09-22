@@ -316,7 +316,7 @@ function refreshCurrentTab(tab) {
   else if (tab === 'pricing') loadPricing();
   else if (tab === 'inventory') loadInventory();
   else if (tab === 'operations') loadOperations();
-  else if (tab === 'receiptsettings') loadReceiptSettings();
+  else if (tab === 'receiptsettings') { loadReceiptSettings(); loadNetPrinters(); }
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
   else if (tab === 'users') loadUsers();
@@ -1081,9 +1081,10 @@ async function sendSelectedToKitchen(orderId, card) {
   const item_ids = Array.from(card.querySelectorAll('.oc-item-cb:checked')).map(cb => parseInt(cb.dataset.itemId, 10));
   if (!item_ids.length) return;
   try {
-    await apiJson('/api/orders/' + orderId + '/send-to-kitchen', 'PUT', { item_ids });
+    const sent = await apiJson('/api/orders/' + orderId + '/send-to-kitchen', 'PUT', { item_ids });
     toast(t('toast_sent_to_kitchen'), 'ok');
-    printKitchenTicket(orderId, item_ids);
+    // Wi-Fi kitchen printer: the shop PC prints it; don't also open the browser print dialog.
+    if (!sent.printed_by_server) printKitchenTicket(orderId, item_ids);
     onOrderActionDone();
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -1315,6 +1316,8 @@ function printElement(el) {
 async function printReceipt(orderId) {
   const o = findOrderById(orderId);
   if (!o) return;
+  // Wi-Fi receipt printer on the shop PC: queue it there instead of the browser print dialog.
+  try { const q = await apiJson('/api/orders/' + orderId + '/print-receipt', 'POST', {}); if (q.queued) { toast('ส่งใบเสร็จไปเครื่องพิมพ์แล้ว', 'ok'); setTimeout(refreshPrintStatus, 2500); return; } } catch (e) {}
   const branch = (boot && boot.branches && boot.branches.find(b => Number(b.id) === Number(o.branch_id))) || null;
   let rs={}; try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(o.branch_id))}catch(e){}
   const shopName = rs.shop_name || ((me && me.tenant && me.tenant.name) || 'ZaabOS');
@@ -1869,3 +1872,36 @@ if(offlineQueueList)offlineQueueList.addEventListener('click',async e=>{
   if(rem&&confirm('ลบออเดอร์นี้ออกจากคิวออฟไลน์? ข้อมูลรายการนี้จะไม่ถูกส่งขึ้น Server')){await offlineDelete('outbox',rem.dataset.offlineRemove);await renderOfflineQueue();}
 });
 
+
+// ---------- Step 3: Wi-Fi printers (RP331 etc.) printed by the shop PC ----------
+async function loadNetPrinters(){
+  if(!currentBranchId)return;
+  try{
+    const [r,stations]=await Promise.all([api('/api/printers?branch_id='+currentBranchId),api('/api/kitchen/stations?branch_id='+currentBranchId).catch(()=>[])]);
+    $('#npMode').textContent=r.local?'พิมพ์ตรงถึงเครื่องพิมพ์ในร้านผ่าน Wi‑Fi โดยไม่ขึ้นหน้าต่าง Print':'ตอนนี้เปิดจากคลาวด์ — การพิมพ์ผ่าน Wi‑Fi ทำงานเมื่อเปิดโปรแกรม ZaabOS บนเครื่องในร้าน';
+    const st=$('#npStation');st.innerHTML='<option value="">ทุกสถานี (เครื่องหลัก)</option>'+(stations||[]).map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');
+    $('#npList').innerHTML=r.printers.length?r.printers.map(p=>`<div class="np-row"><div><b>${p.role==='kitchen'?'👨‍🍳':'🧾'} ${escapeHtml(p.name)}</b><small>${escapeHtml(p.host)}:${p.port} · ${p.paper_width} mm${p.station_name?' · '+escapeHtml(p.station_name):''}</small></div><div class="np-actions"><button class="ghost-btn" data-np-test="${p.id}">พิมพ์ทดสอบ</button><button class="icon-btn danger" data-np-del="${p.id}">×</button></div></div>`).join(''):emptyState('🖨️','ยังไม่มีเครื่องพิมพ์ Wi‑Fi — ระบบจะใช้หน้าต่าง Print ของเบราว์เซอร์');
+  }catch(e){toast(e.message,'err')}
+}
+$('#npRole').addEventListener('change',()=>$('#npStationWrap').classList.toggle('hidden',$('#npRole').value!=='kitchen'));
+$('#npAddBtn').addEventListener('click',async()=>{try{await apiJson('/api/printers','POST',{branch_id:currentBranchId,name:$('#npName').value.trim(),role:$('#npRole').value,host:$('#npHost').value.trim(),port:Number($('#npPort').value||9100),paper_width:$('#npPaper').value,station_id:$('#npRole').value==='kitchen'?($('#npStation').value||null):null});$('#npName').value='';$('#npHost').value='';toast('เพิ่มเครื่องพิมพ์แล้ว — กด "พิมพ์ทดสอบ" เพื่อเช็ก','ok');loadNetPrinters()}catch(e){toast(e.message,'err')}});
+$('#npList').addEventListener('click',async e=>{
+  const tb=e.target.closest('[data-np-test]');
+  if(tb){tb.disabled=true;try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('ส่งใบทดสอบแล้ว ✓','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false}return;}
+  const db=e.target.closest('[data-np-del]');
+  if(db&&confirm('ลบเครื่องพิมพ์นี้?')){try{await apiJson('/api/printers/'+db.dataset.npDel,'DELETE');loadNetPrinters()}catch(err){toast(err.message,'err')}}
+});
+async function refreshPrintStatus(){
+  const b=$('#printFailBanner');if(!b||!currentBranchId||!me||me.role==='super_admin'&&!me.tenant)return;
+  try{const r=await api('/api/printers?branch_id='+currentBranchId);b.classList.toggle('hidden',!r.failed);b.textContent=`🖨 พิมพ์ไม่สำเร็จ ${r.failed} งาน — แตะเพื่อพิมพ์ซ้ำ`;}catch(e){}
+}
+$('#printFailBanner').addEventListener('click',async()=>{
+  try{
+    const jobs=await api('/api/print/jobs?status=failed&branch_id='+currentBranchId);if(!jobs.length){refreshPrintStatus();return;}
+    const list=jobs.map(j=>`• ${j.job_type==='receipt'?'ใบเสร็จ':'ครัว'} #${j.order_no}${j.table_name_snapshot?' ('+j.table_name_snapshot+')':''} — ${j.last_error||''}`).join('\n');
+    if(!confirm(`งานที่พิมพ์ไม่ออก:\n${list}\n\nตรวจว่าเครื่องพิมพ์เปิดอยู่และมีกระดาษ แล้วกด OK เพื่อพิมพ์ซ้ำ (ครั้งเดียว)`))return;
+    for(const j of jobs)await apiJson('/api/print/jobs/'+j.id+'/retry','POST',{});
+    toast('ส่งพิมพ์ซ้ำแล้ว','ok');setTimeout(refreshPrintStatus,4000);
+  }catch(e){toast(e.message,'err')}
+});
+setInterval(refreshPrintStatus,15000);

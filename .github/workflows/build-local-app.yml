@@ -23,7 +23,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-local.txt pytest pyinstaller pillow
       - name: Shop-PC end-to-end (sell, restart, data kept, backup)
-        run: python -m pytest tests/test_local_mode.py tests/test_money_reconciliation.py -q
+        run: python -m pytest tests/test_local_mode.py tests/test_money_reconciliation.py tests/test_printing.py -q
       - run: pyinstaller zaabos_local.spec --noconfirm
       - name: Smoke-test the packaged app
         run: |

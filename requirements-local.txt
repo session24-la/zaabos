@@ -1,4 +1,6 @@
 Flask>=3.0,<4
 waitress>=3.0,<4
+# Renders Thai/Lao receipts as images for the thermal printer.
+Pillow>=10
 # Windows ships no timezone database; zoneinfo needs this for Asia/Vientiane.
 tzdata>=2024.1

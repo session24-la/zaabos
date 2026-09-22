@@ -4,7 +4,7 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files
 datas = [('templates', 'templates'), ('static', 'static'), ('schema.sql', '.'), ('schema_postgres.sql', '.')]
 datas += collect_data_files('tzdata')   # Windows has no system timezone database
-hidden = ['wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata']
+hidden = ['wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata', 'printing', 'PIL.ImageDraw', 'PIL.ImageFont']
 icon = 'static/zaabos-icon-512.png'
 
 a = Analysis(['zaabos_local.py'], pathex=['.'], datas=datas, hiddenimports=hidden,
