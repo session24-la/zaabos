@@ -49,6 +49,9 @@ def shop():
                             (tenant, branch, category, 'Noodles', 25000, core.now())).lastrowid
         owner = conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,created_at) VALUES(?,?,?,?,?,?)',
                              (tenant, stamp, 'unused-session-fixture', 'Tester', 'owner', core.now())).lastrowid
+        # Payments require an open shift (Step 1); give the fixture cashier one.
+        conn.execute("INSERT INTO work_shifts(tenant_id,branch_id,opened_by_user_id,opened_at,opening_cash,status,notes) VALUES(?,?,?,?,0,'open','')",
+                     (tenant, branch, owner, core.now()))
         conn.commit()
     return dict(tenant=tenant, branch=branch, table=table, token=stamp, item=item, owner=owner)
 

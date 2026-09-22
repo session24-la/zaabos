@@ -156,12 +156,15 @@ def test_double_payment_rejected(shop):
     assert_ledger(shop)
 
 
-def test_cash_payment_requires_open_shift(shop):
-    """Cash taken with no open shift belongs to no drawer and can never be reconciled."""
+def test_every_payment_requires_open_shift(shop):
+    """Money taken with no open shift belongs to no shift report and can never be reconciled."""
     oid = order(shop)
-    code, body = pay(shop, oid, payment_method='cash')
-    assert code == 409, body
-    ok(pay(shop, oid, payment_method='qr'))         # non-cash is still allowed without a shift
+    for method in ('cash', 'qr', 'bank_transfer', 'card'):
+        code, body = pay(shop, oid, payment_method=method)
+        assert code == 409 and body.get('code') == 'shift_required', (method, body)
+    open_shift(shop)
+    ok(pay(shop, oid, payment_method='qr'))
+    assert D(live(shop)['gross_received']) == D(65000)
     assert_ledger(shop)
 
 

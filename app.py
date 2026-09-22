@@ -2358,8 +2358,10 @@ def update_order_payment(oid):
     except (ValueError,TypeError) as e:return jsonify(error=str(e)),400
     # Step 1 correctness: cash must land in an open drawer, otherwise no shift can ever reconcile it.
     open_sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,order['branch_id'],g.user['id'])).fetchone()
-    if any(m=='cash' for m,_,_,_ in normalized) and not open_sh:
-        conn.rollback(); return jsonify(error='กรุณาเปิดกะก่อนรับเงินสด เพื่อให้ยอดเงินในลิ้นชักตรง',code='shift_required'),409
+    # Every payment (cash, QR, card, transfer) must belong to an open shift so the shift close
+    # report accounts for every baht/kip taken.
+    if not open_sh:
+        conn.rollback(); return jsonify(error='กรุณาเปิดกะก่อนรับชำระเงิน เพื่อให้ยอดรับเงินถูกนับในกะ',code='shift_required'),409
     pay_shift_id=open_sh['id'] if open_sh else None
     ts=now()
     claimed=conn.execute("""UPDATE orders SET payment_status='paid',payment_method=?,tax_amount=?,service_charge_amount=?,discount_amount=?,discount_label=?,promotion_id=?,cash_received=?,paid_at=?,updated_at=?,status='completed'
