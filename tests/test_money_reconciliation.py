@@ -6,6 +6,7 @@ reconciliation fails here even if its own endpoint "works".
 Run: python -m pytest tests/test_money_reconciliation.py -q
 Never point DATABASE_URL at a deployed database.
 """
+import json
 import sys
 import uuid
 from decimal import Decimal
@@ -629,3 +630,20 @@ def test_offline_sync_racing_retries_make_one_order(shop):
 def _items(oid):
     with core.app.app_context():
         return [r['id'] for r in core.db().execute('SELECT id FROM order_items WHERE order_id=? ORDER BY id', (oid,)).fetchall()]
+
+
+def test_report_today_is_lao_date_before_7am():
+    """05:55 in Vientiane is 22:55 UTC the day before. The report's "today" must still be the
+    Lao date, otherwise early-morning sales and shifts look missing."""
+    import re, shutil, subprocess
+    if not shutil.which('node'):
+        pytest.skip('node not installed')
+    src = (ROOT / 'static' / 'app.js').read_text(encoding='utf-8')
+    helpers = re.search(r'^function isoDate.*?^function presetRange.*?^}$', src, re.S | re.M).group(0)
+    script = ("const ZAABOS_RESTAURANT_TZ='Asia/Vientiane';\n" + helpers +
+              "\nconst RealDate=Date; Date=class extends RealDate{constructor(...a){super(...(a.length?a:['2026-09-22T22:55:00Z']))}"
+              " static UTC(...a){return RealDate.UTC(...a)}};"
+              "\nconsole.log(JSON.stringify([presetRange('today'),presetRange('yesterday'),presetRange('month')]))")
+    out = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == [['2026-09-23', '2026-09-23'], ['2026-09-22', '2026-09-22'], ['2026-09-01', '2026-09-23']]

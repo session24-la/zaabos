@@ -364,17 +364,18 @@ $('#usernameSave').addEventListener('click', async () => {
 let reportFrom = null, reportTo = null;
 let lastReportSummary = null;
 
-function isoDate(d) { return d.toISOString().slice(0, 10); }
-
+// Business dates are restaurant-local (Lao) dates. toISOString() gives the UTC date, which is
+// still "yesterday" between 00:00 and 07:00 in Vientiane and made the report look empty.
+function isoDate(d) { return new Intl.DateTimeFormat('en-CA', {timeZone: ZAABOS_RESTAURANT_TZ, year: 'numeric', month: '2-digit', day: '2-digit'}).format(d); }
 function presetRange(preset) {
-  const today = new Date();
-  const y = today.getFullYear(), m = today.getMonth(), dt = today.getDate();
-  if (preset === 'today') return [isoDate(today), isoDate(today)];
-  if (preset === 'yesterday') { const d = new Date(y, m, dt - 1); return [isoDate(d), isoDate(d)]; }
-  if (preset === '7d') { const d = new Date(y, m, dt - 6); return [isoDate(d), isoDate(today)]; }
-  if (preset === 'month') { return [isoDate(new Date(y, m, 1)), isoDate(today)]; }
-  if (preset === 'year') { return [isoDate(new Date(y, 0, 1)), isoDate(today)]; }
-  return [isoDate(today), isoDate(today)];
+  const [y, m, dt] = isoDate(new Date()).split('-').map(Number);
+  const day = (Y, M, D) => new Date(Date.UTC(Y, M - 1, D)).toISOString().slice(0, 10);
+  const today = day(y, m, dt);
+  if (preset === 'yesterday') { const d = day(y, m, dt - 1); return [d, d]; }
+  if (preset === '7d') return [day(y, m, dt - 6), today];
+  if (preset === 'month') return [day(y, m, 1), today];
+  if (preset === 'year') return [day(y, 1, 1), today];
+  return [today, today];
 }
 
 $('#reportPresets').addEventListener('click', (e) => {
