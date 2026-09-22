@@ -403,3 +403,229 @@ def test_data_dir_keeps_database_across_restarts(tmp_path):
     assert all(r.returncode == 0 for r in runs), runs[0].stderr
     assert (data / 'zaabos.db').exists() and not (dest / 'zaabos.db').exists()
     assert 'temporary_password' in runs[0].stdout and 'temporary_password' not in runs[1].stdout
+
+
+# ------------------------------------------------ Step 1 remaining gaps ---
+def public(path, data):
+    with core.app.test_client() as client:
+        r = client.post(path, json=data)
+        return r.status_code, (r.get_json(silent=True) or {})
+
+
+def _qr_token(shop, table=0):
+    with core.app.app_context():
+        return core.db().execute('SELECT qr_token FROM dining_tables WHERE id=?', (shop['tables'][table],)).fetchone()['qr_token']
+
+
+def _stock(item_id):
+    with core.app.app_context():
+        return core.db().execute('SELECT stock_qty FROM menu_items WHERE id=?', (item_id,)).fetchone()['stock_qty']
+
+
+def _track_stock(item_id, qty):
+    with core.app.app_context():
+        c = core.db()
+        c.execute('UPDATE menu_items SET track_stock=1, stock_qty=? WHERE id=?', (qty, item_id))
+        c.commit()
+
+
+def test_cancel_after_kitchen_restores_stock_and_stays_out_of_sales(shop):
+    """Item cancelled after the kitchen got it: stock returns, bill shrinks, report counts the
+    cancellation but not the money. Whole-order cancel after kitchen: nothing reaches sales."""
+    _track_stock(shop['noodle'], 10)
+    open_shift(shop, who='owner', cash=0)
+    a = order(shop, who='owner', table=0)                     # 2 noodles + 1 beer
+    b = order(shop, who='owner', table=1)
+    assert _stock(shop['noodle']) == 6
+    for oid in (a, b):
+        items = [i for i in _items(oid)]
+        ok(call(shop, 'owner', 'PUT', f'/api/orders/{oid}/send-to-kitchen', {'item_ids': items}))
+    noodle_a = _items(a)[0]
+    ok(call(shop, 'owner', 'PUT', f'/api/orders/{a}/items/{noodle_a}/cancel', {'quantity': 1, 'reason': 'burnt'}))
+    for step in ('preparing', 'cancelled'):
+        ok(call(shop, 'owner', 'PUT', f'/api/orders/{b}/status', {'status': step, 'reason': 'customer left'}))
+    assert _stock(shop['noodle']) == 9
+    ok(pay(shop, a, who='owner', payment_method='cash'))     # 25000 + 15000
+    r = report(shop)
+    assert D(r['total_sales']) == D(40000) and r['order_count'] == 1
+    assert r['cancellations']['item_count'] == 1 and r['cancellations']['order_count'] == 1
+    assert D(r['open_order_total']) == 0
+    assert D(live(shop, 'owner')['expected_cash']) == D(40000)
+    # A cancelled bill must never be paid or reopened into sales.
+    code, _ = pay(shop, b, who='owner', payment_method='cash')
+    assert code == 409
+    assert_ledger(shop)
+
+
+def test_percent_promotion_with_cap_and_minimum(shop):
+    ok(call(shop, 'owner', 'POST', '/api/promotions', {'code': 'late10', 'name': 'Late night', 'discount_type': 'percent',
+                                                        'discount_value': 10, 'min_spend': 50000, 'max_discount': 5000}))
+    ok(call(shop, 'owner', 'PUT', '/api/pricing/settings', {'branch_id': shop['branch'], 'tax_rate': 10, 'service_charge_rate': 0}))
+    open_shift(shop, cash=0)
+    small = order(shop, table=0, cart=[{'menu_item_id': shop['beer'], 'quantity': 1}])
+    code, _ = pay(shop, small, payment_method='qr', promotion_code='LATE10')
+    assert code == 400, 'below minimum spend must be refused'
+    big = order(shop, table=1, cart=[{'menu_item_id': shop['noodle'], 'quantity': 4}])   # 100,000
+    body = ok(pay(shop, big, payment_method='qr', promotion_code='late10'))
+    # 10% = 10,000 capped at 5,000 -> 95,000 ; +10% tax = 9,500 -> 104,500
+    assert D(body['amount']) == D(104500)
+    mid = order(shop, table=2, cart=[{'menu_item_id': shop['noodle'], 'quantity': 1}, {'menu_item_id': shop['beer'], 'quantity': 3}])
+    body = ok(pay(shop, mid, payment_method='cash', promotion_code='LATE10'))
+    # 70,000 -> 10% = 7,000 capped 5,000 -> 65,000 ; tax 6,500 -> 71,500
+    assert D(body['amount']) == D(71500)
+    r = report(shop)
+    assert D(r['discount']) == D(10000)
+    assert_ledger(shop)
+
+
+def test_promotion_window_uses_restaurant_time(shop):
+    """Owner types start/end in Lao local time. A promotion that ended an hour ago (local) must
+    be refused, and one running now must apply — regardless of UTC storage."""
+    from datetime import timedelta
+    local = core.restaurant_now().replace(tzinfo=None, microsecond=0)
+    fmt = lambda dt: dt.strftime('%Y-%m-%dT%H:%M')
+    ok(call(shop, 'owner', 'POST', '/api/promotions', {'code': 'OVER', 'name': 'Over', 'discount_type': 'fixed', 'discount_value': 1000,
+                                                        'starts_at': fmt(local - timedelta(hours=5)), 'ends_at': fmt(local - timedelta(hours=1))}))
+    ok(call(shop, 'owner', 'POST', '/api/promotions', {'code': 'NOW', 'name': 'Now', 'discount_type': 'fixed', 'discount_value': 1000,
+                                                        'starts_at': fmt(local - timedelta(hours=1)), 'ends_at': fmt(local + timedelta(hours=1))}))
+    open_shift(shop, cash=0)
+    oid = order(shop)
+    code, body = pay(shop, oid, payment_method='qr', promotion_code='OVER')
+    assert code == 400, body
+    assert D(ok(pay(shop, oid, payment_method='qr', promotion_code='NOW'))['amount']) == D(64000)
+    assert_ledger(shop)
+
+
+def _set_paid_at(oid, ts):
+    with core.app.app_context():
+        c = core.db()
+        c.execute('UPDATE orders SET paid_at=? WHERE id=?', (ts, oid))
+        c.execute('UPDATE payments SET paid_at=? WHERE order_id=?', (ts, oid))
+        c.commit()
+
+
+def test_report_day_boundary_is_lao_midnight(shop):
+    """23:50 and 00:10 Lao time are different business days even though both are the same UTC day."""
+    open_shift(shop, who='owner', cash=0)
+    late = order(shop, who='owner', table=0)
+    early = order(shop, who='owner', table=1, cart=[{'menu_item_id': shop['beer'], 'quantity': 1}])
+    ok(pay(shop, late, who='owner', payment_method='qr'))
+    ok(pay(shop, early, who='owner', payment_method='qr'))
+    _set_paid_at(late, '2026-03-01T16:50:00+00:00')    # 23:50 Vientiane, 1 March
+    _set_paid_at(early, '2026-03-01T17:10:00+00:00')   # 00:10 Vientiane, 2 March
+    day = lambda d: ok(call(shop, 'owner', 'GET', f"/api/reports/summary?branch_id={shop['branch']}&from={d}&to={d}"))
+    d1, d2 = day('2026-03-01'), day('2026-03-02')
+    assert D(d1['total_sales']) == D(65000) and D(d2['total_sales']) == D(15000)
+    for r in (d1, d2):
+        assert D(sum(D(x['total']) for x in r['payment_breakdown'])) == D(r['total_sales'])
+    both = ok(call(shop, 'owner', 'GET', f"/api/reports/summary?branch_id={shop['branch']}&from=2026-03-01&to=2026-03-02"))
+    assert D(both['total_sales']) == D(80000)
+
+
+def test_delivery_fee_counts_in_bill_report_and_shift(shop):
+    open_shift(shop, cash=0)
+    oid = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'delivery', 'customer_phone': '02055551234',
+                                                          'customer_address': 'Ban Sisaket', 'delivery_fee': 10000,
+                                                          'cart': [{'menu_item_id': shop['noodle'], 'quantity': 1}]}))['order_id']
+    body = ok(pay(shop, oid, payment_method='cash', cash_received=50000))
+    assert D(body['amount']) == D(35000) and D(body['change']) == D(15000)
+    r = report(shop)
+    assert D(r['delivery_fee']) == D(10000) and D(r['total_sales']) == D(35000)
+    assert D(live(shop)['expected_cash']) == D(35000)
+    assert_ledger(shop)
+
+
+def test_delivery_fee_is_not_lost_when_merged(shop):
+    """Merging a delivery bill (with its fee) into another bill must not silently drop the fee."""
+    open_shift(shop, cash=0)
+    dl = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'delivery', 'customer_phone': '02055551234',
+                                                         'customer_address': 'Ban Sisaket', 'delivery_fee': 10000,
+                                                         'cart': [{'menu_item_id': shop['beer'], 'quantity': 1}]}))['order_id']
+    tk = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'takeaway',
+                                                         'cart': [{'menu_item_id': shop['beer'], 'quantity': 1}]}))['order_id']
+    code, _ = call(shop, 'staff', 'POST', f'/api/orders/{dl}/merge', {'target_order_id': tk})
+    if code == 200:
+        assert D(ok(pay(shop, tk, payment_method='qr'))['amount']) == D(40000)
+    else:
+        assert code == 409
+    assert_ledger(shop)
+
+
+def test_many_qr_customers_one_table_one_bill_to_shift_close(shop):
+    """Three phones at the same table order by QR, staff adds a round, cashier takes cash, closes shift."""
+    token = _qr_token(shop, 0)
+    ids = set()
+    for cart in ([{'menu_item_id': shop['noodle'], 'quantity': 1}],
+                 [{'menu_item_id': shop['beer'], 'quantity': 2}],
+                 [{'menu_item_id': shop['noodle'], 'quantity': 1}]):
+        body = ok(public('/api/public/orders', {'branch_id': shop['branch'], 'order_type': 'dine_in', 'table_token': token, 'cart': cart}))
+        ids.add(body['order_id'])
+    assert len(ids) == 1, f'one table must have one open bill, got {ids}'
+    oid = ids.pop()
+    ok(call(shop, 'staff', 'POST', f'/api/orders/{oid}/items', {'items': [{'menu_item_id': shop['beer'], 'quantity': 1}]}))
+    # 2 x 25,000 + 3 x 15,000 = 95,000
+    open_shift(shop, cash=20000)
+    assert D(ok(pay(shop, oid, payment_method='cash', cash_received=100000))['amount']) == D(95000)
+    # After payment, a new QR order on the same table starts a new bill, never touches the paid one.
+    nxt = ok(public('/api/public/orders', {'branch_id': shop['branch'], 'order_type': 'dine_in', 'table_token': token,
+                                            'cart': [{'menu_item_id': shop['beer'], 'quantity': 1}]}))['order_id']
+    assert nxt != oid
+    closed = close(shop, counted=115000)
+    assert D(closed['difference']) == 0 and D(closed['summary']['gross_received']) == D(95000)
+    r = report(shop)
+    assert r['open_order_count'] == 1 and D(r['open_order_total']) == D(15000)
+    assert_ledger(shop)
+
+
+def test_qr_orders_racing_on_one_table_make_one_bill(shop):
+    from concurrent.futures import ThreadPoolExecutor
+    token = _qr_token(shop, 1)
+    payload = {'branch_id': shop['branch'], 'order_type': 'dine_in', 'table_token': token,
+               'cart': [{'menu_item_id': shop['beer'], 'quantity': 1}]}
+    with ThreadPoolExecutor(4) as ex:
+        results = list(ex.map(lambda _: public('/api/public/orders', payload), range(4)))
+    assert all(code == 200 for code, _ in results), results
+    with core.app.app_context():
+        open_bills = core.db().execute("SELECT COUNT(*) n FROM orders WHERE table_id=? AND status<>'cancelled'", (shop['tables'][1],)).fetchone()['n']
+    assert open_bills == 1
+    open_shift(shop, cash=0)
+    oid = results[0][1]['order_id']
+    assert D(ok(pay(shop, oid, payment_method='qr'))['amount']) == D(60000)
+    assert_ledger(shop)
+
+
+def test_offline_order_sync_retry_then_pay_reconciles(shop):
+    """Tablet queues an order offline, syncs it twice (lost reply), then it is paid.
+    One bill, stock taken once, payment and report agree."""
+    _track_stock(shop['beer'], 10)
+    key = uuid.uuid4().hex
+    payload = {'branch_id': shop['branch'], 'order_type': 'dine_in', 'table_id': shop['tables'][2],
+               'cart': [{'menu_item_id': shop['beer'], 'quantity': 3}], 'client_request_id': key,
+               'client_device_id': 'tablet-1', 'offline_created_at': '2026-03-01T12:00:00.000Z'}
+    first = ok(call(shop, 'staff', 'POST', '/api/orders', payload))
+    again = ok(call(shop, 'staff', 'POST', '/api/orders', payload))
+    assert again.get('idempotent') and again['order_id'] == first['order_id']
+    assert _stock(shop['beer']) == 7
+    open_shift(shop, cash=0)
+    ok(pay(shop, first['order_id'], payment_method='cash'))
+    assert D(report(shop)['total_sales']) == D(45000)
+    assert_ledger(shop)
+
+
+def test_offline_sync_racing_retries_make_one_order(shop):
+    from concurrent.futures import ThreadPoolExecutor
+    _track_stock(shop['beer'], 10)
+    key = uuid.uuid4().hex
+    payload = {'branch_id': shop['branch'], 'order_type': 'takeaway', 'client_request_id': key,
+               'cart': [{'menu_item_id': shop['beer'], 'quantity': 2}]}
+    with ThreadPoolExecutor(3) as ex:
+        results = list(ex.map(lambda _: call(shop, 'staff', 'POST', '/api/orders', payload), range(3)))
+    assert all(code == 200 for code, _ in results), results
+    assert len({b['order_id'] for _, b in results}) == 1
+    assert _stock(shop['beer']) == 8
+    assert_ledger(shop)
+
+
+def _items(oid):
+    with core.app.app_context():
+        return [r['id'] for r in core.db().execute('SELECT id FROM order_items WHERE order_id=? ORDER BY id', (oid,)).fetchall()]

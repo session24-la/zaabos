@@ -827,13 +827,16 @@ def gen_qr_token():
 
 def _lock_tx(conn, namespace, key):
     """Serialize a small critical section on PostgreSQL for this transaction.
-    SQLite is only a development fallback; production PostgreSQL gets the DB-level lock."""
-    if IS_POSTGRES:
-        # Two-int advisory lock: stable across workers/instances and released on commit/rollback.
-        import zlib
-        ns = zlib.crc32(str(namespace).encode('utf-8')) & 0x7fffffff
-        kval = zlib.crc32(str(key).encode('utf-8')) & 0x7fffffff
-        conn.execute('SELECT pg_advisory_xact_lock(?,?)', (ns, kval)).fetchone()
+    SQLite (shop PC) has no advisory locks: take the database write lock up front instead, so two
+    phones ordering on one table cannot both see "no open bill" and create two."""
+    if not IS_POSTGRES:
+        _for_update(conn)
+        return
+    # Two-int advisory lock: stable across workers/instances and released on commit/rollback.
+    import zlib
+    ns = zlib.crc32(str(namespace).encode('utf-8')) & 0x7fffffff
+    kval = zlib.crc32(str(key).encode('utf-8')) & 0x7fffffff
+    conn.execute('SELECT pg_advisory_xact_lock(?,?)', (ns, kval)).fetchone()
 
 def _for_update(conn):
     """Row-lock suffix for a read-then-write. PostgreSQL locks the row with FOR UPDATE.
@@ -2245,8 +2248,10 @@ def _active_promotion(conn, code, branch_id, subtotal):
     promo=conn.execute('SELECT * FROM promotions WHERE tenant_id=? AND UPPER(code)=? AND active=1 AND (branch_id IS NULL OR branch_id=?) LIMIT 1',(g.tenant_id,code,branch_id)).fetchone()
     if not promo: raise ValueError('ไม่พบโปรโมชั่นหรือโปรโมชั่นไม่เปิดใช้งาน')
     ts=now()
-    if promo['starts_at'] and ts < promo['starts_at']: raise ValueError('โปรโมชั่นนี้ยังไม่เริ่ม')
-    if promo['ends_at'] and ts > promo['ends_at']: raise ValueError('โปรโมชั่นนี้หมดอายุแล้ว')
+    # Older rows may hold naive local time; normalize both forms to UTC before comparing.
+    starts,ends=local_datetime_input_to_utc(promo['starts_at']),local_datetime_input_to_utc(promo['ends_at'])
+    if starts and ts < starts: raise ValueError('โปรโมชั่นนี้ยังไม่เริ่ม')
+    if ends and ts > ends: raise ValueError('โปรโมชั่นนี้หมดอายุแล้ว')
     if subtotal < float(promo['min_spend'] or 0): raise ValueError('ยอดสั่งซื้อยังไม่ถึงขั้นต่ำของโปรโมชั่น')
     return promo
 
@@ -2292,8 +2297,12 @@ def create_promotion():
     if value<=0 or minimum<0 or (typ=='percent' and value>100) or (maxd is not None and maxd<0): return jsonify(error='ค่าของโปรโมชั่นไม่ถูกต้อง'),400
     bid=d.get('branch_id'); bid=int(bid) if bid not in (None,'') else None; conn=db()
     if bid and not conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(bid,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
+    # Owners type local (Lao) time; store UTC like every other timestamp so the window compares correctly.
+    starts,ends=local_datetime_input_to_utc(d.get('starts_at')),local_datetime_input_to_utc(d.get('ends_at'))
+    if (d.get('starts_at') and not starts) or (d.get('ends_at') and not ends): return jsonify(error='วันเวลาโปรโมชั่นไม่ถูกต้อง'),400
+    if starts and ends and ends<=starts: return jsonify(error='เวลาสิ้นสุดต้องหลังเวลาเริ่ม'),400
     try:
-        cur=conn.execute('INSERT INTO promotions(tenant_id,branch_id,code,name,discount_type,discount_value,min_spend,max_discount,starts_at,ends_at,active,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,bid,code,name,typ,value,minimum,maxd,d.get('starts_at') or None,d.get('ends_at') or None,1,g.user['id'],now()))
+        cur=conn.execute('INSERT INTO promotions(tenant_id,branch_id,code,name,discount_type,discount_value,min_spend,max_discount,starts_at,ends_at,active,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(g.tenant_id,bid,code,name,typ,value,minimum,maxd,starts,ends,1,g.user['id'],now()))
         conn.commit(); return jsonify(ok=True,id=cur.lastrowid)
     except INTEGRITY_ERRORS:
         conn.rollback(); return jsonify(error='รหัสโปรโมชั่นนี้มีอยู่แล้ว'),409
@@ -2643,6 +2652,10 @@ def merge_orders(source_id):
         if o['payment_status']!='unpaid' or o['status'] in ('completed','cancelled'):
             return jsonify(error='รวมได้เฉพาะบิลที่ยังเปิดและยังไม่ชำระ'),409
     conn.execute('UPDATE order_items SET order_id=? WHERE order_id=?',(target_id,source_id))
+    # A delivery fee is owed money too: it moves with the items instead of vanishing with the cancelled bill.
+    if money_decimal(source['delivery_fee'])>0:
+        conn.execute('UPDATE orders SET delivery_fee=COALESCE(delivery_fee,0)+? WHERE id=?',(money_float(source['delivery_fee']),target_id))
+        conn.execute('UPDATE orders SET delivery_fee=0 WHERE id=?',(source_id,))
     total=_recalculate_order_total(conn,target_id)
     _recalculate_order_total(conn,source_id)
     conn.execute("UPDATE orders SET status='cancelled',notes=CASE WHEN notes='' THEN ? ELSE notes || ? END,updated_at=? WHERE id=?",
