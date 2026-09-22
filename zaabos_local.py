@@ -114,6 +114,10 @@ def backup_loop(core, stop):
 
 
 def main(argv=None):
+    # Windows consoles are cp1252/cp874: never let a Thai/Lao log line crash the POS.
+    for stream in (sys.stdout, sys.stderr):
+        try: stream.reconfigure(errors='replace')
+        except (AttributeError, ValueError): pass
     ap = argparse.ArgumentParser(description='Run ZaabOS on this computer')
     ap.add_argument('--port', type=int, default=int(os.getenv('ZAABOS_PORT') or DEFAULT_PORT))
     ap.add_argument('--no-browser', action='store_true')

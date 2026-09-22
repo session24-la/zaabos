@@ -143,9 +143,9 @@ def get_secret_key():
     if env_key: return env_key
     if IS_POSTGRES:
         raise RuntimeError('ZAABOS_SECRET_KEY is required when PostgreSQL/production mode is enabled')
-    if SECRET_FILE.exists(): return SECRET_FILE.read_text().strip()
+    if SECRET_FILE.exists(): return SECRET_FILE.read_text(encoding='utf-8').strip()
     key = secrets.token_hex(32)
-    SECRET_FILE.write_text(key)
+    SECRET_FILE.write_text(key, encoding='utf-8')
     return key
 
 app.secret_key = get_secret_key()
@@ -733,7 +733,7 @@ def ensure_schema_migrations(conn):
 def init_db():
     if IS_POSTGRES:
         conn = PGConn(os.getenv('DATABASE_URL'))
-        conn.executescript((BASE / 'schema_postgres.sql').read_text())
+        conn.executescript((BASE / 'schema_postgres.sql').read_text(encoding='utf-8'))
         ensure_default_tenant(conn)
         ensure_super_admin(conn)
         ensure_schema_migrations(conn)
@@ -744,7 +744,7 @@ def init_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')
-    conn.executescript((BASE / 'schema.sql').read_text())
+    conn.executescript((BASE / 'schema.sql').read_text(encoding='utf-8'))
     create_tenant_indexes(conn)
     ensure_default_tenant(conn)
     ensure_super_admin(conn)
