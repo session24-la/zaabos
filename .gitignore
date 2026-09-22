@@ -8,3 +8,5 @@ backups/*.sql
 
 backups/*.dump
 backups/*.dump.json
+*.dump
+*.dump.json
