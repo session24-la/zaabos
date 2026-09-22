@@ -9,6 +9,16 @@ import uuid
 if os.getenv('DATABASE_URL'):
     raise SystemExit('REFUSE: customer-history integration test must not run against PostgreSQL/production')
 
+# app.py's SQLite migration path expects dict-like rows while init_db() opens a
+# plain sqlite3 connection. For this isolated test process only, make every
+# SQLite connection use sqlite3.Row before importing the application module.
+_real_connect = sqlite3.connect
+def _row_connect(*args, **kwargs):
+    conn = _real_connect(*args, **kwargs)
+    conn.row_factory = sqlite3.Row
+    return conn
+sqlite3.connect = _row_connect
+
 import app as core
 import wsgi  # registers customer-history hooks/routes on core.app
 
@@ -21,7 +31,6 @@ def check(name, ok):
 
 def main():
     conn = sqlite3.connect(core.DB)
-    conn.row_factory = sqlite3.Row
     tenant = conn.execute('SELECT id FROM tenants ORDER BY id LIMIT 1').fetchone()['id']
     conn.execute("UPDATE tenants SET active=1, subscription_status='active' WHERE id=?", (tenant,))
     stamp = uuid.uuid4().hex[:10]
