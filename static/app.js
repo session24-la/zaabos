@@ -431,6 +431,16 @@ function renderReportCards(s) {
   if (s.refund_total > 0) $('#reportCards').insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
   renderCancellationReport(s.cancellations||{});
+  renderShiftReport(s.shifts||[]);
+}
+function renderShiftReport(rows){const el=$('#shiftReport');if(!el)return;
+  if(!rows.length){el.innerHTML=emptyState('🧾','ยังไม่มีกะในช่วงวันที่เลือก');return}
+  el.innerHTML=rows.map(x=>{const sm=x.summary||{},open=x.status==='open';
+    const diff=open?'':`<span class="${Number(x.difference||0)===0?'':'error-text'}">ส่วนต่าง ${fmtMoney(x.difference||0)}</span>`;
+    return `<div class="list-row shift-history-row"><div><b>${escapeHtml(x.opened_by_name||'')} · ${escapeHtml(formatDateTime(x.opened_at))} → ${open?'<span class="pill">กำลังเปิด</span>':escapeHtml(formatDateTime(x.closed_at))}</b>
+      <div class="muted">${Number(sm.bill_count||0)} บิล · รับเงินสุทธิ ${fmtMoney(sm.net_received||0)} · เงินสดควรมี ${fmtMoney(open?sm.expected_cash:x.expected_cash)}${open?'':' · นับจริง '+fmtMoney(x.counted_cash||0)} ${diff}</div></div>
+      ${open?'':`<button class="ghost-btn" data-report-print-shift="${x.id}">🧾 พิมพ์ซ้ำ</button>`}</div>`}).join('');
+  el.onclick=async e=>{const b=e.target.closest('[data-report-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.reportPrintShift));if(x)await printShiftCloseReport({...x})};
 }
 function renderCancellationReport(c){const el=$('#cancellationReport');if(!el)return;const reasons=c.reasons||[],recent=c.recent||[];if(!(c.total||0)){el.innerHTML=emptyState('✅','ช่วงนี้ไม่มีการยกเลิก');return;}el.innerHTML=`<div class="cancel-summary-cards"><div><b>${c.total}</b><span>เหตุการณ์ยกเลิก</span></div><div><b>${c.order_count}</b><span>ยกเลิกทั้งบิล</span></div><div><b>${c.item_count}</b><span>ยกเลิกรายการ</span></div></div><div class="cancel-reason-list">${reasons.map((x,i)=>`<div class="cancel-reason-row"><span>${i+1}</span><div><b>${escapeHtml(x.reason)}</b><small>${x.order_count} บิล · ${x.item_count} รายการ</small></div><strong>${x.count}</strong></div>`).join('')}</div><details class="cancel-audit"><summary>ดูรายการล่าสุด</summary>${recent.map(x=>`<div class="cancel-audit-row"><span>${x.operation_type==='cancel_order'?'ทั้งบิล':'รายการ'}</span><b>${escapeHtml(x.reason_text||'ไม่ระบุเหตุผล')}</b><small>${escapeHtml(x.performed_by_name||'-')} · ${formatDateTime(x.created_at)}</small></div>`).join('')}</details>`;}
 

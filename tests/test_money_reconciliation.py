@@ -363,3 +363,29 @@ def test_fresh_install_is_ready_to_sell(tmp_path):
     res = json.loads(out.stdout.split('RESULT', 1)[1])
     assert res['counts'] == {'branches': 1, 'dining_tables': 6, 'menu_categories': 3, 'menu_items': 10}
     assert res['paid'] == res['due'] == res['report'] == res['shift_cash'] == 70000
+
+
+def test_pos_page_loads_local_qr_renderer():
+    """Table QR codes render locally (CSP blocks external image hosts). Guard against the
+    asset version bump that silently dropped qr-local.js."""
+    html = core.app.test_client().get('/').get_data(as_text=True)
+    assert '/static/qr-local.js' in html
+    assert html.index('/static/app.js') < html.index('/static/qr-local.js')
+
+
+def test_report_lists_every_shift_of_the_day(shop):
+    """After a shift change the closed shift stays visible (and reprintable) in the report."""
+    open_shift(shop, who='owner', cash=0)
+    ok(pay(shop, order(shop, who='owner'), who='owner', payment_method='cash'))
+    close(shop, who='owner', counted=65000)
+    open_shift(shop, who='staff', cash=10000)
+    ok(pay(shop, order(shop, table=1), payment_method='qr'))
+    rows = report(shop)['shifts']
+    assert len(rows) == 2
+    closed = next(r for r in rows if r['status'] == 'closed')
+    live_row = next(r for r in rows if r['status'] == 'open')
+    assert D(closed['expected_cash']) == D(65000) and D(closed['difference']) == 0
+    assert D(closed['summary']['net_received']) == D(65000)
+    assert D(live_row['summary']['net_received']) == D(65000) and D(live_row['summary']['expected_cash']) == D(10000)
+    assert 'summary_json' not in closed
+    assert_ledger(shop)

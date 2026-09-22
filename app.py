@@ -3084,8 +3084,22 @@ def reports_summary():
       'item_count':sum(x['operation_type']=='cancel_item' for x in cancel_rows),
       'reasons':sorted(reason_map.values(),key=lambda x:(-x['count'],x['reason'])),'recent':cancel_rows[:30]}
 
+    # Per-shift breakdown for the same date range, so a lost shift-close slip can always be
+    # looked up (and reprinted) from the report. Includes a still-open shift with live totals.
+    sh_q="""SELECT s.*,u.display_name AS opened_by_name,c.display_name AS closed_by_name
+        FROM work_shifts s LEFT JOIN users u ON u.id=s.opened_by_user_id LEFT JOIN users c ON c.id=s.closed_by_user_id
+        WHERE s.tenant_id=? AND s.opened_at<? AND (s.closed_at IS NULL OR s.closed_at>=?)"""
+    sh_args=[g.tenant_id,range_end,range_start]
+    if branch_id: sh_q+=' AND s.branch_id=?'; sh_args.append(branch_id)
+    shifts=[]
+    for row in conn.execute(sh_q+' ORDER BY s.opened_at DESC LIMIT 60',sh_args).fetchall():
+        d=dict(row)
+        try: d['summary']=json.loads(row['summary_json']) if row['summary_json'] else _shift_live_summary(conn,row,row['opened_by_user_id'])
+        except Exception: d['summary']=_shift_live_summary(conn,row,row['opened_by_user_id'])
+        d.pop('summary_json',None); shifts.append(d)
+
     return jsonify(
-        from_date=frm, to_date=to,
+        from_date=frm, to_date=to, shifts=shifts,
         order_count=order_count, subtotal=subtotal, discount=discount, service_charge=service, tax=tax, delivery_fee=delivery, guests=guests, total_sales=total_sales,
         top_items=top_items,
         expense_total=expense_total, expense_by_category=expense_by_category,

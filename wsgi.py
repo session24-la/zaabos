@@ -3,6 +3,7 @@
 Keeps the core application module unchanged while adding browser/runtime helpers:
 local QR rendering, QR customer history, and one-open-bill table ordering.
 """
+import re
 import app as core
 from app import app
 from customer_history import register_customer_history
@@ -24,10 +25,11 @@ def inject_browser_helpers(response):
         return response
 
     # Admin/table-management QR images: local renderer, no third-party host.
-    app_tag = '<script src="/static/app.js?v=27.3"></script>'
+    # Match app.js at any ?v= so bumping the asset version can never silently drop the QR renderer.
     qr_tag = '<script src="/static/qr-local.js?v=1"></script>'
-    if app_tag in html and qr_tag not in html:
-        html = html.replace(app_tag, app_tag + qr_tag, 1)
+    m = re.search(r'<script src="/static/app\.js(?:\?v=[^"]*)?"></script>', html)
+    if m and qr_tag not in html:
+        html = html[:m.end()] + qr_tag + html[m.end():]
 
     # Customer QR ordering: table/session order history + "order more" flow.
     order_tag = '<script src="/static/order.js"></script>'
