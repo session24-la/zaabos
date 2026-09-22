@@ -1,18 +1,18 @@
 (function(global){
   'use strict';
 
-  // Browser-scoped QR order history. No order-number/phone lookup is required:
-  // a random token lives only on this device and the server stores only its hash.
+  // Per-table QR pages show one shared current table bill. Generic QR / other
+  // flows keep a browser-scoped opaque session token.
   const TTL_MS=12*60*60*1000;
   const POLL_MS=15000;
   let historyRows=[];
   let menuReady=false;
 
   const COPY={
-    th:{view:'🧾 ดูรายการที่สั่งแล้ว',title:'รายการที่สั่งแล้ว',hint:'แสดงออเดอร์จากเครื่องนี้ในช่วงการสั่งปัจจุบัน ไม่ต้องกรอกเลขออเดอร์หรือเบอร์โทร',empty:'ยังไม่มีรายการที่สั่งจากเครื่องนี้',refresh:'↻ อัปเดตสถานะ',more:'🍽️ สั่งเพิ่ม',total:'รวมทั้งหมด',error:'อัปเดตรายการไม่ได้ กรุณาลองอีกครั้ง'},
-    lo:{view:'🧾 ເບິ່ງລາຍການທີ່ສັ່ງແລ້ວ',title:'ລາຍການທີ່ສັ່ງແລ້ວ',hint:'ສະແດງອໍເດີຈາກເຄື່ອງນີ້ໃນຊ່ວງການສັ່ງປັດຈຸບັນ ບໍ່ຕ້ອງປ້ອນເລກອໍເດີ ຫຼື ເບີໂທ',empty:'ຍັງບໍ່ມີລາຍການທີ່ສັ່ງຈາກເຄື່ອງນີ້',refresh:'↻ ອັບເດດສະຖານະ',more:'🍽️ ສັ່ງເພີ່ມ',total:'ລວມທັງໝົດ',error:'ອັບເດດລາຍການບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'},
-    zh:{view:'🧾 查看已点订单',title:'已点订单',hint:'显示本设备当前点餐时段的订单，无需输入订单号或手机号',empty:'此设备还没有订单',refresh:'↻ 更新状态',more:'🍽️ 继续点餐',total:'合计',error:'无法更新订单，请重试'},
-    en:{view:'🧾 View my orders',title:'My orders',hint:'Shows orders from this device during the current ordering session — no order number or phone needed',empty:'No orders from this device yet',refresh:'↻ Refresh status',more:'🍽️ Order more',total:'Total',error:'Could not refresh orders. Please try again.'}
+    th:{view:'🧾 ดูรายการที่สั่งแล้ว',title:'รายการที่สั่งแล้ว',hint:'โต๊ะนี้จะแสดงรายการที่สั่งร่วมกันจากทุกเครื่องในบิลปัจจุบัน โดยไม่ต้องกรอกเลขออเดอร์หรือเบอร์โทร',empty:'ยังไม่มีรายการที่สั่งในบิลนี้',refresh:'↻ อัปเดตสถานะ',more:'🍽️ สั่งเพิ่ม',total:'รวมทั้งหมด',error:'อัปเดตรายการไม่ได้ กรุณาลองอีกครั้ง'},
+    lo:{view:'🧾 ເບິ່ງລາຍການທີ່ສັ່ງແລ້ວ',title:'ລາຍການທີ່ສັ່ງແລ້ວ',hint:'QR ໂຕະນີ້ຈະສະແດງລາຍການຮ່ວມກັນຈາກທຸກເຄື່ອງໃນບິນປັດຈຸບັນ ບໍ່ຕ້ອງປ້ອນເລກອໍເດີ ຫຼື ເບີໂທ',empty:'ຍັງບໍ່ມີລາຍການໃນບິນນີ້',refresh:'↻ ອັບເດດສະຖານະ',more:'🍽️ ສັ່ງເພີ່ມ',total:'ລວມທັງໝົດ',error:'ອັບເດດລາຍການບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'},
+    zh:{view:'🧾 查看已点订单',title:'已点订单',hint:'桌台二维码会显示当前账单中所有设备共同点的菜，无需输入订单号或手机号',empty:'当前账单还没有订单',refresh:'↻ 更新状态',more:'🍽️ 继续点餐',total:'合计',error:'无法更新订单，请重试'},
+    en:{view:'🧾 View my orders',title:'Current table bill',hint:'A table QR shows the shared current bill from every device at this table — no order number or phone required',empty:'Nothing has been ordered on this bill yet',refresh:'↻ Refresh status',more:'🍽️ Order more',total:'Total',error:'Could not refresh orders. Please try again.'}
   };
 
   function lang(){
@@ -128,7 +128,7 @@
   async function refreshHistory(silent){
     ensureUi();const bid=branchId();if(!bid)return;
     try{
-      const r=await nativeFetch('/api/public/orders/history',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({branch_id:Number(bid),public_session_token:sessionToken()})});
+      const r=await nativeFetch('/api/public/orders/history',{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({branch_id:Number(bid),public_session_token:sessionToken(),table_token:tableToken()||null})});
       const body=await r.json();if(!r.ok){if(!silent)notify(body.error||c('error'));return;}
       historyRows=body.orders||[];renderButton();renderHistory();
     }catch(e){if(!silent)notify(c('error'));}
@@ -138,7 +138,7 @@
   }
 
   // Intercept only the customer create-order request and add the opaque session
-  // token. Existing ordering logic remains untouched.
+  // token. Table-wide history uses the QR token; generic flow uses this token.
   const nativeFetch=global.fetch.bind(global);
   global.fetch=async function(input,init){
     let url='';try{url=new URL(typeof input==='string'?input:input.url,location.href).pathname;}catch(e){}

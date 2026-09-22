@@ -1,9 +1,8 @@
-"""QR customer order-session history for ZaabOS.
+"""QR customer order history for ZaabOS.
 
-This module is registered by the production WSGI entrypoint. It adds a private,
-browser-scoped order history without asking the customer for an order number or
-phone number. The browser keeps a random opaque token; only its SHA-256 digest is
-stored in orders.client_device_id, which is already indexed by the core schema.
+Per-table QR pages expose the current open table bill to every guest who scanned
+that physical table QR. Generic QR/takeaway/delivery flows keep the original
+browser-scoped opaque session history. No order number or phone lookup is needed.
 """
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -30,11 +29,14 @@ def register_customer_history(core):
         full = core._order_with_items(conn, order)
         items = []
         for it in full.get('items', []):
+            active_qty = max(0, int(it.get('quantity') or 0) - int(it.get('cancelled_quantity') or 0))
+            if active_qty <= 0:
+                continue
             items.append({
                 'item_name_snapshot': it.get('item_name_snapshot'),
-                'quantity': it.get('quantity'),
+                'quantity': active_qty,
                 'unit_price': it.get('unit_price'),
-                'line_total': it.get('line_total'),
+                'line_total': float(it.get('unit_price') or 0) * active_qty,
                 'notes': it.get('notes') or '',
                 'options': [
                     {'option_name_snapshot': opt.get('option_name_snapshot')}
@@ -65,12 +67,11 @@ def register_customer_history(core):
 
     @app.after_request
     def attach_public_order_session(response):
-        """Attach the opaque browser session to a successfully-created order.
+        """Attach generic/browser history metadata after a successful submit.
 
-        The core order transaction has already committed at this point. This
-        secondary update is deliberately best-effort: an order must never be
-        reported as failed merely because history metadata could not be saved,
-        which would tempt the customer to submit a duplicate order.
+        Per-table history does not depend on this single device field; it is
+        authorized by the physical table QR token instead, so several phones at
+        the same table can all see the same open bill.
         """
         if request.path != '/api/public/orders' or request.method != 'POST' or response.status_code != 200:
             return response
@@ -97,9 +98,6 @@ def register_customer_history(core):
             branch_id = int(data.get('branch_id'))
         except (TypeError, ValueError):
             return jsonify(error='branch_id ไม่ถูกต้อง'), 400
-        digest = session_hash(data.get('public_session_token'))
-        if not digest:
-            return jsonify(error='ไม่พบเซสชันการสั่งอาหาร กรุณาสแกน QR ใหม่'), 400
 
         conn = core.db()
         branch = conn.execute(
@@ -107,16 +105,47 @@ def register_customer_history(core):
         ).fetchone()
         if not branch or not core.tenant_active(conn, branch['tenant_id']):
             return jsonify(error='ไม่พบสาขานี้'), 404
-
+        tenant_id = branch['tenant_id']
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=PUBLIC_ORDER_SESSION_TTL_HOURS)).isoformat(timespec='seconds')
+
+        # Physical table QR = table-session scope. Any guest at that table sees
+        # the same currently-open bill, which is exactly what lets three phones
+        # order together without requiring a shared order number or phone.
+        table_token = (data.get('table_token') or '').strip()
+        if table_token:
+            table = conn.execute(
+                'SELECT id FROM dining_tables WHERE qr_token=? AND tenant_id=? AND branch_id=? AND active=1',
+                (table_token, tenant_id, branch_id),
+            ).fetchone()
+            if not table:
+                return jsonify(error='ไม่พบโต๊ะนี้ กรุณาสแกน QR ใหม่'), 404
+            rows = conn.execute(
+                """SELECT * FROM orders
+                   WHERE tenant_id=? AND branch_id=? AND table_id=? AND order_type='dine_in'
+                     AND payment_status='unpaid' AND status NOT IN ('completed','cancelled')
+                     AND created_at>=?
+                   ORDER BY id ASC LIMIT 20""",
+                (tenant_id, branch_id, table['id'], cutoff),
+            ).fetchall()
+            return jsonify(
+                orders=[public_order_view(conn, row) for row in rows],
+                ttl_hours=PUBLIC_ORDER_SESSION_TTL_HOURS,
+                scope='table',
+            )
+
+        # Generic QR / non-table order: preserve per-device session isolation.
+        digest = session_hash(data.get('public_session_token'))
+        if not digest:
+            return jsonify(error='ไม่พบเซสชันการสั่งอาหาร กรุณาสแกน QR ใหม่'), 400
         rows = conn.execute(
             """SELECT * FROM orders
                WHERE tenant_id=? AND branch_id=? AND placed_by='customer'
                  AND client_device_id=? AND created_at>=?
                ORDER BY id DESC LIMIT 20""",
-            (branch['tenant_id'], branch_id, digest, cutoff),
+            (tenant_id, branch_id, digest, cutoff),
         ).fetchall()
         return jsonify(
             orders=[public_order_view(conn, row) for row in rows],
             ttl_hours=PUBLIC_ORDER_SESSION_TTL_HOURS,
+            scope='device',
         )
