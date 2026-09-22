@@ -13,3 +13,8 @@ Acceptance scope:
 - After a paid check is closed, a later seating on the same table opens a new primary check.
 - Report and shift bill counts use logical bills while preserving underlying order-batch counts for audit.
 - Tenant isolation, CSRF, pricing, discounts, tax/service charge, inventory, KDS, refunds and customer-session history must remain compatible.
+
+Validation gates:
+- Disposable SQLite route integration must end with `ROUND31_TABLE_OPEN_CHECK_PASS`.
+- Disposable PostgreSQL restore-test acceptance must end with `ROUND31_POSTGRES_OPEN_CHECK_PASS`; it also races concurrent QR orders and duplicate payment attempts.
+- Production is merged only after both gates pass and the final branch diff is reviewed.
