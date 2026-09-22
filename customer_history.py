@@ -123,9 +123,8 @@ def register_customer_history(core):
                 """SELECT * FROM orders
                    WHERE tenant_id=? AND branch_id=? AND table_id=? AND order_type='dine_in'
                      AND payment_status='unpaid' AND status NOT IN ('completed','cancelled')
-                     AND created_at>=?
                    ORDER BY id ASC LIMIT 20""",
-                (tenant_id, branch_id, table['id'], cutoff),
+                (tenant_id, branch_id, table['id']),
             ).fetchall()
             return jsonify(
                 orders=[public_order_view(conn, row) for row in rows],

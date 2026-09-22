@@ -27,6 +27,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, unquote
 
 import psycopg2
+from pgcreds import pg_env
 
 CORE_TABLES = ('tenants', 'users', 'branches', 'menu_items', 'orders',
                'order_items', 'payments', 'schema_migrations')
@@ -51,6 +52,7 @@ def scrub(text, *secrets):
                 pw = urlsplit(s).password
                 if pw:
                     out = out.replace(pw, '***REDACTED***')
+                    out = out.replace(unquote(pw), '***REDACTED***')
             except Exception:
                 pass
     out = re.sub(r'postgres(?:ql)?://[^\s\'"]+', 'postgresql://***REDACTED***', out)
@@ -89,26 +91,12 @@ def fingerprint(dsn, label):
 
 def same_database(a, b):
     if a.get('system_identifier') and b.get('system_identifier'):
-        if a['system_identifier'] != b['system_identifier']:
-            return False  # provably different clusters
+        return (a['system_identifier'] == b['system_identifier']
+                and a['database'] == b['database'])
     return (a['database'] == b['database']
             and a['address'] == b['address']
             and a['port'] == b['port']
             and a['started'] == b['started'])
-
-
-def pg_env(dsn):
-    """libpq environment with credentials kept out of process argv."""
-    u = urlsplit(dsn)
-    env = dict(os.environ)
-    env.update({
-        'PGHOST': u.hostname or '',
-        'PGPORT': str(u.port or 5432),
-        'PGUSER': unquote(u.username or ''),
-        'PGPASSWORD': unquote(u.password or ''),
-        'PGDATABASE': (u.path or '/').lstrip('/'),
-    })
-    return env
 
 
 def sha256_file(path):
@@ -141,6 +129,28 @@ def main():
     print(f'artifact : {dump.name}')
     print(f'target   : {safe_target(test)}   (this database will be ERASED)')
 
+    # ---------- verify artifact integrity before any destructive action ----------
+    manifest = dump.with_suffix('.dump.json')
+    if not manifest.is_file():
+        fail('backup manifest is required before restore')
+    try:
+        manifest_data = json.loads(manifest.read_text(encoding='utf-8'))
+    except Exception as e:
+        fail('backup manifest is invalid: ' + scrub(str(e), test, prod))
+    if not isinstance(manifest_data, dict):
+        fail('backup manifest must be a JSON object')
+    expected_sha = str(manifest_data.get('sha256') or '').strip().lower()
+    expected_bytes = manifest_data.get('bytes')
+    actual_bytes = dump.stat().st_size
+    if not re.fullmatch(r'[0-9a-f]{64}', expected_sha):
+        fail('backup manifest has no valid sha256 — refusing destructive restore')
+    if type(expected_bytes) is not int or expected_bytes != actual_bytes:
+        fail('backup size does not match manifest — refusing destructive restore')
+    actual_sha = sha256_file(dump)
+    if actual_sha != expected_sha:
+        fail('backup checksum does not match manifest — refusing destructive restore')
+    print('checksum : sha256 verified against manifest — OK')
+
     # ---------- guard 1: plain text equality ----------
     if prod and test == prod:
         fail('restore target equals DATABASE_URL — refusing to touch production')
@@ -158,26 +168,6 @@ def main():
         print('guard    : DATABASE_URL not set in this environment; '
               'only the explicit target will be written')
 
-    # ---------- verify artifact integrity before any destructive action ----------
-    manifest = dump.with_suffix('.dump.json')
-    if not manifest.is_file():
-        fail('backup manifest is required before restore')
-    try:
-        manifest_data = json.loads(manifest.read_text(encoding='utf-8'))
-    except Exception as e:
-        fail('backup manifest is invalid: ' + scrub(str(e), test, prod))
-    expected_sha = str(manifest_data.get('sha256') or '').strip().lower()
-    expected_bytes = manifest_data.get('bytes')
-    actual_bytes = dump.stat().st_size
-    if not expected_sha:
-        fail('backup manifest has no sha256 — refusing destructive restore')
-    if expected_bytes is None or int(expected_bytes) != actual_bytes:
-        fail('backup size does not match manifest — refusing destructive restore')
-    actual_sha = sha256_file(dump)
-    if actual_sha != expected_sha:
-        fail('backup checksum does not match manifest — refusing destructive restore')
-    print('checksum : sha256 verified against manifest — OK')
-
     # ---------- wipe the disposable target, then restore ----------
     # Dropping and recreating the schema gives a deterministic restore and a
     # meaningful exit code. `pg_restore --clean` against a fresh empty database
@@ -192,9 +182,11 @@ def main():
     finally:
         conn.close()
 
+    env = pg_env(test)
     r = subprocess.run(
-        [pg_restore, '--no-owner', '--no-acl', '--exit-on-error', str(dump)],
-        capture_output=True, text=True, errors='replace', env=pg_env(test))
+        [pg_restore, '--no-owner', '--no-acl', '--exit-on-error',
+         '--dbname', env['PGDATABASE'], str(dump)],
+        capture_output=True, text=True, errors='replace', env=env)
     if r.returncode:
         fail('pg_restore failed: ' + scrub(r.stderr, test, prod)[-1500:])
 

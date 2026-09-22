@@ -31,7 +31,7 @@ def inject_browser_helpers(response):
 
     # Customer QR ordering: table/session order history + "order more" flow.
     order_tag = '<script src="/static/order.js"></script>'
-    history_tag = '<script src="/static/customer-history.js?v=1.1"></script>'
+    history_tag = '<script src="/static/customer-history.js?v=1.2"></script>'
     if order_tag in html and history_tag not in html:
         html = html.replace(order_tag, order_tag + history_tag, 1)
 
