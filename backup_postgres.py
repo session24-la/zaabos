@@ -17,6 +17,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import urlsplit, unquote
+from pgcreds import pg_env
 
 CORE_TABLES = ('tenants', 'users', 'branches', 'menu_items', 'orders',
                'order_items', 'payments', 'schema_migrations')
@@ -41,6 +42,7 @@ def scrub(text, *secrets):
                 pw = urlsplit(s).password
                 if pw:
                     out = out.replace(pw, '***REDACTED***')
+                    out = out.replace(unquote(pw), '***REDACTED***')
             except Exception:
                 pass
     # belt and braces: any postgres URL that slipped through
@@ -99,18 +101,10 @@ def main():
 
     # The DSN goes through the environment, not argv, so it never shows up in a
     # process listing on a shared host.
-    u = urlsplit(dsn)
-    env = dict(os.environ)
-    env.update({
-        'PGHOST': u.hostname or '',
-        'PGPORT': str(u.port or 5432),
-        'PGUSER': unquote(u.username or ''),
-        'PGPASSWORD': unquote(u.password or ''),
-        'PGDATABASE': (u.path or '/').lstrip('/'),
-    })
+    env = pg_env(dsn)
     r = subprocess.run(
         [pg_dump, '--format=custom', '--no-owner', '--no-acl',
-         '--file', str(dump_path)],
+         '--file', str(dump_path), '--dbname', env['PGDATABASE']],
         capture_output=True, text=True, errors='replace', env=env)
     def discard_partial():
         # Never leave a half-written or empty .dump lying around: a later drill

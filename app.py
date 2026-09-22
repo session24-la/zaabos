@@ -187,8 +187,10 @@ def backup_db(label='auto'):
         if not pg_dump:
             raise RuntimeError('ไม่พบ pg_dump บนเซิร์ฟเวอร์ กรุณาติดตั้ง PostgreSQL client หรือใช้ provider backup')
         dest = BACKUP_DIR / f'zaabos_{label}_{ts}.dump'
-        subprocess.run([pg_dump, '--format=custom', '--no-owner', '--no-acl', '--file', str(dest), os.getenv('DATABASE_URL')],
-                       check=True, timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        from pgcreds import pg_env
+        env = pg_env(os.getenv('DATABASE_URL'))
+        subprocess.run([pg_dump, '--format=custom', '--no-owner', '--no-acl', '--file', str(dest), '--dbname', env['PGDATABASE']],
+                       check=True, timeout=300, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors='replace', env=env)
         kind = 'postgresql-custom'
     else:
         if not DB.exists(): raise RuntimeError('ไม่พบฐานข้อมูล SQLite')
@@ -685,6 +687,7 @@ def init_db():
         conn.close()
         return
     conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')
     conn.executescript((BASE / 'schema.sql').read_text())
     create_tenant_indexes(conn)
@@ -2107,7 +2110,7 @@ def staff_create_order():
 @role_required('owner', 'manager', 'staff')
 def update_order_status(oid):
     conn = db()
-    order = conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid, g.tenant_id)).fetchone()
+    order = _row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid, g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'), 404
     d = request.get_json() or {}
     status = d.get('status')
@@ -2276,7 +2279,7 @@ def update_order_fulfillment(oid):
 @role_required('owner','manager','staff')
 def update_order_payment(oid):
     """Payment 2.0: one atomic checkout may contain one or many payment methods."""
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     d=request.get_json() or {}
     if d.get('payment_status')!='paid': return jsonify(error='ใช้ขั้นตอนคืนเงิน/เปิดบิลกลับสำหรับการย้อนการชำระ'),400
@@ -2343,7 +2346,7 @@ def update_order_payment(oid):
 @role_required('owner','manager','staff')
 def reopen_paid_order(oid):
     """Reverse the active payment without deleting history, then reopen the bill for correction."""
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['payment_status']!='paid': return jsonify(error='เปิดบิลใหม่ได้เฉพาะออเดอร์ที่ชำระแล้ว'),409
     refunded=conn.execute('SELECT id FROM refunds WHERE tenant_id=? AND order_id=? LIMIT 1',(g.tenant_id,oid)).fetchone()
@@ -2373,7 +2376,7 @@ def reopen_paid_order(oid):
 @login_required
 @role_required('owner','manager','staff')
 def add_order_items(oid):
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['status'] in ('completed','cancelled') or order['payment_status']=='paid': return jsonify(error='ออเดอร์นี้ปิดแล้ว ไม่สามารถเพิ่มรายการได้'),409
     d=request.get_json() or {}
@@ -2387,14 +2390,17 @@ def add_order_items(oid):
         for op in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
         _decrement_stock(conn,g.tenant_id,it['menu_item_id'],it['quantity'])
-    total=_recalculate_order_total(conn,oid); log_action('add_order_items',detail=f'{oid}: {ids}'); conn.commit()
+    total=_recalculate_order_total(conn,oid)
+    if order['status'] in ('ready', 'served'):
+        conn.execute("UPDATE orders SET status='received',updated_at=? WHERE id=?", (now(),oid))
+    log_action('add_order_items',detail=f'{oid}: {ids}'); conn.commit()
     return jsonify(ok=True,item_ids=ids,total_amount=total)
 
 @app.put('/api/orders/<int:oid>/items/<int:iid>/cancel')
 @login_required
 @role_required('owner','manager','staff')
 def cancel_order_item(oid,iid):
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ปิดแล้ว'),409
     item_sql='SELECT * FROM order_items WHERE id=? AND order_id=?' + (' FOR UPDATE' if IS_POSTGRES else '')
@@ -2420,7 +2426,7 @@ def cancel_order_item(oid,iid):
 @role_required('owner','manager','staff')
 def update_order_item_quantity(oid,iid):
     """Change the active quantity of an open order item and keep stock in sync."""
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ปิดแล้ว'),409
     it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?',(iid,oid)).fetchone()
@@ -2452,7 +2458,7 @@ def update_order_item_quantity(oid,iid):
 @login_required
 @role_required('owner','manager','staff')
 def move_order_table(oid):
-    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['order_type']!='dine_in' or order['status'] in ('completed','cancelled'): return jsonify(error='ออเดอร์นี้ไม่สามารถย้ายโต๊ะได้'),409
     try: table_id=int((request.get_json() or {}).get('table_id'))

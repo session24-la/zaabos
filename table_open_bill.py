@@ -46,11 +46,14 @@ def register_table_open_bill(core):
         ).fetchone()
 
     def _normal_open_orders(conn, tenant_id, branch_id, table_id):
+        # Checkout and staff edits lock these same rows before reading totals.
+        # Recheck the open/unpaid predicate after a concurrent checkout commits.
+        lock_suffix = ' FOR UPDATE' if core.IS_POSTGRES else ''
         rows = conn.execute(
             """SELECT * FROM orders
                WHERE tenant_id=? AND branch_id=? AND table_id=? AND order_type='dine_in'
                  AND payment_status='unpaid' AND status NOT IN ('completed','cancelled')
-               ORDER BY id ASC""",
+               ORDER BY id ASC""" + lock_suffix,
             (tenant_id, branch_id, table_id),
         ).fetchall()
         # A staff-created split bill is intentionally separate. Normal staff/QR

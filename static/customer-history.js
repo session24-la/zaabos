@@ -7,6 +7,7 @@
   const POLL_MS=15000;
   let historyRows=[];
   let menuReady=false;
+  const memorySessions=new Map();
 
   const COPY={
     th:{view:'🧾 ดูรายการที่สั่งแล้ว',title:'รายการที่สั่งแล้ว',hint:'โต๊ะนี้จะแสดงรายการที่สั่งร่วมกันจากทุกเครื่องในบิลปัจจุบัน โดยไม่ต้องกรอกเลขออเดอร์หรือเบอร์โทร',empty:'ยังไม่มีรายการที่สั่งในบิลนี้',refresh:'↻ อัปเดตสถานะ',more:'🍽️ สั่งเพิ่ม',total:'รวมทั้งหมด',error:'อัปเดตรายการไม่ได้ กรุณาลองอีกครั้ง'},
@@ -45,12 +46,15 @@
   }
   function sessionToken(){
     const key=storageKey(),now=Date.now();
+    const remembered=memorySessions.get(key);
+    if(remembered&&now-remembered.created_at<TTL_MS)return remembered.token;
     try{
       const saved=JSON.parse(localStorage.getItem(key)||'null');
-      if(saved&&saved.token&&now-Number(saved.created_at||0)<TTL_MS)return saved.token;
+      if(saved&&saved.token&&now-Number(saved.created_at||0)<TTL_MS){memorySessions.set(key,saved);return saved.token;}
     }catch(e){}
     const token=randomToken();
-    try{localStorage.setItem(key,JSON.stringify({token,created_at:now}));}catch(e){}
+    const saved={token,created_at:now};memorySessions.set(key,saved);
+    try{localStorage.setItem(key,JSON.stringify(saved));}catch(e){}
     return token;
   }
   function statusLabel(status){
@@ -164,6 +168,6 @@
     },250);
   }
   document.querySelector('#langSelect')?.addEventListener('change',()=>setTimeout(()=>{updateLabels();renderHistory();},0));
-  setInterval(()=>{if(!document.hidden&&menuReady&&historyRows.length)refreshHistory(true);},POLL_MS);
+  setInterval(()=>{if(!document.hidden&&menuReady&&(tableToken()||historyRows.length))refreshHistory(true);},POLL_MS);
   waitForMenu();
 })(window);
