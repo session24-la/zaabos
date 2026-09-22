@@ -8,7 +8,7 @@ checks={
  'refund_decimal':"remaining_refundable=money_float" in app,
  'top_items_cancel_safe':"SUM(oi.quantity-COALESCE(oi.cancelled_quantity,0))" in app,
  'daily_close_deprecated':"Daily Closing เดิมถูกยกเลิกแล้ว" in app,
- 'split_pg_lock':"lock_suffix=' FOR UPDATE' if IS_POSTGRES else ''" in app,
+ 'split_pg_lock':"lock_suffix=_for_update(conn)" in app,
  'report_label_safe':"Net after refunds & recorded expenses" in i18n,
  'tenant_payment_claim':"WHERE id=? AND tenant_id=? AND payment_status='unpaid'" in app,
  'tenant_refund':"order_id=? AND tenant_id=?" in app,

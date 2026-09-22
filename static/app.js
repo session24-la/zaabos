@@ -150,7 +150,7 @@ async function api(url, opts) {
   }
   if (!r.ok) {
     const fallback = r.status >= 500 ? 'ระบบบันทึกข้อมูลขัดข้อง กรุณาลองอีกครั้ง' : t('err_generic');
-    const err=new Error((body && body.error) || fallback); err.status=r.status; err.transient=(r.status>=500||r.status===408||r.status===429); throw err;
+    const err=new Error((body && body.error) || fallback); err.status=r.status; err.code=body&&body.code; err.transient=(r.status>=500||r.status===408||r.status===429); throw err;
   }
   return body;
 }
@@ -364,17 +364,18 @@ $('#usernameSave').addEventListener('click', async () => {
 let reportFrom = null, reportTo = null;
 let lastReportSummary = null;
 
-function isoDate(d) { return d.toISOString().slice(0, 10); }
-
+// Business dates are restaurant-local (Lao) dates. toISOString() gives the UTC date, which is
+// still "yesterday" between 00:00 and 07:00 in Vientiane and made the report look empty.
+function isoDate(d) { return new Intl.DateTimeFormat('en-CA', {timeZone: ZAABOS_RESTAURANT_TZ, year: 'numeric', month: '2-digit', day: '2-digit'}).format(d); }
 function presetRange(preset) {
-  const today = new Date();
-  const y = today.getFullYear(), m = today.getMonth(), dt = today.getDate();
-  if (preset === 'today') return [isoDate(today), isoDate(today)];
-  if (preset === 'yesterday') { const d = new Date(y, m, dt - 1); return [isoDate(d), isoDate(d)]; }
-  if (preset === '7d') { const d = new Date(y, m, dt - 6); return [isoDate(d), isoDate(today)]; }
-  if (preset === 'month') { return [isoDate(new Date(y, m, 1)), isoDate(today)]; }
-  if (preset === 'year') { return [isoDate(new Date(y, 0, 1)), isoDate(today)]; }
-  return [isoDate(today), isoDate(today)];
+  const [y, m, dt] = isoDate(new Date()).split('-').map(Number);
+  const day = (Y, M, D) => new Date(Date.UTC(Y, M - 1, D)).toISOString().slice(0, 10);
+  const today = day(y, m, dt);
+  if (preset === 'yesterday') { const d = day(y, m, dt - 1); return [d, d]; }
+  if (preset === '7d') return [day(y, m, dt - 6), today];
+  if (preset === 'month') return [day(y, m, 1), today];
+  if (preset === 'year') return [day(y, 1, 1), today];
+  return [today, today];
 }
 
 $('#reportPresets').addEventListener('click', (e) => {
@@ -431,6 +432,16 @@ function renderReportCards(s) {
   if (s.refund_total > 0) $('#reportCards').insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
   renderCancellationReport(s.cancellations||{});
+  renderShiftReport(s.shifts||[]);
+}
+function renderShiftReport(rows){const el=$('#shiftReport');if(!el)return;
+  if(!rows.length){el.innerHTML=emptyState('🧾','ยังไม่มีกะในช่วงวันที่เลือก');return}
+  el.innerHTML=rows.map(x=>{const sm=x.summary||{},open=x.status==='open';
+    const diff=open?'':`<span class="${Number(x.difference||0)===0?'':'error-text'}">ส่วนต่าง ${fmtMoney(x.difference||0)}</span>`;
+    return `<div class="list-row shift-history-row"><div><b>${escapeHtml(x.opened_by_name||'')} · ${escapeHtml(formatDateTime(x.opened_at))} → ${open?'<span class="pill">กำลังเปิด</span>':escapeHtml(formatDateTime(x.closed_at))}</b>
+      <div class="muted">${Number(sm.bill_count||0)} บิล · รับเงินสุทธิ ${fmtMoney(sm.net_received||0)} · เงินสดควรมี ${fmtMoney(open?sm.expected_cash:x.expected_cash)}${open?'':' · นับจริง '+fmtMoney(x.counted_cash||0)} ${diff}</div></div>
+      ${open?'':`<button class="ghost-btn" data-report-print-shift="${x.id}">🧾 พิมพ์ซ้ำ</button>`}</div>`}).join('');
+  el.onclick=async e=>{const b=e.target.closest('[data-report-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.reportPrintShift));if(x)await printShiftCloseReport({...x})};
 }
 function renderCancellationReport(c){const el=$('#cancellationReport');if(!el)return;const reasons=c.reasons||[],recent=c.recent||[];if(!(c.total||0)){el.innerHTML=emptyState('✅','ช่วงนี้ไม่มีการยกเลิก');return;}el.innerHTML=`<div class="cancel-summary-cards"><div><b>${c.total}</b><span>เหตุการณ์ยกเลิก</span></div><div><b>${c.order_count}</b><span>ยกเลิกทั้งบิล</span></div><div><b>${c.item_count}</b><span>ยกเลิกรายการ</span></div></div><div class="cancel-reason-list">${reasons.map((x,i)=>`<div class="cancel-reason-row"><span>${i+1}</span><div><b>${escapeHtml(x.reason)}</b><small>${x.order_count} บิล · ${x.item_count} รายการ</small></div><strong>${x.count}</strong></div>`).join('')}</div><details class="cancel-audit"><summary>ดูรายการล่าสุด</summary>${recent.map(x=>`<div class="cancel-audit-row"><span>${x.operation_type==='cancel_order'?'ทั้งบิล':'รายการ'}</span><b>${escapeHtml(x.reason_text||'ไม่ระบุเหตุผล')}</b><small>${escapeHtml(x.performed_by_name||'-')} · ${formatDateTime(x.created_at)}</small></div>`).join('')}</details>`;}
 
@@ -1187,6 +1198,9 @@ async function refundOrder(orderId) {
   const paidTotal=order ? Number(order.grand_total || order.total_amount || 0) : 0;
   const alreadyRefunded=order ? Number(order.refund_total || 0) : 0;
   const maxAmount=Math.max(0,paidTotal-alreadyRefunded);
+  const methods=[...new Set(((order&&order.payments)||[]).filter(p=>!p.reversed_at).map(p=>p.payment_method))];
+  $('#refundMethod').innerHTML=methods.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(paymentMethodName(m))}</option>`).join('');
+  $('#refundMethodRow').hidden=methods.length<2;
   refundOrderId=orderId; $('#refundMax').textContent=fmtMoney(maxAmount); $('#refundAmount').value=''; $('#refundAmount').max=maxAmount||''; $('#refundReason').value=''; $('#refundError').textContent=''; openModal('#refundModal');
 }
 $('#refundSubmit').addEventListener('click',async()=>{
@@ -1194,7 +1208,7 @@ $('#refundSubmit').addEventListener('click',async()=>{
   if(amount!==null&&(!Number.isFinite(amount)||amount<=0)){ $('#refundError').textContent='ยอดคืนเงินไม่ถูกต้อง'; return; }
   const max=Number($('#refundAmount').max||0); if(amount!==null&&max>0&&amount>max){$('#refundError').textContent='ยอดคืนเงินเกินยอดที่คืนได้';return;}
   if(!reason){$('#refundError').textContent='กรุณาระบุเหตุผลการคืนเงิน';return;}
-  const payload={reason};if(amount!==null)payload.amount=amount;const id=refundOrderId;
+  const payload={reason};if(amount!==null)payload.amount=amount;if(!$('#refundMethodRow').hidden&&$('#refundMethod').value)payload.method=$('#refundMethod').value;const id=refundOrderId;
   try{const r=await apiJson(`/api/orders/${id}/refund`,'POST',payload);closeModals();refundOrderId=null;toast(`คืนเงิน ${fmtMoney(r.amount)} แล้ว · คืนได้อีก ${fmtMoney(r.remaining_refundable||0)}`,'ok');onOrderActionDone()}catch(e){$('#refundError').textContent=e.message}
 });
 
@@ -1270,12 +1284,22 @@ function cpBaseDue(){const o=findOrderById(cpOrderId);if(!o)return 0;return Math
 function paymentMethodName(m){return({cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'})[m]||m}
 function updateCpPaymentSummary(){const due=cpBaseDue(),method=$('#cpMethod').value;$('#cpCashLabel').classList.toggle('hidden',method!=='cash');const primary=Math.max(0,Number($('#cpPrimaryAmount').value||0)),extras=extraPaymentParts.reduce((a,x)=>a+Math.max(0,Number(x.amount||0)),0),paid=primary+extras,remaining=Math.max(0,due-paid),cash=method==='cash'?Math.max(0,Number($('#cpCash').value||0)):0;$('#cpPaidTotal').textContent=fmtMoney(paid);$('#cpRemaining').textContent=fmtMoney(remaining);$('#cpRemaining').classList.toggle('payment-ok',Math.abs(paid-due)<.005);$('#cpChange').textContent=fmtMoney(method==='cash'?Math.max(0,cash-primary):0);}
 function renderPaymentParts(){const el=$('#cpPaymentParts');if(!el)return;el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="ยอดช่องทางนี้" value="${p.amount||''}"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method});updateCpPaymentSummary();}
-function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpAdvanced').open=false;$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';renderPaymentParts();openModal('#confirmPaymentModal');}
+let cpRequestKey=null;
+function newCheckoutKey(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():('pay-'+Date.now()+'-'+Math.random().toString(36).slice(2))}
+function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;cpRequestKey=newCheckoutKey();checkCheckoutShift();extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpAdvanced').open=false;$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';renderPaymentParts();openModal('#confirmPaymentModal');}
 $('#cpMethod').addEventListener('change',()=>{if($('#cpMethod').value==='cash'&&!$('#cpCash').value)$('#cpCash').value=$('#cpPrimaryAmount').value;updateCpPaymentSummary()});$('#cpPrimaryAmount').addEventListener('input',updateCpPaymentSummary);$('#cpCash').addEventListener('input',updateCpPaymentSummary);
 $('#cpDiscount').addEventListener('input',()=>{const due=cpBaseDue(),extras=extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);$('#cpPrimaryAmount').value=String(Math.max(0,due-extras));updateCpPaymentSummary()});
 $('#cpAddPayment').addEventListener('click',()=>{const due=cpBaseDue(),paid=Number($('#cpPrimaryAmount').value||0)+extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);extraPaymentParts.push({method:'qr',amount:Math.max(0,due-paid)});renderPaymentParts()});
 $('#cpPaymentParts').addEventListener('input',e=>{let i=e.target.dataset.partAmount;if(i!==undefined)extraPaymentParts[+i].amount=Number(e.target.value||0);i=e.target.dataset.partMethod;if(i!==undefined)extraPaymentParts[+i].method=e.target.value;updateCpPaymentSummary()});$('#cpPaymentParts').addEventListener('click',e=>{const i=e.target.dataset.removePart;if(i!==undefined){extraPaymentParts.splice(+i,1);renderPaymentParts()}});
-$('#cpSubmit').addEventListener('click',async()=>{if(cpOrderId==null)return;$('#cpError').textContent='';const id=cpOrderId,method=$('#cpMethod').value,primary=Number($('#cpPrimaryAmount').value||0);if(primary<=0){$('#cpError').textContent='กรุณาระบุยอดชำระ';return}const parts=[{method,amount:primary,cash_received:method==='cash'?(Number($('#cpCash').value||0)||primary):null},...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))],due=cpBaseDue(),paid=parts.reduce((a,x)=>a+Number(x.amount||0),0);if(Math.abs(paid-due)>.005){$('#cpError').textContent=`ยอดชำระยังไม่ครบ: ชำระ ${fmtMoney(paid)} / ${fmtMoney(due)}`;return}if(parts.some(x=>x.amount<=0)){ $('#cpError').textContent='ยอดแต่ละช่องทางต้องมากกว่า 0';return}const payload={payment_status:'paid',payment_method:method,payments:parts},promo=$('#cpPromo').value.trim(),disc=$('#cpDiscount').value.trim(),dr=$('#cpDiscountReason').value.trim(),au=$('#cpApprovalUser').value.trim(),ap=$('#cpApprovalPass').value;if(promo)payload.promotion_code=promo;if(disc)payload.discount_amount=parseFloat(disc);if(dr)payload.discount_reason=dr;if(au)payload.approval_username=au;if(ap)payload.approval_password=ap;try{const result=await apiJson('/api/orders/'+id+'/payment','PUT',payload);toast('ชำระเงินสำเร็จ · '+result.payments.map(x=>paymentMethodName(x.method)+' '+fmtMoney(x.amount)).join(' + '),'ok');closeModals();cpOrderId=null;const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId||''));lastOrdersFlat=fresh.orders||[];activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');renderTableBoard();renderOtherOrders();renderSidePanel();printReceipt(id)}catch(e){$('#cpError').textContent=e.message}});
+$('#cpSubmit').addEventListener('click',async()=>{if(cpOrderId==null)return;$('#cpError').textContent='';const id=cpOrderId,method=$('#cpMethod').value,primary=Number($('#cpPrimaryAmount').value||0);if(primary<=0){$('#cpError').textContent='กรุณาระบุยอดชำระ';return}const parts=[{method,amount:primary,cash_received:method==='cash'?(Number($('#cpCash').value||0)||primary):null},...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))],due=cpBaseDue(),paid=parts.reduce((a,x)=>a+Number(x.amount||0),0);if(Math.abs(paid-due)>.005){$('#cpError').textContent=`ยอดชำระยังไม่ครบ: ชำระ ${fmtMoney(paid)} / ${fmtMoney(due)}`;return}if(parts.some(x=>x.amount<=0)){ $('#cpError').textContent='ยอดแต่ละช่องทางต้องมากกว่า 0';return}const payload={payment_status:'paid',payment_method:method,payments:parts},promo=$('#cpPromo').value.trim(),disc=$('#cpDiscount').value.trim(),dr=$('#cpDiscountReason').value.trim(),au=$('#cpApprovalUser').value.trim(),ap=$('#cpApprovalPass').value;if(promo)payload.promotion_code=promo;if(disc)payload.discount_amount=parseFloat(disc);if(dr)payload.discount_reason=dr;if(au)payload.approval_username=au;if(ap)payload.approval_password=ap;try{const result=await apiJson('/api/orders/'+id+'/payment','PUT',{...payload,client_request_id:cpRequestKey});toast('ชำระเงินสำเร็จ · '+result.payments.map(x=>paymentMethodName(x.method)+' '+fmtMoney(x.amount)).join(' + '),'ok');closeModals();cpOrderId=null;const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId||''));lastOrdersFlat=fresh.orders||[];activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');renderTableBoard();renderOtherOrders();renderSidePanel();printReceipt(id)}catch(e){$('#cpError').textContent=e.message;if(e.code==='shift_required')showCheckoutShiftBox(true)}});
+// Step 1: every payment belongs to an open shift. Offer to open one right inside the checkout dialog.
+function showCheckoutShiftBox(show){const b=$('#cpShiftBox');if(b)b.hidden=!show}
+async function checkCheckoutShift(){showCheckoutShiftBox(false);if(!currentBranchId)return;try{const d=await api('/api/operations/shift?branch_id='+currentBranchId);showCheckoutShiftBox(!d.shift)}catch(e){}}
+$('#cpOpenShiftBtn').addEventListener('click',async()=>{
+  if(!currentBranchId)return;const opening=Number($('#cpOpeningCash').value||0);
+  if(!Number.isFinite(opening)||opening<0){$('#cpError').textContent='เงินทอนตั้งต้นไม่ถูกต้อง';return}
+  try{await apiJson('/api/operations/shift/open','POST',{branch_id:currentBranchId,opening_cash:opening,notes:'เปิดกะจากหน้าชำระเงิน'});toast('เปิดกะแล้ว','ok');refreshPosShiftBadge();showCheckoutShiftBox(false);$('#cpError').textContent=''}catch(e){$('#cpError').textContent=e.message}
+});
 
 function printElement(el) {
   // Print isolation: only .print-target is shown at print time (see the
