@@ -60,6 +60,8 @@ def setup_fixture():
 
 
 def place(client, branch_id, table_token, item_id, qty=1):
+    # Every call uses another browser-session token. This intentionally models
+    # friends at the same table ordering from separate phones.
     return client.post('/api/public/orders', json={
         'branch_id':branch_id,'order_type':'dine_in','table_token':table_token,
         'customer_name':'QR Customer','cart':[{'menu_item_id':item_id,'quantity':qty,'selected_options':{},'notes':''}],
@@ -69,9 +71,15 @@ def place(client, branch_id, table_token, item_id, qty=1):
 
 def main():
     tenant,branch_id,tables,item_id,username,password=setup_fixture()
-    table_a,token_a,_=tables[0]; table_b,_,_=tables[1]
+    table_a,token_a,_=tables[0]; table_b,token_b,_=tables[1]
     client=core.app.test_client()
 
+    # Browser bootstrap must include the grouped-table client layer.
+    home=client.get('/')
+    html=home.get_data(as_text=True)
+    check('table_check_ui_injected',home.status_code==200 and '/static/pos-runtime-exports.js?v=1' in html and '/static/table-checks.js?v=1' in html)
+
+    # Two separate phones order on the same table: two kitchen batches, one bill.
     a=place(client,branch_id,token_a,item_id,1); b=place(client,branch_id,token_a,item_id,2)
     aj=a.get_json() or {}; bj=b.get_json() or {}
     check('two_qr_batches_created', a.status_code==200 and b.status_code==200 and aj.get('order_id')!=bj.get('order_id'))
@@ -96,9 +104,7 @@ def main():
     moved=conn.execute('SELECT COUNT(*) c FROM orders WHERE id IN (?,?) AND table_id=?',(aj['order_id'],bj['order_id'],table_b)).fetchone()['c']
     conn.close(); check('all_batches_moved_together',moved==2)
 
-    # Another QR order on the moved table joins that same primary check.
-    token_b=conn_token=None
-    conn=sqlite3.connect(core.DB); token_b=conn.execute('SELECT qr_token FROM dining_tables WHERE id=?',(table_b,)).fetchone()['qr_token']; conn.close()
+    # Another phone on the moved table joins the same primary check.
     c=place(client,branch_id,token_b,item_id,1); cj=c.get_json() or {}
     check('third_qr_batch_created',c.status_code==200)
     r=client.get(f"/api/table-checks/by-order/{cj.get('order_id')}")
@@ -125,12 +131,28 @@ def main():
     check('duplicate_table_payment_rejected',again.status_code==409)
 
     # Paid check is a closed seating. A later QR order opens a fresh primary check.
-    d=place(client,branch_id,token_b,item_id,1); dj=d.get_json() or {}
+    d=place(client,branch_id,token_b,item_id,2); dj=d.get_json() or {}
     r=client.get(f"/api/table-checks/by-order/{dj.get('order_id')}")
     fresh=(r.get_json() or {}).get('check') or {}
     check('new_seating_gets_new_check',d.status_code==200 and fresh.get('id')!=tc.get('id') and fresh.get('order_count')==1)
 
-    # Report counts logical paid bills rather than kitchen/order batches.
+    # Existing explicit split-bill flow must remain separate. Split one of two
+    # items out; the new secondary check rejects auto-join, while subsequent QR
+    # orders keep joining the primary table bill.
+    conn=sqlite3.connect(core.DB)
+    split_item=conn.execute('SELECT id FROM order_items WHERE order_id=? ORDER BY id LIMIT 1',(dj['order_id'],)).fetchone()['id']
+    conn.close()
+    sp=client.post(f"/api/orders/{dj['order_id']}/split",json={'items':[{'item_id':split_item,'quantity':1}]},headers=headers)
+    sj=sp.get_json() or {}
+    check('explicit_split_still_works',sp.status_code==200 and bool(sj.get('new_order_id')))
+    secondary=client.get(f"/api/table-checks/by-order/{sj.get('new_order_id')}").get_json().get('check')
+    check('split_creates_secondary_check',secondary and secondary['accept_auto_join'] is False and secondary['id']!=fresh['id'])
+    e=place(client,branch_id,token_b,item_id,1); ej=e.get_json() or {}
+    re=client.get(f"/api/table-checks/by-order/{ej.get('order_id')}").get_json().get('check')
+    check('qr_after_split_stays_on_primary',e.status_code==200 and re and re['id']==fresh['id'] and re['id']!=secondary['id'])
+
+    # Report counts logical bills rather than kitchen/order batches, while the
+    # underlying batch count remains visible for audit/reporting.
     rep=client.get(f'/api/reports/summary?branch_id={branch_id}')
     rd=rep.get_json() or {}
     check('report_exposes_batch_count',rep.status_code==200 and 'order_batch_count' in rd)
