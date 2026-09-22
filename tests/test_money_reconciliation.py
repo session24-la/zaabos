@@ -389,3 +389,17 @@ def test_report_lists_every_shift_of_the_day(shop):
     assert D(live_row['summary']['net_received']) == D(65000) and D(live_row['summary']['expected_cash']) == D(10000)
     assert 'summary_json' not in closed
     assert_ledger(shop)
+
+
+def test_data_dir_keeps_database_across_restarts(tmp_path):
+    """ZAABOS_DATA_DIR (Railway volume / shop PC data folder): a restart reuses the same
+    database and admin instead of creating a fresh one."""
+    import os, shutil, subprocess
+    dest, data = tmp_path / 'app', tmp_path / 'data'
+    shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns('.git', '*.db', '.secret_key', '__pycache__', '.pytest_cache', 'backups'))
+    env = dict(os.environ, ZAABOS_DATA_DIR=str(data))
+    env.pop('DATABASE_URL', None); env.pop('ZAABOS_ADMIN_PASSWORD', None)
+    runs = [subprocess.run([sys.executable, '-c', 'import wsgi'], cwd=dest, env=env, capture_output=True, text=True, timeout=60) for _ in range(2)]
+    assert all(r.returncode == 0 for r in runs), runs[0].stderr
+    assert (data / 'zaabos.db').exists() and not (dest / 'zaabos.db').exists()
+    assert 'temporary_password' in runs[0].stdout and 'temporary_password' not in runs[1].stdout

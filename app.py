@@ -99,8 +99,12 @@ def verify_password(pw_hash, password):
         return False
 
 BASE = Path(__file__).resolve().parent
-DB = BASE / 'zaabos.db'
-SECRET_FILE = BASE / '.secret_key'
+# SQLite location. ZAABOS_DATA_DIR lets a persistent disk (Railway volume, a shop PC's data
+# folder) hold the database and session key so they survive redeploys and app updates.
+DATA_DIR = Path(os.getenv('ZAABOS_DATA_DIR') or BASE).expanduser()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB = DATA_DIR / 'zaabos.db'
+SECRET_FILE = DATA_DIR / '.secret_key'
 app = Flask(__name__)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
