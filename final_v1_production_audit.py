@@ -1,7 +1,7 @@
 from pathlib import Path
 import sqlite3, re
 r=Path(__file__).parent
-a=(r/'app.py').read_text(); j=(r/'static/app.js').read_text(); sw=(r/'static/sw.js').read_text(); h=(r/'templates/index.html').read_text(); pg=(r/'schema_postgres.sql').read_text(); sq=(r/'schema.sql').read_text()
+a=(r/'app.py').read_text(); j=(r/'static/app.js').read_text(); sw=(r/'static/sw.js').read_text(); h=(r/'templates/index.html').read_text(); pg=(r/'schema_postgres.sql').read_text(); sq=(r/'schema.sql').read_text(); w=(r/'wsgi.py').read_text() if (r/'wsgi.py').exists() else ''; q=(r/'static/qr-local.js').read_text() if (r/'static/qr-local.js').exists() else ''; proc=(r/'Procfile').read_text()
 checks={
 'latest_migration_27':"record_migration(conn, 27, 'offline_pos_safe_sync')" in a,
 'round18_existing_db_fix':'information_schema.columns' in a and 'idx_tenants_subscription' not in pg,
@@ -21,6 +21,7 @@ checks={
 'tenant_scoped_order_lookup':"WHERE id=? AND tenant_id=?" in a,
 'menu_sidebar':'menu-category-sidebar' in h and 'selectedMenuCategoryId' in j,
 'qr_primary_nav':'data-tab="tables" class="nav-primary"' in h,
+'qr_local_render':all(x in q for x in ['zaabosQrDataUrl','data:image/svg+xml','global.qrImgUrl']) and '/static/qr-local.js?v=1' in w and 'gunicorn wsgi:app' in proc,
 'format_datetime_defined':'function formatDateTime(value)' in j,
 'no_currentUser':'currentUser' not in j,
 'offline_indexeddb':'indexedDB.open(ZAABOS_OFFLINE_DB' in j,
