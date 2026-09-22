@@ -298,6 +298,13 @@ def ensure_default_tenant(conn):
             conn.rollback()
     else:
         conn.commit()
+    # A fresh install must be usable immediately: menu, tables and POS all need a branch.
+    # Only the very first tenant of a brand-new database is touched, and only if it has no branch at all.
+    first=conn.execute('SELECT id,name FROM tenants ORDER BY id LIMIT 1').fetchone()
+    if first and not conn.execute('SELECT 1 FROM branches WHERE tenant_id=? LIMIT 1',(first['id'],)).fetchone() \
+       and conn.execute('SELECT COUNT(*) AS c FROM tenants').fetchone()['c']==1:
+        conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',(first['id'],'สาขาหลัก','🏠',now()))
+        conn.commit()
 
 def ensure_super_admin(conn):
     """Bootstrap the first platform admin without a shared default password.
