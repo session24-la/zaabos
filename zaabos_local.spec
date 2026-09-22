@@ -1,8 +1,10 @@
 # PyInstaller build for ZaabOS Local (the shop-PC POS).
 #   pyinstaller zaabos_local.spec      -> dist/ZaabOS/ (Windows: ZaabOS.exe) or dist/ZaabOS.app (macOS)
 import sys
+from PyInstaller.utils.hooks import collect_data_files
 datas = [('templates', 'templates'), ('static', 'static'), ('schema.sql', '.'), ('schema_postgres.sql', '.')]
-hidden = ['wsgi', 'customer_history', 'table_open_bill', 'waitress']
+datas += collect_data_files('tzdata')   # Windows has no system timezone database
+hidden = ['wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata']
 icon = 'static/zaabos-icon-512.png'
 
 a = Analysis(['zaabos_local.py'], pathex=['.'], datas=datas, hiddenimports=hidden,
