@@ -109,6 +109,17 @@ def main():
     legacy_state=conn.execute('SELECT status,total_amount FROM orders WHERE id=?',(legacy,)).fetchone()
     check('merged_duplicate_cancelled_zero', legacy_state['status']=='cancelled' and float(legacy_state['total_amount'])==0)
 
+    # If the old kitchen round was already served, a new QR round must reactivate
+    # the parent order so KDS (which excludes served orders) can show new items.
+    conn.execute("UPDATE orders SET status='served',updated_at=? WHERE id=?",(core.now(),one['order_id']))
+    conn.commit(); conn.close()
+    reactivate=client.post('/api/public/orders',json=payload(b,t1_token,item,s2,1))
+    check('served_bill_accepts_new_round', reactivate.status_code==200 and (reactivate.get_json() or {}).get('appended') is True)
+    conn=sqlite3.connect(core.DB)
+    status=conn.execute('SELECT status FROM orders WHERE id=?',(one['order_id'],)).fetchone()['status']
+    latest_item=conn.execute('SELECT kitchen_sent_at FROM order_items WHERE order_id=? ORDER BY id DESC LIMIT 1',(one['order_id'],)).fetchone()
+    check('new_round_reactivates_kds', status=='received' and latest_item['kitchen_sent_at'] is None)
+
     # An explicit staff split remains separate and is not auto-merged.
     split_no='SPL-'+uuid.uuid4().hex[:12]
     split=conn.execute('''INSERT INTO orders(tenant_id,branch_id,order_no,order_type,table_id,table_name_snapshot,
@@ -125,14 +136,16 @@ def main():
     split_state=conn.execute('SELECT status FROM orders WHERE id=?',(split,)).fetchone()['status']
     check('split_bill_still_open', split_state!='cancelled')
 
-    # Closing the normal table bill ends that seating session; next QR order
-    # starts a fresh bill instead of reviving the paid one.
-    conn.execute("UPDATE orders SET payment_status='paid',status='completed',paid_at=?,updated_at=? WHERE id=?",
-                 (core.now(),core.now(),one['order_id']))
+    # A seating session ends only after every bill intentionally left on that
+    # table (normal + explicit splits) is closed. Then the same physical QR must
+    # start a fresh bill, never revive a paid order.
+    ts=core.now()
+    conn.execute("UPDATE orders SET payment_status='paid',status='completed',paid_at=?,updated_at=? WHERE id IN (?,?)",
+                 (ts,ts,one['order_id'],split))
     conn.commit(); conn.close()
     new_session=client.post('/api/public/orders',json=payload(b,t1_token,item,'pub-'+uuid.uuid4().hex+uuid.uuid4().hex,1))
     fresh=new_session.get_json() or {}
-    check('paid_table_starts_fresh_bill', new_session.status_code==200 and fresh.get('order_id')!=one.get('order_id'))
+    check('closed_table_starts_fresh_bill', new_session.status_code==200 and fresh.get('order_id') not in (one.get('order_id'),split))
 
     print('ROUND31_TABLE_OPEN_BILL_PASS')
 
