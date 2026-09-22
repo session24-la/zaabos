@@ -30,10 +30,10 @@ def main():
                        (tenant, 'History Test ' + stamp, now))
     branch_id = cur.lastrowid
     table_token = 'hist-' + uuid.uuid4().hex
-    conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,active) VALUES(?,?,?,?,1)',
-                 (tenant, branch_id, 'T-HISTORY', table_token))
-    cur = conn.execute('INSERT INTO menu_categories(tenant_id,branch_id,name,icon,active,sort_order) VALUES(?,?,?,?,1,0)',
-                       (tenant, branch_id, 'Food', '🍜'))
+    conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,active,created_at) VALUES(?,?,?,?,1,?)',
+                 (tenant, branch_id, 'T-HISTORY', table_token, now))
+    cur = conn.execute('INSERT INTO menu_categories(tenant_id,branch_id,name,icon,active,sort_order,created_at) VALUES(?,?,?,?,1,0,?)',
+                       (tenant, branch_id, 'Food', '🍜', now))
     cat_id = cur.lastrowid
     cur = conn.execute('''INSERT INTO menu_items(tenant_id,branch_id,category_id,name,description,base_price,active,sold_out,sort_order,
                         cost_price,track_stock,low_stock_threshold,created_at) VALUES(?,?,?,?,?,?,1,0,0,0,0,5,?)''',
