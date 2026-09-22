@@ -8,7 +8,7 @@ checks={
 'admin_create':"@app.post('/api/admin/backups')" in s,
 'admin_download':"/api/admin/backups/<path:filename>/download" in s,
 'no_http_restore':"@app.post('/api/admin/restore" not in s,
-'restore_separate_db':"RESTORE_TEST_DATABASE_URL" in r and "test==prod" in r,
+'restore_separate_db':"RESTORE_TEST_DATABASE_URL" in r and "test == prod" in r and "same_database(prod_fp, target_fp)" in r,
 'restore_core_checks':all(x in r for x in ('tenants','users','orders','payments','schema_migrations')),
 'operator_backup':"pg_dump" in b and "sha256" in b,
 'readiness':"pg_dump_available" in s and "backup_artifacts" in s,

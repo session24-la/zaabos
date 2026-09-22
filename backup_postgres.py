@@ -16,7 +16,7 @@ import hashlib
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, unquote
 
 CORE_TABLES = ('tenants', 'users', 'branches', 'menu_items', 'orders',
                'order_items', 'payments', 'schema_migrations')
@@ -99,11 +99,19 @@ def main():
 
     # The DSN goes through the environment, not argv, so it never shows up in a
     # process listing on a shared host.
+    u = urlsplit(dsn)
     env = dict(os.environ)
+    env.update({
+        'PGHOST': u.hostname or '',
+        'PGPORT': str(u.port or 5432),
+        'PGUSER': unquote(u.username or ''),
+        'PGPASSWORD': unquote(u.password or ''),
+        'PGDATABASE': (u.path or '/').lstrip('/'),
+    })
     r = subprocess.run(
         [pg_dump, '--format=custom', '--no-owner', '--no-acl',
-         '--file', str(dump_path), dsn],
-        capture_output=True, text=True, env=env)
+         '--file', str(dump_path)],
+        capture_output=True, text=True, errors='replace', env=env)
     def discard_partial():
         # Never leave a half-written or empty .dump lying around: a later drill
         # could pick it up and fail for the wrong reason.
