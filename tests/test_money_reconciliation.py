@@ -323,3 +323,43 @@ def test_payment_retry_after_lost_response_is_not_an_error(shop):
     code, body = pay(shop, oid, payment_method='qr', client_request_id=key)
     assert code == 200 and body.get('idempotent'), body
     assert_ledger(shop)
+
+
+FRESH_SCRIPT = r'''
+import app as core, wsgi, json
+c = core.app.test_client()
+with core.app.app_context():
+    db = core.db()
+    counts = {t: db.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"] for t in ("branches", "dining_tables", "menu_categories", "menu_items")}
+    admin = db.execute("SELECT id FROM users WHERE role='super_admin'").fetchone()["id"]
+    tenant = db.execute("SELECT id FROM tenants ORDER BY id LIMIT 1").fetchone()["id"]
+    branch = db.execute("SELECT id FROM branches ORDER BY id LIMIT 1").fetchone()["id"]
+    table = db.execute("SELECT id FROM dining_tables ORDER BY id LIMIT 1").fetchone()["id"]
+    item = db.execute("SELECT id,base_price FROM menu_items ORDER BY id LIMIT 1").fetchone()
+with c.session_transaction() as s:
+    s.update(user_id=admin, active_tenant_id=tenant, csrf_token="x")
+H = {"X-CSRF-Token": "x"}
+o = c.post("/api/orders", json={"branch_id": branch, "order_type": "dine_in", "table_id": table,
+           "cart": [{"menu_item_id": item["id"], "quantity": 2}]}, headers=H).get_json()
+c.post("/api/operations/shift/open", json={"branch_id": branch, "opening_cash": 0}, headers=H)
+p = c.put(f"/api/orders/{o['order_id']}/payment", json={"payment_status": "paid", "payment_method": "cash"}, headers=H).get_json()
+r = c.get(f"/api/reports/summary?branch_id={branch}", headers=H).get_json()
+sh = c.get(f"/api/operations/shift?branch_id={branch}", headers=H).get_json()
+print("RESULT" + json.dumps(dict(counts=counts, due=item["base_price"] * 2, paid=p.get("amount"),
+      report=r.get("total_sales"), shift_cash=sh["summary"]["expected_cash"])))
+'''
+
+
+def test_fresh_install_is_ready_to_sell(tmp_path):
+    """Brand-new database: branch, 6 tables and a sample menu exist; the very first sale
+    reaches both the daily report and the shift."""
+    import json, shutil, subprocess, os
+    dest = tmp_path / 'app'
+    shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns('.git', '*.db', '.secret_key', '__pycache__', '.pytest_cache', 'backups'))
+    env = dict(os.environ, ZAABOS_ADMIN_PASSWORD='local-test-password-only')
+    env.pop('DATABASE_URL', None)
+    out = subprocess.run([sys.executable, '-c', FRESH_SCRIPT], cwd=dest, env=env, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    res = json.loads(out.stdout.split('RESULT', 1)[1])
+    assert res['counts'] == {'branches': 1, 'dining_tables': 6, 'menu_categories': 3, 'menu_items': 10}
+    assert res['paid'] == res['due'] == res['report'] == res['shift_cash'] == 70000

@@ -303,8 +303,35 @@ def ensure_default_tenant(conn):
     first=conn.execute('SELECT id,name FROM tenants ORDER BY id LIMIT 1').fetchone()
     if first and not conn.execute('SELECT 1 FROM branches WHERE tenant_id=? LIMIT 1',(first['id'],)).fetchone() \
        and conn.execute('SELECT COUNT(*) AS c FROM tenants').fetchone()['c']==1:
-        conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',(first['id'],'สาขาหลัก','🏠',now()))
+        bcur=conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',(first['id'],'สาขาหลัก','🏠',now()))
+        _seed_sample_shop(conn,first['id'],bcur.lastrowid)
         conn.commit()
+
+SAMPLE_MENU=(
+    ('อาหารจานหลัก','🍛',(('ผัดไทย',35000),('ข้าวผัดหมู',30000),('ลาบหมู',40000),('ไก่ย่าง',45000))),
+    ('ส้มตำ & ของทานเล่น','🥗',(('ตำหมากหุ่ง',25000),('ข้าวเหนียว',5000),('เฝอ',35000))),
+    ('เครื่องดื่ม','🥤',(('น้ำเปล่า',5000),('เบียร์ลาว',15000),('โค้ก',10000))),
+)
+
+def _seed_sample_shop(conn, tenant_id, branch_id):
+    """Brand-new install only: 6 tables and a small sample menu so a first-time user can tap
+    around immediately. Everything is ordinary data and can be edited or deleted."""
+    ts=now()
+    if branch_id is None:
+        row=conn.execute('SELECT id FROM branches WHERE tenant_id=? ORDER BY id LIMIT 1',(tenant_id,)).fetchone()
+        branch_id=row['id'] if row else None
+    if branch_id is None: return
+    for i in range(1,7):
+        conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,created_at) VALUES(?,?,?,?,?)',
+                     (tenant_id,branch_id,f'โต๊ะ {i}',gen_qr_token(),ts))
+    for sort,(cat,icon,items) in enumerate(SAMPLE_MENU):
+        cid=conn.execute('INSERT INTO menu_categories(tenant_id,branch_id,name,icon,sort_order,created_at) VALUES(?,?,?,?,?,?)',
+                         (tenant_id,branch_id,cat,icon,sort,ts)).lastrowid
+        if cid is None:
+            cid=conn.execute('SELECT id FROM menu_categories WHERE tenant_id=? AND branch_id=? AND name=? ORDER BY id DESC LIMIT 1',(tenant_id,branch_id,cat)).fetchone()['id']
+        for isort,(name,price) in enumerate(items):
+            conn.execute('INSERT INTO menu_items(tenant_id,branch_id,category_id,name,description,base_price,sort_order,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                         (tenant_id,branch_id,cid,name,'ตัวอย่าง — แก้ไขหรือลบได้',price,isort,ts))
 
 def ensure_super_admin(conn):
     """Bootstrap the first platform admin without a shared default password.
