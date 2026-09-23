@@ -51,8 +51,8 @@ async function queueOfflineOrder(payload){
 }
 async function renderOfflineQueue(){
   const box=$('#offlineQueuePanel');if(!box)return;const rows=(await offlineAll('outbox')).sort((a,b)=>a.created_at-b.created_at);offlineOutboxRows=rows;
-  box.classList.toggle('hidden',!rows.length);$('#offlineQueueSummary').textContent=`${rows.length} รายการ`;
-  $('#offlineQueueList').innerHTML=rows.map(x=>`<div class="offline-queue-row"><span>${x.payload.order_type==='dine_in'?'โต๊ะ '+escapeHtml((boot.tables.find(t=>t.id===x.payload.table_id)||{}).name||''):escapeHtml(orderTypeLabel(x.payload.order_type))}</span><b>${x.status==='conflict'?'ต้องตรวจสอบ':'รอส่ง'}</b>${x.last_error?`<small>${escapeHtml(x.last_error)}</small>`:''}<div class="offline-queue-actions">${x.status==='conflict'?`<button class="ghost-btn" data-offline-retry="${x.client_request_id}">ลองใหม่</button>`:''}<button class="ghost-btn danger" data-offline-remove="${x.client_request_id}">ลบคิว</button></div></div>`).join('');
+  box.classList.toggle('hidden',!rows.length);$('#offlineQueueSummary').textContent=t('offline_queue_count').replace('{n}', rows.length);
+  $('#offlineQueueList').innerHTML=rows.map(x=>`<div class="offline-queue-row"><span>${x.payload.order_type==='dine_in'?t('offline_table_prefix')+' '+escapeHtml((boot.tables.find(t=>t.id===x.payload.table_id)||{}).name||''):escapeHtml(orderTypeLabel(x.payload.order_type))}</span><b>${x.status==='conflict'?t('offline_conflict'):t('offline_pending')}</b>${x.last_error?`<small>${escapeHtml(x.last_error)}</small>`:''}<div class="offline-queue-actions">${x.status==='conflict'?`<button class="ghost-btn" data-offline-retry="${x.client_request_id}">${t('offline_retry')}</button>`:''}<button class="ghost-btn danger" data-offline-remove="${x.client_request_id}">${t('offline_remove')}</button></div></div>`).join('');
   if(typeof renderTableBoard==='function'){renderTableBoard();renderOtherOrders();}
 }
 async function syncOfflineOrders(){
@@ -131,8 +131,8 @@ async function api(url, opts) {
   let r;
   try { r = await fetch(url, opts); }
   catch (e) {
-    if (!silent) toast('การเชื่อมต่อขัดข้อง กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองอีกครั้ง','err');
-    const err=new Error('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้'); err.status=0; err.transient=true; throw err;
+    if (!silent) toast(t('err_network_check'),'err');
+    const err=new Error(t('err_server_unreachable')); err.status=0; err.transient=true; throw err;
   }
   let body = null;
   try { body = await r.json(); } catch (e) { /* no body */ }
@@ -149,7 +149,7 @@ async function api(url, opts) {
     const err=new Error((body && body.error) || t('err_please_login')); err.status=401; err.transient=false; throw err;
   }
   if (!r.ok) {
-    const fallback = r.status >= 500 ? 'ระบบบันทึกข้อมูลขัดข้อง กรุณาลองอีกครั้ง' : t('err_generic');
+    const fallback = r.status >= 500 ? t('err_save_server') : t('err_generic');
     const err=new Error((body && body.error) || fallback); err.status=r.status; err.code=body&&body.code; err.transient=(r.status>=500||r.status===408||r.status===429); throw err;
   }
   return body;
