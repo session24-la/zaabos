@@ -83,10 +83,10 @@ function showError(msg) {
 function showMenu() {
   $('#loadingView').classList.add('hidden');
   $('#menuView').classList.remove('hidden');
-  $('#ohIcon').textContent = menuData.tenant.icon || '🍽️';
+  $('#ohIcon').innerHTML = iconHtml(menuData.tenant.icon, 'utensils');
   $('#ohName').textContent = menuData.tenant.name;
   if (menuData.table) {
-    $('#ohTable').textContent = '📍 ' + menuData.table.name;
+    $('#ohTable').textContent = ''+ menuData.table.name;
     $('#ohTable').classList.remove('hidden');
   }
   renderCategoryTiles();
@@ -124,11 +124,11 @@ function renderCategoryTiles() {
   const counts = {};
   menuData.items.forEach(it => { counts[it.category_id] = (counts[it.category_id] || 0) + 1; });
   const allTile = `<div class="category-tile ct-all" data-cat-tile="">
-    <span class="ct-icon">🍽️</span><div class="ct-name">${escapeHtml(t('cat_view_all_tile'))}</div>
+    <span class="ct-icon"><i class="ic ic-utensils" aria-hidden="true"></i></span><div class="ct-name">${escapeHtml(t('cat_view_all_tile'))}</div>
     <div class="ct-count">${escapeHtml(t('cat_items_count', { n: menuData.items.length }))}</div>
   </div>`;
   const catTiles = menuData.categories.map(c => `<div class="category-tile" data-cat-tile="${c.id}">
-    <span class="ct-icon">${escapeHtml(c.icon || '🍜')}</span><div class="ct-name">${escapeHtml(c.name)}</div>
+    <span class="ct-icon">${iconHtml(c.icon,'soup')}</span><div class="ct-name">${escapeHtml(c.name)}</div>
     <div class="ct-count">${escapeHtml(t('cat_items_count', { n: counts[c.id] || 0 }))}</div>
   </div>`).join('');
   el.innerHTML = allTile + catTiles;
@@ -146,7 +146,7 @@ let activeCat = null;
 function renderCategories() {
   const el = $('#catScroll');
   el.innerHTML = `<button class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` +
-    menuData.categories.map(c => `<button class="cat-chip" data-cat="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</button>`).join('');
+    menuData.categories.map(c => `<button class="cat-chip" data-cat="${c.id}">${iconHtml(c.icon)} ${escapeHtml(c.name)}</button>`).join('');
   $$('#catScroll .cat-chip').forEach(b => b.classList.toggle('active', (b.dataset.cat || null) === activeCat));
 }
 $('#catScroll').addEventListener('click', (e) => {
@@ -162,7 +162,7 @@ function renderMenuGrid() {
   let items = menuData.items;
   if (activeCat) items = items.filter(i => String(i.category_id) === String(activeCat));
   const grid = $('#menuGrid');
-  if (!items.length) { grid.innerHTML = `<div class="empty-state"><span class="es-ic">📋</span>${escapeHtml(t('empty_menu_category'))}</div>`; return; }
+  if (!items.length) { grid.innerHTML = `<div class="empty-state"><span class="es-ic"><i class="ic ic-clipboard-list" aria-hidden="true"></i></span>${escapeHtml(t('empty_menu_category'))}</div>`; return; }
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
@@ -267,7 +267,7 @@ function renderCartLines() {
   el.innerHTML = cart.map((c, idx) => `
     <div class="cart-line">
       <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
-      <div style="text-align:right"><div class="cl-price">${fmtMoney(c.unit_price * c.qty)}</div><button class="icon-btn danger" data-remove="${idx}">✕</button></div>
+      <div style="text-align:right"><div class="cl-price">${fmtMoney(c.unit_price * c.qty)}</div><button class="icon-btn danger" data-remove="${idx}"><i class="ic ic-x" aria-hidden="true"></i></button></div>
     </div>`).join('');
   $('#cartTotal').textContent = fmtMoney(cartTotal());
 }

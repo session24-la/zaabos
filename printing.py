@@ -265,14 +265,57 @@ def send(host, port, data, timeout=6):
 SYSTEM_WAIT_SECONDS = 15
 
 
+def _win32print():
+    try:
+        import win32print   # pywin32, bundled in the Windows build only
+        return win32print
+    except ImportError:
+        return None
+
+
 def system_queues():
-    """Print queues this computer knows (macOS/Linux CUPS). Empty where CUPS is unavailable."""
+    """Print queues this computer knows: Windows printers, or CUPS queues on macOS/Linux."""
+    if sys.platform.startswith('win'):
+        wp = _win32print()
+        if not wp:
+            return []
+        flags = wp.PRINTER_ENUM_LOCAL | wp.PRINTER_ENUM_CONNECTIONS
+        return [p[2] for p in wp.EnumPrinters(flags, None, 1)]
     import subprocess
     try:
         out = subprocess.run(['lpstat', '-e'], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     return [q.strip() for q in out.splitlines() if q.strip()]
+
+
+def _send_windows(queue, data, wait):
+    """Raw ESC/POS through the Windows spooler (USB receipt printers). Same rule as CUPS: if the
+    printer has not taken the job in time, delete it so it can never print by surprise later."""
+    wp = _win32print()
+    if not wp:
+        raise OSError('ไม่มีระบบพิมพ์ของ Windows (pywin32)')
+    h = wp.OpenPrinter(queue)
+    try:
+        job = wp.StartDocPrinter(h, 1, ('ZaabOS', None, 'RAW'))
+        try:
+            wp.StartPagePrinter(h)
+            wp.WritePrinter(h, data)
+            wp.EndPagePrinter(h)
+        finally:
+            wp.EndDocPrinter(h)
+        end = time.time() + wait
+        while time.time() < end:
+            if not any(j['JobId'] == job for j in wp.EnumJobs(h, 0, 50, 1)):
+                return
+            time.sleep(0.15)
+        try:
+            wp.SetJob(h, job, 0, None, wp.JOB_CONTROL_DELETE)
+        except Exception:
+            pass
+        raise OSError('เครื่องพิมพ์ USB ไม่ตอบ (ตรวจสาย/เปิดเครื่อง/กระดาษ)')
+    finally:
+        wp.ClosePrinter(h)
 
 
 def send_system(queue, data, wait=None):
@@ -282,6 +325,8 @@ def send_system(queue, data, wait=None):
     import re
     import subprocess
     wait = SYSTEM_WAIT_SECONDS if wait is None else wait
+    if sys.platform.startswith('win'):
+        return _send_windows(queue, data, wait)
     r = subprocess.run(['lp', '-d', queue, '-o', 'raw', '-t', 'ZaabOS'], input=data, capture_output=True, timeout=15)
     if r.returncode != 0:
         raise OSError((r.stderr or r.stdout).decode(errors='replace').strip() or 'lp failed')
@@ -303,6 +348,8 @@ def system_printers():
     """[{queue, label}] for this computer's print queues, with the human name macOS shows."""
     import subprocess
     queues = system_queues()
+    if sys.platform.startswith('win'):
+        return [{'queue': q, 'label': q} for q in queues]
     labels = {}
     try:
         out = subprocess.run(['lpstat', '-l', '-p'], capture_output=True, text=True, timeout=5).stdout

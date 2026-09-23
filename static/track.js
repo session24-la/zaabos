@@ -55,7 +55,7 @@ function renderResult(order) {
     const currentIdx = STATUS_STEPS.indexOf(order.status);
     stepsHtml = `<div class="status-track">` + STATUS_STEPS.map((s, i) => {
       const cls = i < currentIdx ? 'done' : i === currentIdx ? 'current' : '';
-      return `<div class="st-step ${cls}"><div class="st-dot">${i < currentIdx ? '✓' : ''}</div><div class="st-label">${escapeHtml(t('status_' + s))}</div></div>`;
+      return `<div class="st-step ${cls}"><div class="st-dot">${i < currentIdx ? '<i class="ic ic-check" aria-hidden="true"></i>' : ''}</div><div class="st-label">${escapeHtml(t('status_' + s))}</div></div>`;
     }).join('') + `</div>`;
   }
   const itemsHtml = order.items.map(it => `<li><b>${it.quantity}×</b> ${escapeHtml(it.item_name_snapshot)}${it.options.length ? ` <span class="hint">(${it.options.map(o => escapeHtml(o.option_name_snapshot)).join(', ')})</span>` : ''}</li>`).join('');

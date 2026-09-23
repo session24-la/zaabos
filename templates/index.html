@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=29.0">
+<link rel="stylesheet" href="/static/style.css?v=30.0"><link rel="stylesheet" href="/static/icons.css?v=1">
 <meta name="theme-color" content="#17151d"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ZaabOS"><meta name="mobile-web-app-capable" content="yes">
 </head><body><button id="printFailBanner" class="print-fail-banner hidden" type="button"></button><div id="networkBanner" class="network-banner hidden" role="status"><span class="network-dot"></span><span id="networkBannerText">ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้</span></div>
 
@@ -29,7 +29,7 @@
   <div class="head-right">
     <select id="langSelect" class="lang-select"></select>
     <select id="tenantSwitcher" class="hidden"></select>
-    <div class="header-branch" id="branchScopeBar"><span class="header-branch-icon">🏠</span><select id="branchSelect" aria-label="Branch"></select></div>
+    <div class="header-branch" id="branchScopeBar"><span class="header-branch-icon"><i class="ic ic-house" aria-hidden="true"></i></span><select id="branchSelect" aria-label="Branch"></select></div>
     <div class="who-wrap">
       <button class="who" id="whoBtn" type="button">
         <span class="avatar" id="whoAvatar">?</span>
@@ -37,9 +37,9 @@
         <span class="who-caret">▾</span>
       </button>
       <div class="who-menu hidden" id="whoMenu">
-        <button id="changePwBtn" type="button" data-i18n="menu_change_password">🔒 เปลี่ยนรหัสผ่าน</button>
-        <button id="changeUsernameBtn" type="button" data-i18n="menu_change_username">👤 เปลี่ยนชื่อผู้ใช้</button>
-        <button id="logoutBtn" type="button" data-i18n="menu_logout">🚪 ออกจากระบบ</button>
+        <button id="changePwBtn" type="button" data-i18n="menu_change_password"><i class="ic ic-lock" aria-hidden="true"></i> เปลี่ยนรหัสผ่าน</button>
+        <button id="changeUsernameBtn" type="button" data-i18n="menu_change_username"><i class="ic ic-user" aria-hidden="true"></i> เปลี่ยนชื่อผู้ใช้</button>
+        <button id="logoutBtn" type="button" data-i18n="menu_logout"><i class="ic ic-log-out" aria-hidden="true"></i> ออกจากระบบ</button>
       </div>
     </div>
   </div>
@@ -47,24 +47,24 @@
 
 <main>
   <nav class="tabs pos-nav" id="mainTabs" aria-label="Main navigation">
-    <button data-tab="orders" class="active nav-primary"><span class="tab-ic">⌂</span><span class="tab-lb" data-i18n="tab_pos">POS</span></button>
-    <button data-tab="menu" class="nav-primary"><span class="tab-ic">📋</span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button data-tab="orders" class="active nav-primary"><span class="tab-ic"><i class="ic ic-house" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_pos">POS</span></button>
+    <button data-tab="menu" class="nav-primary"><span class="tab-ic"><i class="ic ic-clipboard-list" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
     <button data-tab="tables" class="nav-primary"><span class="tab-ic">▦</span><span class="tab-lb">โต๊ะ &amp; QR</span></button>
-    <button data-tab="history" class="nav-primary"><span class="tab-ic">🕘</span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
-    <button data-tab="reports" class="nav-primary nav-secondary"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
-    <button data-tab="inventory" class="nav-primary nav-secondary"><span class="tab-ic">📦</span><span class="tab-lb">วัตถุดิบ</span></button>
-    <button data-tab="operations" class="nav-primary nav-secondary"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
+    <button data-tab="history" class="nav-primary"><span class="tab-ic"><i class="ic ic-history" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
+    <button data-tab="reports" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-chart-column" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
+    <button data-tab="inventory" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-package" aria-hidden="true"></i></span><span class="tab-lb">วัตถุดิบ</span></button>
+    <button data-tab="operations" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-banknote" aria-hidden="true"></i></span><span class="tab-lb">กะ &amp; เงินสด</span></button>
     <div class="nav-more-wrap">
-      <button id="moreNavBtn" class="nav-primary nav-more-btn" type="button" aria-expanded="false"><span class="tab-ic">☰</span><span class="tab-lb" data-i18n="tab_more">เพิ่มเติม</span></button>
+      <button id="moreNavBtn" class="nav-primary nav-more-btn" type="button" aria-expanded="false"><span class="tab-ic"><i class="ic ic-menu" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_more">เพิ่มเติม</span></button>
       <div class="nav-more-menu hidden" id="moreNavMenu">
-        <button data-tab="reports" class="mobile-more-only"><span class="tab-ic">📊</span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
-        <button data-tab="operations" class="mobile-more-only"><span class="tab-ic">💵</span><span class="tab-lb">กะ &amp; เงินสด</span></button>
-        <button data-tab="pricing"><span class="tab-ic">🏷️</span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
-        <button data-tab="receiptsettings"><span class="tab-ic">🧾</span><span class="tab-lb">ตั้งค่าร้าน &amp; ใบเสร็จ</span></button>
-          <button data-tab="inventory" class="more-item mobile-more-only"><span>📦</span><span>วัตถุดิบ & สูตร</span></button>
-        <button data-tab="branches"><span class="tab-ic">🏠</span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
-        <button data-tab="users"><span class="tab-ic">👥</span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
-        <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic">🏢</span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
+        <button data-tab="reports" class="mobile-more-only"><span class="tab-ic"><i class="ic ic-chart-column" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
+        <button data-tab="operations" class="mobile-more-only"><span class="tab-ic"><i class="ic ic-banknote" aria-hidden="true"></i></span><span class="tab-lb">กะ &amp; เงินสด</span></button>
+        <button data-tab="pricing"><span class="tab-ic"><i class="ic ic-tag" aria-hidden="true"></i></span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
+        <button data-tab="receiptsettings"><span class="tab-ic"><i class="ic ic-receipt" aria-hidden="true"></i></span><span class="tab-lb">ตั้งค่าร้าน &amp; ใบเสร็จ</span></button>
+          <button data-tab="inventory" class="more-item mobile-more-only"><span><i class="ic ic-package" aria-hidden="true"></i></span><span>วัตถุดิบ & สูตร</span></button>
+        <button data-tab="branches"><span class="tab-ic"><i class="ic ic-house" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
+        <button data-tab="users"><span class="tab-ic"><i class="ic ic-users" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
+        <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic"><i class="ic ic-building-2" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
       </div>
     </div>
   </nav>
@@ -75,8 +75,8 @@
       <div class="panel-head">
         <div><span class="eyebrow" data-i18n="pos_workspace">หน้าร้าน</span><h2 data-i18n="board_title">ผังโต๊ะ</h2></div>
         <div class="head-actions">
-          <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order">➕ รับออเดอร์ลูกค้า</button>
-          <button class="ghost-btn" id="refreshPosBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
+          <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order"><i class="ic ic-plus" aria-hidden="true"></i> รับออเดอร์ลูกค้า</button>
+          <button class="ghost-btn" id="refreshPosBtn" data-i18n="btn_refresh"><i class="ic ic-refresh-cw" aria-hidden="true"></i> รีเฟรช</button>
         </div>
       </div>
       <div id="offlineQueuePanel" class="offline-queue-panel hidden">
@@ -123,10 +123,10 @@
             <option value="completed" data-i18n="status_completed">เสร็จสิ้น</option>
             <option value="cancelled" data-i18n="status_cancelled">ยกเลิก</option>
           </select>
-          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh">🔄 รีเฟรช</button>
+          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh"><i class="ic ic-refresh-cw" aria-hidden="true"></i> รีเฟรช</button>
         </div>
       </div>
-      <div class="history-workspace-switch" id="historyWorkspaceSwitch"><button type="button" class="active" data-history-view="orders">🧾 ออเดอร์</button><button type="button" data-history-view="kitchen">👨‍🍳 ครัว <span id="historyKitchenCount" class="mini-count">0</span></button></div>
+      <div class="history-workspace-switch" id="historyWorkspaceSwitch"><button type="button" class="active" data-history-view="orders"><i class="ic ic-receipt" aria-hidden="true"></i> ออเดอร์</button><button type="button" data-history-view="kitchen"><i class="ic ic-chef-hat" aria-hidden="true"></i> ครัว <span id="historyKitchenCount" class="mini-count">0</span></button></div>
       <div id="ordersList"></div>
       <div id="historyKitchenWorkspace" class="history-kitchen-workspace hidden"><div class="history-kitchen-toolbar"><div><b>จอครัวในหน้าประวัติ</b><span>กดติดตามได้ตามต้องการ · ไม่กดก็ไม่กระทบการจ่ายเงิน สต็อก หรือรายงาน</span></div><select id="historyKitchenStation"><option value="">ทุกสถานี</option></select></div><div id="historyKitchenBoard" class="history-kitchen-board"></div></div>
     </div>
@@ -138,9 +138,9 @@
       <div class="panel-head">
         <h2 data-i18n="tables_title">โต๊ะในสาขานี้</h2>
         <div class="head-actions">
-          <button class="ghost-btn" id="qrOverviewBtn" type="button" data-i18n="btn_qr_all_tables">📱 QR โต๊ะทั้งหมด</button>
-          <button class="ghost-btn" id="bulkAddTablesBtn" data-i18n="btn_bulk_add_tables">🔢 สร้างหลายโต๊ะ</button>
-          <button class="ghost-btn primary" id="addTableBtn" data-i18n="btn_add_table">➕ เพิ่มโต๊ะ</button>
+          <button class="ghost-btn" id="qrOverviewBtn" type="button" data-i18n="btn_qr_all_tables"><i class="ic ic-smartphone" aria-hidden="true"></i> QR โต๊ะทั้งหมด</button>
+          <button class="ghost-btn" id="bulkAddTablesBtn" data-i18n="btn_bulk_add_tables"><i class="ic ic-hash" aria-hidden="true"></i> สร้างหลายโต๊ะ</button>
+          <button class="ghost-btn primary" id="addTableBtn" data-i18n="btn_add_table"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มโต๊ะ</button>
         </div>
       </div>
       <div class="table-grid" id="tableGrid"></div>
@@ -160,7 +160,7 @@
       <section class="menu-items-workspace panel">
         <div class="panel-head menu-workspace-head">
           <div><div class="section-kicker">รายการอาหาร</div><h2 id="menuWorkspaceTitle">เมนูทั้งหมด</h2><div class="muted" id="menuWorkspaceCount"></div></div>
-          <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item">➕ เพิ่มเมนู</button>
+          <button class="ghost-btn primary" id="addMenuItemBtn" data-i18n="btn_add_menu_item"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มเมนู</button>
         </div>
         <div class="menu-grid menu-manager-grid" id="menuItemsGrid"></div>
       </section>
@@ -206,7 +206,7 @@
     <div class="panel">
       <div class="panel-head">
         <div><h2>รายจ่าย</h2><div class="muted">ค่าใช้จ่ายที่บันทึกไว้ในช่วงรายงาน</div></div>
-        <button class="ghost-btn primary" id="addExpenseBtn">➕ เพิ่มรายจ่าย</button>
+        <button class="ghost-btn primary" id="addExpenseBtn"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มรายจ่าย</button>
       </div>
       <div id="expensesList"></div>
     </div>
@@ -216,7 +216,7 @@
     <div class="panel inventory-workspace">
       <div class="panel-head"><div><h2>วัตถุดิบ & สูตร</h2><div class="muted">สต็อกวัตถุดิบจะหักอัตโนมัติตามสูตรเมื่อขายเมนู</div></div><button class="ghost-btn primary" id="addIngredientBtn">+ วัตถุดิบ</button></div>
       <div id="inventorySummary" class="inventory-summary"></div>
-      <div class="inventory-toolbar"><button class="ghost-btn" id="manageStationsBtn">👨‍🍳 สถานีครัว</button><button class="ghost-btn" id="inventoryHistoryBtn">📜 ประวัติสต็อก</button></div>
+      <div class="inventory-toolbar"><button class="ghost-btn" id="manageStationsBtn"><i class="ic ic-chef-hat" aria-hidden="true"></i> สถานีครัว</button><button class="ghost-btn" id="inventoryHistoryBtn"><i class="ic ic-scroll-text" aria-hidden="true"></i> ประวัติสต็อก</button></div>
       <div id="ingredientsList"></div><div id="inventoryHistory" class="hidden"></div>
     </div>
   </section>
@@ -305,33 +305,33 @@
           <label><input id="rsShowPaidTime" type="checkbox"><span><b>เวลาชำระ</b><small>แสดงเวลาปิดบิล</small></span></label>
         </div></div>
         <div class="settings-section printer-routing-section"><h3>เส้นทางเครื่องพิมพ์</h3><div class="muted printer-help">แยกงานพิมพ์หน้าร้านกับห้องครัวคนละช่องทาง เพื่อรองรับเครื่องพิมพ์ 2 เครื่อง</div><div class="printer-route-grid">
-          <label><span>🧾 ใบเสร็จลูกค้า</span><select id="rsReceiptPrinterRoute"><option value="front">เครื่องหน้าร้าน</option><option value="browser">เลือกเครื่องจากระบบพิมพ์</option></select><small>ใช้สำหรับใบเสร็จและใบชำระเงิน</small></label>
-          <label><span>👨‍🍳 ใบสั่งห้องครัว</span><select id="rsKitchenPrinterRoute"><option value="kitchen">เครื่องห้องครัว</option><option value="browser">เลือกเครื่องจากระบบพิมพ์</option></select><small>งานครัวถูกแยกเป็น Kitchen Print Queue อยู่แล้ว</small></label>
+          <label><span><i class="ic ic-receipt" aria-hidden="true"></i> ใบเสร็จลูกค้า</span><select id="rsReceiptPrinterRoute"><option value="front">เครื่องหน้าร้าน</option><option value="browser">เลือกเครื่องจากระบบพิมพ์</option></select><small>ใช้สำหรับใบเสร็จและใบชำระเงิน</small></label>
+          <label><span><i class="ic ic-chef-hat" aria-hidden="true"></i> ใบสั่งห้องครัว</span><select id="rsKitchenPrinterRoute"><option value="kitchen">เครื่องห้องครัว</option><option value="browser">เลือกเครื่องจากระบบพิมพ์</option></select><small>งานครัวถูกแยกเป็น Kitchen Print Queue อยู่แล้ว</small></label>
         </div><label class="printer-queue-toggle"><input id="rsKitchenAutoQueue" type="checkbox"><span><b>ส่งงานครัวเข้าคิวอัตโนมัติ</b><small>เมื่อส่งรายการเข้าครัว ให้สร้างงานพิมพ์แยกตามสถานีครัว</small></span></label><div class="printer-agent-note">หมายเหตุ: ZaabOS แยกคิวหน้าร้าน/ห้องครัวไว้แล้ว แต่การส่งตรงไปยังเครื่องพิมพ์จริงแบบไม่ขึ้นหน้าต่าง Print ต้องเชื่อม Local Print Agent ตามรุ่น/เครือข่ายของเครื่องพิมพ์ในขั้นติดตั้งฮาร์ดแวร์</div></div>
         <button class="save settings-save-compact" id="saveReceiptSettingsBtn" type="button">บันทึกการตั้งค่าสาขานี้</button>
       </div>
       <div class="panel settings-editor" id="netPrintersPanel">
         <div class="panel-head"><div><span class="eyebrow">PRINTERS</span><h2>เครื่องพิมพ์ในร้าน</h2><div class="muted" id="npMode">พิมพ์ตรงถึงเครื่องพิมพ์ โดยไม่ขึ้นหน้าต่าง Print</div></div></div>
         <div class="settings-section"><h3>ใช้พิมพ์อะไร</h3>
-          <div class="np-assign"><span>🧾 ใบเสร็จลูกค้า</span><select id="npAssignReceipt" data-np-assign="receipt"></select></div>
-          <div class="np-assign"><span>👨‍🍳 ใบสั่งครัว</span><select id="npAssignKitchen" data-np-assign="kitchen"></select></div>
+          <div class="np-assign"><span><i class="ic ic-receipt" aria-hidden="true"></i> ใบเสร็จลูกค้า</span><select id="npAssignReceipt" data-np-assign="receipt"></select></div>
+          <div class="np-assign"><span><i class="ic ic-chef-hat" aria-hidden="true"></i> ใบสั่งครัว</span><select id="npAssignKitchen" data-np-assign="kitchen"></select></div>
           <div class="muted printer-help">เลือกแล้วบันทึกทันที ใช้เครื่องเดียวพิมพ์ทั้งสองอย่างได้</div>
         </div>
         <div class="settings-section"><h3>เครื่องพิมพ์ที่บันทึกไว้</h3><div id="npList"></div></div>
         <div class="settings-section"><h3>เพิ่มเครื่องพิมพ์</h3>
           <div id="npFound"></div>
-          <button class="ghost-btn" id="npScanBtn" type="button">🔍 ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน</button>
+          <button class="ghost-btn" id="npScanBtn" type="button"><i class="ic ic-search" aria-hidden="true"></i> ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน</button>
           <details class="np-manual"><summary>ใส่ IP เอง</summary><div class="form-grid">
             <label><span>IP เครื่องพิมพ์</span><input id="npHost" maxlength="100" placeholder="192.168.1.50" inputmode="decimal"></label>
             <label><span>พอร์ต</span><input id="npPort" type="number" value="9100" min="1" max="65535"></label>
           </div><button class="ghost-btn" id="npAddIpBtn" type="button">เพิ่ม</button>
-          <div class="muted printer-help">IP ของ RP331 ดูจากใบ Self-test (ปิดเครื่อง → กด FEED ค้าง → เปิดเครื่อง) · ต้องไม่ใช่ IP ของ Mac</div></details>
+          <div class="muted printer-help">IP ของ RP331 ดูจากใบ Self-test (ปิดเครื่อง <i class="ic ic-arrow-right" aria-hidden="true"></i> กด FEED ค้าง <i class="ic ic-arrow-right" aria-hidden="true"></i> เปิดเครื่อง) · ต้องไม่ใช่ IP ของ Mac</div></details>
         </div>
       </div>
       <div class="panel settings-editor hidden" id="localPanel">
         <div class="panel-head"><div><span class="eyebrow">THIS COMPUTER</span><h2>โปรแกรมในเครื่องร้าน</h2><div class="muted" id="lpVersion"></div></div></div>
         <div class="settings-section"><h3>ตรวจสุขภาพระบบ (ทำทุกวันตอนปิดร้าน)</h3>
-          <button class="save settings-save-compact" id="lpHealthBtn" type="button">🩺 ตรวจตอนนี้</button>
+          <button class="save settings-save-compact" id="lpHealthBtn" type="button"><i class="ic ic-activity" aria-hidden="true"></i> ตรวจตอนนี้</button>
           <div id="lpHealth"></div>
         </div>
         <div class="settings-section"><h3>อัปเดตโปรแกรม</h3><div class="np-assign"><span id="lpUpdateText">ตรวจหาเวอร์ชันใหม่</span><button class="ghost-btn" id="lpUpdateBtn" type="button">ตรวจหาอัปเดต</button></div></div>
@@ -354,7 +354,7 @@
           <button class="save settings-save-compact" id="lpImportBtn" type="button">ดึงข้อมูลมาใส่เครื่องนี้</button>
         </div>
       </div>
-      <div class="panel receipt-preview-panel"><div class="panel-head receipt-preview-head"><div><h3 id="receiptPreviewTitle">ตัวอย่างใบเสร็จหน้าร้าน</h3><div class="muted">สลับดูตัวอย่างหน้าร้านและใบสั่งห้องครัวได้ทันที</div></div></div><div class="receipt-preview-switch" id="receiptPreviewSwitch"><button type="button" class="active" data-preview-mode="receipt">🧾 หน้าร้าน</button><button type="button" data-preview-mode="kitchen">👨‍🍳 ห้องครัว</button></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
+      <div class="panel receipt-preview-panel"><div class="panel-head receipt-preview-head"><div><h3 id="receiptPreviewTitle">ตัวอย่างใบเสร็จหน้าร้าน</h3><div class="muted">สลับดูตัวอย่างหน้าร้านและใบสั่งห้องครัวได้ทันที</div></div></div><div class="receipt-preview-switch" id="receiptPreviewSwitch"><button type="button" class="active" data-preview-mode="receipt"><i class="ic ic-receipt" aria-hidden="true"></i> หน้าร้าน</button><button type="button" data-preview-mode="kitchen"><i class="ic ic-chef-hat" aria-hidden="true"></i> ห้องครัว</button></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
     </div>
   </section>
 
@@ -362,7 +362,7 @@
     <div class="panel">
       <div class="panel-head">
         <h2 data-i18n="branches_title">สาขาทั้งหมด</h2>
-        <button class="ghost-btn primary" id="addBranchBtn" data-i18n="btn_add_branch">➕ เพิ่มสาขา</button>
+        <button class="ghost-btn primary" id="addBranchBtn" data-i18n="btn_add_branch"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มสาขา</button>
       </div>
       <div id="branchesList"></div>
     </div>
@@ -373,7 +373,7 @@
     <div class="panel">
       <div class="panel-head">
         <h2 data-i18n="users_title">ผู้ใช้งานในร้าน</h2>
-        <button class="ghost-btn primary" id="addUserBtn" data-i18n="btn_add_user">➕ เพิ่มผู้ใช้งาน</button>
+        <button class="ghost-btn primary" id="addUserBtn" data-i18n="btn_add_user"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มผู้ใช้งาน</button>
       </div>
       <div id="usersList"></div>
     </div>
@@ -384,7 +384,7 @@
     <div class="panel">
       <div class="panel-head">
         <h2 data-i18n="tenants_title">ร้านค้าทั้งหมด (ผู้ดูแลระบบ)</h2>
-        <button class="ghost-btn primary" id="addTenantBtn" data-i18n="btn_add_tenant">➕ เพิ่มร้านค้าใหม่</button>
+        <button class="ghost-btn primary" id="addTenantBtn" data-i18n="btn_add_tenant"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มร้านค้าใหม่</button>
       </div>
       <div id="saasSummary" class="saas-summary"></div><div class="saas-filters"><select id="tenantStatusFilter"><option value="">ทุกสถานะ</option><option value="trialing">Trial</option><option value="active">Active</option><option value="attention">ต้องตรวจสอบ</option></select><input id="tenantSearch" placeholder="ค้นหาร้าน..."></div><div id="tenantsList"></div>
     </div>
@@ -411,7 +411,7 @@
 
 <div class="modal" id="branchModal"><div class="sheet small"><div class="sheet-head"><h2 id="branchModalTitle" data-i18n="modal_add_branch_title">เพิ่มสาขา</h2><button data-close>×</button></div>
   <input type="hidden" id="branchId">
-  <label><span data-i18n="label_icon">ไอคอน</span><input id="branchIcon" maxlength="4" value="🏠"></label>
+  <label><span data-i18n="label_icon">ไอคอน</span><select id="branchIcon"><option value="store">ร้าน</option><option value="house">บ้าน</option><option value="building-2">อาคาร</option><option value="map-pin">สาขา</option><option value="utensils">อาหาร</option></select></label>
   <label><span data-i18n="label_branch_name">ชื่อสาขา</span><input id="branchName" placeholder="เช่น สาขาหลัก" data-i18n-ph="placeholder_branch_name"></label>
   <div class="login-error" id="branchError"></div>
   <button class="save" id="branchSave" data-i18n="btn_save">บันทึก</button>
@@ -437,7 +437,7 @@
 
 <div class="modal" id="categoryModal"><div class="sheet small"><div class="sheet-head"><h2 id="categoryModalTitle" data-i18n="modal_add_category_title">เพิ่มหมวดหมู่</h2><button data-close>×</button></div>
   <input type="hidden" id="categoryId">
-  <label><span data-i18n="label_icon">ไอคอน</span><input id="categoryIcon" maxlength="4" value="🍜"></label>
+  <label><span data-i18n="label_icon">ไอคอน</span><select id="categoryIcon"><option value="utensils">อาหาร</option><option value="soup">ก๋วยเตี๋ยว/แกง</option><option value="salad">สลัด/ตำ</option><option value="cup-soda">น้ำอัดลม</option><option value="coffee">กาแฟ</option><option value="beer">เบียร์</option><option value="wine">ไวน์</option><option value="beef">เนื้อ</option><option value="drumstick">ไก่</option><option value="fish">ปลา</option><option value="pizza">พิซซ่า</option><option value="sandwich">แซนด์วิช</option><option value="croissant">เบเกอรี่</option><option value="ice-cream-cone">ไอศกรีม</option><option value="cake">ของหวาน</option><option value="chef-hat">เมนูเชฟ</option><option value="flame">ย่าง/เผ็ด</option><option value="star">แนะนำ</option></select></label>
   <label><span data-i18n="label_category_name">ชื่อหมวดหมู่</span><input id="categoryName" placeholder="เช่น อาหารจานหลัก" data-i18n-ph="placeholder_category_name"></label>
   <div class="login-error" id="categoryError"></div>
   <button class="save" id="categorySave" data-i18n="btn_save">บันทึก</button>
@@ -453,7 +453,7 @@
     <label><span data-i18n="label_cost_price">ต้นทุน</span><input id="menuItemCostPrice" type="number" min="0" step="0.01"></label>
   </div>
   <label><span>สถานีครัว</span><select id="menuItemKitchenStation"><option value="">ไม่ระบุสถานี</option></select></label>
-  <button type="button" class="ghost-btn" id="menuItemRecipeBtn">🧾 สูตรวัตถุดิบของเมนูนี้</button>
+  <button type="button" class="ghost-btn" id="menuItemRecipeBtn"><i class="ic ic-receipt" aria-hidden="true"></i> สูตรวัตถุดิบของเมนูนี้</button>
   <div class="checkbox-row"><input type="checkbox" id="menuItemTrackStock"><label style="margin:0" for="menuItemTrackStock" data-i18n="label_track_stock">นับสต็อกเมนูนี้</label></div>
   <div class="two-col" id="menuItemStockFields">
     <label><span data-i18n="label_stock_qty">จำนวนคงเหลือ</span><input id="menuItemStockQty" type="number" min="0" step="1"></label>
@@ -462,23 +462,23 @@
   <label><span data-i18n="label_item_image">รูปภาพเมนู</span>
     <div class="image-picker" id="menuItemImagePicker">
       <div class="image-picker-preview hidden" id="menuItemImagePreviewWrap"><img id="menuItemImagePreview" alt=""></div>
-      <div class="image-picker-empty" id="menuItemImageEmpty">🖼️</div>
+      <div class="image-picker-empty" id="menuItemImageEmpty"><i class="ic ic-image" aria-hidden="true"></i></div>
       <input type="file" id="menuItemImageFile" accept="image/*" class="hidden">
       <div class="image-picker-actions">
-        <button type="button" class="ghost-btn" id="menuItemImageChooseBtn" data-i18n="btn_choose_image">📷 เลือกรูปภาพ</button>
-        <button type="button" class="ghost-btn danger hidden" id="menuItemImageRemoveBtn" data-i18n="btn_remove_image">🗑️ ลบรูปภาพ</button>
+        <button type="button" class="ghost-btn" id="menuItemImageChooseBtn" data-i18n="btn_choose_image"><i class="ic ic-camera" aria-hidden="true"></i> เลือกรูปภาพ</button>
+        <button type="button" class="ghost-btn danger hidden" id="menuItemImageRemoveBtn" data-i18n="btn_remove_image"><i class="ic ic-trash-2" aria-hidden="true"></i> ลบรูปภาพ</button>
       </div>
     </div>
   </label>
   <div class="checkbox-row"><input type="checkbox" id="menuItemSoldOut"><label style="margin:0" for="menuItemSoldOut" data-i18n="label_sold_out_temp">หมดชั่วคราว (ของหมด)</label></div>
   <h3 style="margin-top:20px" data-i18n="label_option_groups_title">ตัวเลือกเพิ่มเติม (เช่น ขนาด, ความเผ็ด)</h3>
   <div id="optionGroupsBox"></div>
-  <button class="add-group-btn" id="addOptGroupBtn" type="button" data-i18n="btn_add_option_group">➕ เพิ่มกลุ่มตัวเลือก</button>
+  <button class="add-group-btn" id="addOptGroupBtn" type="button" data-i18n="btn_add_option_group"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มกลุ่มตัวเลือก</button>
   <div class="login-error" id="menuItemError"></div>
   <button class="save" id="menuItemSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
 
-<div class="modal" id="expenseModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="btn_add_expense">➕ เพิ่มรายจ่าย</h2><button data-close>×</button></div>
+<div class="modal" id="expenseModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="btn_add_expense"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มรายจ่าย</h2><button data-close>×</button></div>
   <label><span data-i18n="label_expense_category">หมวดรายจ่าย</span>
     <input id="expenseCategory" list="expenseCategoryList" data-i18n-ph="placeholder_expense_category" placeholder="เช่น ค่าวัตถุดิบ">
     <datalist id="expenseCategoryList"></datalist>
@@ -516,9 +516,9 @@
 <!-- Staff take-order modal -->
 <div class="modal" id="takeOrderModal"><div class="sheet wide"><div class="sheet-head"><h2 data-i18n="modal_take_order_title">รับออเดอร์ลูกค้า</h2><button data-close>×</button></div>
   <div class="type" id="takeOrderType">
-    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in">🍽️ ทานที่ร้าน</button>
-    <button data-type="takeaway" data-i18n="order_type_takeaway">🥡 กลับบ้าน</button>
-    <button data-type="delivery" data-i18n="order_type_delivery">🛵 เดลิเวอรี่</button>
+    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in"><i class="ic ic-utensils" aria-hidden="true"></i> ทานที่ร้าน</button>
+    <button data-type="takeaway" data-i18n="order_type_takeaway"><i class="ic ic-shopping-bag" aria-hidden="true"></i> กลับบ้าน</button>
+    <button data-type="delivery" data-i18n="order_type_delivery"><i class="ic ic-bike" aria-hidden="true"></i> เดลิเวอรี่</button>
   </div>
   <div id="takeOrderTableRow">
     <label><span data-i18n="label_table">โต๊ะ</span><select id="takeOrderTable"></select></label>
@@ -538,8 +538,8 @@
   <div id="takeOrderCart"></div>
   <div class="cart-total-row"><span data-i18n="label_total">รวมทั้งหมด</span><span id="takeOrderTotal">0</span></div>
   <div class="login-error" id="takeOrderError"></div>
-  <label class="send-kitchen-toggle"><input id="takeOrderSendKitchen" type="checkbox" checked><span>👨‍🍳 ส่งเข้าครัวทันทีเมื่อยืนยัน</span></label>
-  <button class="save" id="takeOrderSubmit" data-i18n="btn_confirm_order">✅ ยืนยันออเดอร์</button>
+  <label class="send-kitchen-toggle"><input id="takeOrderSendKitchen" type="checkbox" checked><span><i class="ic ic-chef-hat" aria-hidden="true"></i> ส่งเข้าครัวทันทีเมื่อยืนยัน</span></label>
+  <button class="save" id="takeOrderSubmit" data-i18n="btn_confirm_order"><i class="ic ic-circle-check" aria-hidden="true"></i> ยืนยันออเดอร์</button>
 </div></div>
 
 <!-- Menu item option picker (used from take-order menu grid) -->
@@ -565,7 +565,7 @@
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
   <div id="cpBreakdown" class="cp-breakdown"></div>
   <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
-  <details class="payment-advanced" id="cpAdvanced"><summary><span>🏷️ โปรโมชั่น / ส่วนลด</span><small>ไม่ใช้สามารถข้ามได้</small></summary><div class="payment-advanced-body">
+  <details class="payment-advanced" id="cpAdvanced"><summary><span><i class="ic ic-tag" aria-hidden="true"></i> โปรโมชั่น / ส่วนลด</span><small>ไม่ใช้สามารถข้ามได้</small></summary><div class="payment-advanced-body">
     <label><span>Promotion Code (ถ้ามี)</span><input id="cpPromo" maxlength="40" placeholder="เช่น LUNCH10"></label>
     <div class="form-grid"><label><span>ส่วนลดพิเศษ (ถ้ามี)</span><input id="cpDiscount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label><label><span>เหตุผลส่วนลด</span><input id="cpDiscountReason" maxlength="300" placeholder="ระบุเมื่อให้ส่วนลดพิเศษ"></label></div>
     <div class="form-grid">
@@ -573,14 +573,14 @@
       <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
     </div>
   </div></details>
-  <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
+  <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash"><i class="ic ic-banknote" aria-hidden="true"></i> เงินสด</option><option value="qr"><i class="ic ic-smartphone" aria-hidden="true"></i> QR</option><option value="card"><i class="ic ic-credit-card" aria-hidden="true"></i> บัตร</option><option value="bank_transfer"><i class="ic ic-landmark" aria-hidden="true"></i> โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
   <label id="cpCashLabel"><span>รับเงินสดมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label><div id="cpCashQuick" class="cash-quick"></div>
   <div class="payment-live-summary"><div><span>ชำระรวม</span><b id="cpPaidTotal">0</b></div><div><span>คงเหลือ</span><b id="cpRemaining">0</b></div><div><span>เงินทอน</span><b id="cpChange">0</b></div></div>
   <div class="payment-tax-note">ภาษีและค่าบริการคำนวณจากการตั้งค่าร้านอัตโนมัติ ไม่ใช่ยอด QR/ยอดโอน</div>
   <div class="split-pay-head"><b>แบ่งชำระ</b><button type="button" class="ghost-btn" id="cpAddPayment">+ เพิ่มช่องทาง</button></div>
   <div id="cpPaymentParts"></div>
   <div class="cp-shift-box" id="cpShiftBox" hidden><div><b>ยังไม่ได้เปิดกะ</b><div class="muted">ต้องเปิดกะก่อนรับชำระเงิน ยอดเงินจึงจะถูกนับในรายงานกะ</div></div><input id="cpOpeningCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินทอนตั้งต้นในลิ้นชัก"><button class="save" id="cpOpenShiftBtn" type="button">เปิดกะ</button></div><div class="login-error" id="cpError"></div>
-  <button class="save btn-confirm-pay" id="cpSubmit" data-i18n="btn_confirm_payment_done">✅ ยืนยันชำระเงินแล้ว</button>
+  <button class="save btn-confirm-pay" id="cpSubmit" data-i18n="btn_confirm_payment_done"><i class="ic ic-circle-check" aria-hidden="true"></i> ยืนยันชำระเงินแล้ว</button>
 </div></div>
 
 <!-- Table / order detail (opened from board tiles + side panel) -->
@@ -588,11 +588,11 @@
   <div id="orderDetailBody"></div>
 </div></div>
 
-<div class="modal action-dialog" id="closeShiftConfirmModal"><div class="sheet small shift-confirm-sheet"><div class="sheet-head"><div><div class="dialog-eyebrow">CLOSE SHIFT</div><h2>ยืนยันปิดกะ</h2></div><button data-close>×</button></div><div class="dialog-hero-icon">🔐</div><p class="dialog-copy">ตรวจสอบยอดอีกครั้งก่อนปิดกะ เมื่อยืนยันแล้วกะนี้จะถูกปิดและระบบจะเปิดใบสรุปสำหรับพิมพ์ทันที</p><div class="shift-confirm-summary"><div><span>เงินสดที่ควรมี</span><b id="shiftConfirmExpected">₭0</b></div><div><span>เงินสดนับจริง</span><b id="shiftConfirmCounted">₭0</b></div><div class="shift-confirm-diff"><span>ขาด / เกิน</span><b id="shiftConfirmDiff">₭0</b></div></div><div id="shiftConfirmNote" class="dialog-note hidden"></div><div class="dialog-note warning">ขั้นตอนนี้เป็นการยืนยันชั้นที่ 2 เพื่อป้องกันการกดปิดกะโดยไม่ตั้งใจ</div><div class="dialog-actions"><button class="ghost-btn" data-close>กลับไปตรวจอีกครั้ง</button><button class="save" id="confirmCloseShiftBtn">ยืนยันปิดกะ &amp; พิมพ์</button></div></div></div>
+<div class="modal action-dialog" id="closeShiftConfirmModal"><div class="sheet small shift-confirm-sheet"><div class="sheet-head"><div><div class="dialog-eyebrow">CLOSE SHIFT</div><h2>ยืนยันปิดกะ</h2></div><button data-close>×</button></div><div class="dialog-hero-icon"><i class="ic ic-key-round" aria-hidden="true"></i></div><p class="dialog-copy">ตรวจสอบยอดอีกครั้งก่อนปิดกะ เมื่อยืนยันแล้วกะนี้จะถูกปิดและระบบจะเปิดใบสรุปสำหรับพิมพ์ทันที</p><div class="shift-confirm-summary"><div><span>เงินสดที่ควรมี</span><b id="shiftConfirmExpected">₭0</b></div><div><span>เงินสดนับจริง</span><b id="shiftConfirmCounted">₭0</b></div><div class="shift-confirm-diff"><span>ขาด / เกิน</span><b id="shiftConfirmDiff">₭0</b></div></div><div id="shiftConfirmNote" class="dialog-note hidden"></div><div class="dialog-note warning">ขั้นตอนนี้เป็นการยืนยันชั้นที่ 2 เพื่อป้องกันการกดปิดกะโดยไม่ตั้งใจ</div><div class="dialog-actions"><button class="ghost-btn" data-close>กลับไปตรวจอีกครั้ง</button><button class="save" id="confirmCloseShiftBtn">ยืนยันปิดกะ &amp; พิมพ์</button></div></div></div>
 
 <div class="modal action-dialog" id="refundModal"><div class="sheet small"><div class="sheet-head"><div><div class="dialog-eyebrow">REFUND</div><h2>คืนเงิน</h2></div><button data-close>×</button></div><div class="dialog-summary"><span>คืนได้สูงสุด</span><b id="refundMax">0</b></div><label><span>ยอดคืนเงิน</span><input id="refundAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เว้นว่าง = คืนเต็มจำนวน"></label><label id="refundMethodRow" hidden><span>คืนผ่านช่องทาง</span><select id="refundMethod"></select></label><label><span>เหตุผลการคืนเงิน</span><textarea id="refundReason" maxlength="300" rows="3" placeholder="เช่น ลูกค้าเปลี่ยนใจ / รายการผิด"></textarea></label><div class="dialog-note">การคืนเงินจะถูกบันทึกในประวัติและรายงาน ไม่สามารถทำให้ยอดคืนรวมเกินยอดที่ชำระได้</div><div class="login-error" id="refundError"></div><div class="dialog-actions"><button class="ghost-btn" data-close>ยกเลิก</button><button class="save danger-save" id="refundSubmit">ยืนยันคืนเงิน</button></div></div></div>
 
-<div class="modal action-dialog" id="reopenModal"><div class="sheet small"><div class="sheet-head"><div><div class="dialog-eyebrow">REOPEN BILL</div><h2>เปิดบิลกลับมาแก้ไข</h2></div><button data-close>×</button></div><div class="dialog-hero-icon">↩️</div><p class="dialog-copy">การชำระเดิมจะยังอยู่ในประวัติ แต่ถูกทำเครื่องหมายย้อนรายการ จากนั้นบิลและโต๊ะจะกลับมาแก้ไขได้อีกครั้ง</p><div class="dialog-note warning">เฉพาะบิลที่เคยคืนเงินจริงแล้วเท่านั้นที่เปิดกลับมาแก้ไขไม่ได้</div><div class="login-error" id="reopenError"></div><div id="reopenQuickShift" class="reopen-quick-shift hidden"><div><b>💵 บิลนี้รับเงินสด แต่ยังไม่มีกะเปิด</b><div class="muted">เปิดกะตรงนี้ได้เลย ระบบจะเปิดกะแล้วกลับมาเปิดบิลนี้ต่อให้อัตโนมัติ</div></div><div class="reopen-shift-row"><input id="reopenOpeningCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินทอนตั้งต้น"><button class="save" id="reopenOpenShiftBtn" type="button">เปิดกะ &amp; ทำต่อ</button></div></div><div class="dialog-actions"><button class="ghost-btn" data-close>ยังไม่เปิด</button><button class="save" id="reopenSubmit">เปิดบิลกลับมาแก้ไข</button></div></div></div>
+<div class="modal action-dialog" id="reopenModal"><div class="sheet small"><div class="sheet-head"><div><div class="dialog-eyebrow">REOPEN BILL</div><h2>เปิดบิลกลับมาแก้ไข</h2></div><button data-close>×</button></div><div class="dialog-hero-icon"><i class="ic ic-undo-2" aria-hidden="true"></i></div><p class="dialog-copy">การชำระเดิมจะยังอยู่ในประวัติ แต่ถูกทำเครื่องหมายย้อนรายการ จากนั้นบิลและโต๊ะจะกลับมาแก้ไขได้อีกครั้ง</p><div class="dialog-note warning">เฉพาะบิลที่เคยคืนเงินจริงแล้วเท่านั้นที่เปิดกลับมาแก้ไขไม่ได้</div><div class="login-error" id="reopenError"></div><div id="reopenQuickShift" class="reopen-quick-shift hidden"><div><b><i class="ic ic-banknote" aria-hidden="true"></i> บิลนี้รับเงินสด แต่ยังไม่มีกะเปิด</b><div class="muted">เปิดกะตรงนี้ได้เลย ระบบจะเปิดกะแล้วกลับมาเปิดบิลนี้ต่อให้อัตโนมัติ</div></div><div class="reopen-shift-row"><input id="reopenOpeningCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินทอนตั้งต้น"><button class="save" id="reopenOpenShiftBtn" type="button">เปิดกะ &amp; ทำต่อ</button></div></div><div class="dialog-actions"><button class="ghost-btn" data-close>ยังไม่เปิด</button><button class="save" id="reopenSubmit">เปิดบิลกลับมาแก้ไข</button></div></div></div>
 
 <div class="modal" id="billManagerModal"><div class="sheet wide"><div class="sheet-head"><h2>จัดการบิล</h2><button data-close>×</button></div>
   <div class="bill-manager-tabs"><button data-bm-mode="move" class="active">ย้ายโต๊ะ</button><button data-bm-mode="merge">รวมบิล</button><button data-bm-mode="split">ย้ายบางรายการ / แยกบิล</button></div>
@@ -612,6 +612,6 @@
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>const DEFAULT_LANG = 'th';</script>
-<script src="/static/i18n.js"></script>
-<script src="/static/app.js?v=29.0"></script><script>(function(){const banner=document.getElementById('networkBanner'),txt=document.getElementById('networkBannerText');function net(){const online=navigator.onLine;banner.classList.toggle('hidden',online);document.documentElement.classList.toggle('is-offline',!online);if(!online)txt.textContent='ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้';}addEventListener('online',net);addEventListener('offline',net);net();if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{}));})();</script>
+<script src="/static/i18n.js?v=30.0"></script>
+<script src="/static/app.js?v=30.0"></script><script>(function(){const banner=document.getElementById('networkBanner'),txt=document.getElementById('networkBannerText');function net(){const online=navigator.onLine;banner.classList.toggle('hidden',online);document.documentElement.classList.toggle('is-offline',!online);if(!online)txt.textContent='ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้';}addEventListener('online',net);addEventListener('offline',net);net();if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{}));})();</script>
 </body></html>

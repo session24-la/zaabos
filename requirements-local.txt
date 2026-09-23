@@ -4,3 +4,5 @@ waitress>=3.0,<4
 Pillow>=10
 # Windows ships no timezone database; zoneinfo needs this for Asia/Vientiane.
 tzdata>=2024.1
+# Windows USB printers go through the Windows spooler.
+pywin32>=306; sys_platform == "win32"

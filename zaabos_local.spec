@@ -6,7 +6,7 @@ from local_ops import APP_VERSION
 from PyInstaller.utils.hooks import collect_data_files
 datas = [('templates', 'templates'), ('static', 'static'), ('schema.sql', '.'), ('schema_postgres.sql', '.')]
 datas += collect_data_files('tzdata')   # Windows has no system timezone database
-hidden = ['local_ops', 'local_api', 'wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata', 'printing', 'PIL.ImageDraw', 'PIL.ImageFont'] + (['rumps'] if sys.platform == 'darwin' else [])
+hidden = ['local_ops', 'local_api', 'wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata', 'printing', 'PIL.ImageDraw', 'PIL.ImageFont'] + (['rumps'] if sys.platform == 'darwin' else []) + (['win32print', 'win32api', 'pywintypes'] if sys.platform == 'win32' else [])
 icon = 'static/zaabos-icon-512.png'
 
 a = Analysis(['zaabos_local.py'], pathex=['.'], datas=datas, hiddenimports=hidden,

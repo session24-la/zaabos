@@ -226,7 +226,7 @@ async function afterLogin() {
     $('#tenantSwitcher').classList.remove('hidden');
     $('#tenantsTabBtn').classList.remove('hidden');
     const sel = $('#tenantSwitcher');
-    sel.innerHTML = `<option value="all">${escapeHtml(t('tenant_switcher_all'))}</option>` + (me.tenants || []).map(t2 => `<option value="${t2.id}">${escapeHtml(t2.icon || '')} ${escapeHtml(t2.name)}</option>`).join('');
+    sel.innerHTML = `<option value="all">${escapeHtml(t('tenant_switcher_all'))}</option>` + (me.tenants || []).map(t2 => `<option value="${t2.id}">${escapeHtml(iconText(t2.icon))} ${escapeHtml(t2.name)}</option>`).join('');
     sel.value = me.tenant_id ? String(me.tenant_id) : 'all';
     sel.onchange = async () => {
       await apiJson('/api/switch-tenant', 'POST', { tenant_id: sel.value === 'all' ? 'all' : parseInt(sel.value, 10) });
@@ -272,7 +272,7 @@ async function loadBootstrap() {
 
 function renderBranchSelect() {
   const sel = $('#branchSelect');
-  sel.innerHTML = boot.branches.map(b => `<option value="${b.id}">${escapeHtml(b.icon || '')} ${escapeHtml(b.name)}</option>`).join('');
+  sel.innerHTML = boot.branches.map(b => `<option value="${b.id}">${escapeHtml(iconText(b.icon))} ${escapeHtml(b.name)}</option>`).join('');
   if (currentBranchId) sel.value = String(currentBranchId);
   sel.onchange = () => { currentBranchId = parseInt(sel.value, 10); refreshCurrentTab(); };
   $('#branchScopeBar').classList.toggle('hidden', boot.branches.length === 0 && me.role !== 'owner' && me.role !== 'super_admin');
@@ -430,24 +430,24 @@ function renderReportCards(s) {
   `;
   const labels={cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'};
   if (s.refund_total > 0) $('#reportCards').insertAdjacentHTML('beforeend', `<div class="report-card"><div class="rc-label">คืนเงิน</div><div class="rc-value">-${fmtMoney(s.refund_total)}</div><div class="hint">${s.refund_count||0} รายการ · ยอดสุทธิ ${fmtMoney(s.net_sales)}</div></div>`);
-  const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('💳','ยังไม่มีรายการชำระเงิน');
+  const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('<i class="ic ic-credit-card" aria-hidden="true"></i>','ยังไม่มีรายการชำระเงิน');
   renderCancellationReport(s.cancellations||{});
   renderShiftReport(s.shifts||[]);
 }
 function renderShiftReport(rows){const el=$('#shiftReport');if(!el)return;
-  if(!rows.length){el.innerHTML=emptyState('🧾','ยังไม่มีกะในช่วงวันที่เลือก');return}
+  if(!rows.length){el.innerHTML=emptyState('','ยังไม่มีกะในช่วงวันที่เลือก');return}
   el.innerHTML=rows.map(x=>{const sm=x.summary||{},open=x.status==='open';
     const diff=open?'':`<span class="${Number(x.difference||0)===0?'':'error-text'}">ส่วนต่าง ${fmtMoney(x.difference||0)}</span>`;
-    return `<div class="list-row shift-history-row"><div><b>${escapeHtml(x.opened_by_name||'')} · ${escapeHtml(formatDateTime(x.opened_at))} → ${open?'<span class="pill">กำลังเปิด</span>':escapeHtml(formatDateTime(x.closed_at))}</b>
+    return `<div class="list-row shift-history-row"><div><b>${escapeHtml(x.opened_by_name||'')} · ${escapeHtml(formatDateTime(x.opened_at))} <i class="ic ic-arrow-right" aria-hidden="true"></i> ${open?'<span class="pill">กำลังเปิด</span>':escapeHtml(formatDateTime(x.closed_at))}</b>
       <div class="muted">${Number(sm.bill_count||0)} บิล · รับเงินสุทธิ ${fmtMoney(sm.net_received||0)} · เงินสดควรมี ${fmtMoney(open?sm.expected_cash:x.expected_cash)}${open?'':' · นับจริง '+fmtMoney(x.counted_cash||0)} ${diff}</div></div>
-      ${open?'':`<button class="ghost-btn" data-report-print-shift="${x.id}">🧾 พิมพ์ซ้ำ</button>`}</div>`}).join('');
+      ${open?'':`<button class="ghost-btn" data-report-print-shift="${x.id}"><i class="ic ic-receipt" aria-hidden="true"></i> พิมพ์ซ้ำ</button>`}</div>`}).join('');
   el.onclick=async e=>{const b=e.target.closest('[data-report-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.reportPrintShift));if(x)await printShiftCloseReport({...x})};
 }
-function renderCancellationReport(c){const el=$('#cancellationReport');if(!el)return;const reasons=c.reasons||[],recent=c.recent||[];if(!(c.total||0)){el.innerHTML=emptyState('✅','ช่วงนี้ไม่มีการยกเลิก');return;}el.innerHTML=`<div class="cancel-summary-cards"><div><b>${c.total}</b><span>เหตุการณ์ยกเลิก</span></div><div><b>${c.order_count}</b><span>ยกเลิกทั้งบิล</span></div><div><b>${c.item_count}</b><span>ยกเลิกรายการ</span></div></div><div class="cancel-reason-list">${reasons.map((x,i)=>`<div class="cancel-reason-row"><span>${i+1}</span><div><b>${escapeHtml(x.reason)}</b><small>${x.order_count} บิล · ${x.item_count} รายการ</small></div><strong>${x.count}</strong></div>`).join('')}</div><details class="cancel-audit"><summary>ดูรายการล่าสุด</summary>${recent.map(x=>`<div class="cancel-audit-row"><span>${x.operation_type==='cancel_order'?'ทั้งบิล':'รายการ'}</span><b>${escapeHtml(x.reason_text||'ไม่ระบุเหตุผล')}</b><small>${escapeHtml(x.performed_by_name||'-')} · ${formatDateTime(x.created_at)}</small></div>`).join('')}</details>`;}
+function renderCancellationReport(c){const el=$('#cancellationReport');if(!el)return;const reasons=c.reasons||[],recent=c.recent||[];if(!(c.total||0)){el.innerHTML=emptyState('<i class="ic ic-circle-check" aria-hidden="true"></i>','ช่วงนี้ไม่มีการยกเลิก');return;}el.innerHTML=`<div class="cancel-summary-cards"><div><b>${c.total}</b><span>เหตุการณ์ยกเลิก</span></div><div><b>${c.order_count}</b><span>ยกเลิกทั้งบิล</span></div><div><b>${c.item_count}</b><span>ยกเลิกรายการ</span></div></div><div class="cancel-reason-list">${reasons.map((x,i)=>`<div class="cancel-reason-row"><span>${i+1}</span><div><b>${escapeHtml(x.reason)}</b><small>${x.order_count} บิล · ${x.item_count} รายการ</small></div><strong>${x.count}</strong></div>`).join('')}</div><details class="cancel-audit"><summary>ดูรายการล่าสุด</summary>${recent.map(x=>`<div class="cancel-audit-row"><span>${x.operation_type==='cancel_order'?'ทั้งบิล':'รายการ'}</span><b>${escapeHtml(x.reason_text||'ไม่ระบุเหตุผล')}</b><small>${escapeHtml(x.performed_by_name||'-')} · ${formatDateTime(x.created_at)}</small></div>`).join('')}</details>`;}
 
 function renderTopItems(items) {
   const el = $('#reportTopItems');
-  if (!items || !items.length) { el.innerHTML = emptyState('📊', t('label_no_data')); return; }
+  if (!items || !items.length) { el.innerHTML = emptyState('', t('label_no_data')); return; }
   const maxQty = Math.max(...items.map(x => Number(x.qty||0)), 1);
   el.innerHTML = `<div class="top-items-chart">${items.map((it,i)=>{
     const pct=Math.max(4,Math.round((Number(it.qty||0)/maxQty)*100));
@@ -460,14 +460,14 @@ function renderTopItems(items) {
 
 function renderExpensesList(expenses) {
   const el = $('#expensesList');
-  if (!expenses || !expenses.length) { el.innerHTML = emptyState('🧾', t('label_no_data')); return; }
+  if (!expenses || !expenses.length) { el.innerHTML = emptyState('', t('label_no_data')); return; }
   el.innerHTML = expenses.map(ex => `
     <div class="row">
       <div>
         <div style="font-weight:700">${escapeHtml(ex.category)} · ${fmtMoney(ex.amount)}</div>
         <div class="hint">${escapeHtml(ex.expense_date)}${ex.created_by_name ? ' · ' + escapeHtml(ex.created_by_name) : ''}${ex.note ? ' · ' + escapeHtml(ex.note) : ''}</div>
       </div>
-      <div class="row-right"><button class="icon-btn danger" data-del-expense="${ex.id}">🗑️</button></div>
+      <div class="row-right"><button class="icon-btn danger" data-del-expense="${ex.id}"><i class="ic ic-trash-2" aria-hidden="true"></i></button></div>
     </div>`).join('');
 }
 $('#expensesList').addEventListener('click', (e) => {
@@ -506,28 +506,28 @@ $('#expenseSave').addEventListener('click', async () => {
 
 function renderBranches() {
   const list = $('#branchesList');
-  if (!boot.branches.length) { list.innerHTML = emptyState('🏠', t('empty_branches')); return; }
+  if (!boot.branches.length) { list.innerHTML = emptyState('', t('empty_branches')); return; }
   list.innerHTML = boot.branches.map(b => `
     <div class="row">
       <div style="display:flex;align-items:center;gap:12px">
-        <span class="avatar-badge">${escapeHtml(b.icon || '🏠')}</span>
+        <span class="avatar-badge">${iconHtml(b.icon,'house')}</span>
         <div><div style="font-weight:700">${escapeHtml(b.name)}</div><small>${escapeHtml(t('label_branch_code_prefix'))} #${b.id}</small></div>
       </div>
       <div class="row-right">
-        <button class="icon-btn" data-edit-branch="${b.id}">✏️</button>
-        <button class="icon-btn danger" data-del-branch="${b.id}">🗑️</button>
+        <button class="icon-btn" data-edit-branch="${b.id}"><i class="ic ic-pencil" aria-hidden="true"></i></button>
+        <button class="icon-btn danger" data-del-branch="${b.id}"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
       </div>
     </div>`).join('');
 }
 $('#addBranchBtn').addEventListener('click', () => {
-  $('#branchModalTitle').textContent = t('modal_add_branch_title'); $('#branchId').value = ''; $('#branchIcon').value = '🏠'; $('#branchName').value = ''; $('#branchError').textContent = '';
+  $('#branchModalTitle').textContent = t('modal_add_branch_title'); $('#branchId').value = ''; $('#branchIcon').value = 'store'; $('#branchName').value = ''; $('#branchError').textContent = '';
   openModal('#branchModal');
 });
 $('#branchesList').addEventListener('click', (e) => {
   const editId = e.target.dataset.editBranch, delId = e.target.dataset.delBranch;
   if (editId) {
     const b = boot.branches.find(x => x.id === parseInt(editId, 10));
-    $('#branchModalTitle').textContent = t('modal_edit_branch_title'); $('#branchId').value = b.id; $('#branchIcon').value = b.icon; $('#branchName').value = b.name; $('#branchError').textContent = '';
+    $('#branchModalTitle').textContent = t('modal_edit_branch_title'); $('#branchId').value = b.id; $('#branchIcon').value = ICON_NAME_RE.test(b.icon||'') ? b.icon : 'store'; $('#branchName').value = b.name; $('#branchError').textContent = '';
     openModal('#branchModal');
   } else if (delId) {
     if (!confirm(t('confirm_delete_branch'))) return;
@@ -536,7 +536,7 @@ $('#branchesList').addEventListener('click', (e) => {
 });
 $('#branchSave').addEventListener('click', async () => {
   $('#branchError').textContent = '';
-  const id = $('#branchId').value, name = $('#branchName').value.trim(), icon = $('#branchIcon').value.trim() || '🏠';
+  const id = $('#branchId').value, name = $('#branchName').value.trim(), icon = $('#branchIcon').value.trim() || 'store';
   if (!name) { $('#branchError').textContent = t('err_branch_name_required'); return; }
   try {
     if (id) await apiJson('/api/branches/' + id, 'PUT', { name, icon });
@@ -552,14 +552,14 @@ function tableOrderUrl(token) { return ((boot && boot.public_url) || location.or
 function renderTables() {
   const grid = $('#tableGrid');
   const tables = branchTables();
-  if (!tables.length) { grid.innerHTML = emptyState('🍽️', t('empty_tables')); return; }
+  if (!tables.length) { grid.innerHTML = emptyState('', t('empty_tables')); return; }
   grid.innerHTML = tables.map(t => `
     <div class="table-chip">
       <div class="tc-name">${escapeHtml(t.name)}</div>
       <div class="tc-actions">
         <button data-qr="${t.id}">QR</button>
-        <button data-edit-table="${t.id}">✏️</button>
-        <button data-del-table="${t.id}">🗑️</button>
+        <button data-edit-table="${t.id}"><i class="ic ic-pencil" aria-hidden="true"></i></button>
+        <button data-del-table="${t.id}"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
       </div>
     </div>`).join('');
 }
@@ -643,17 +643,17 @@ function renderMenu() {
 function renderCategoriesList() {
   const cats = branchCategories();
   const list = $('#categoriesList');
-  if (!cats.length) { list.innerHTML = emptyState('🍜', t('empty_categories')); return; }
+  if (!cats.length) { list.innerHTML = emptyState('', t('empty_categories')); return; }
   list.innerHTML = cats.map((c,i) => {
     const count=branchItems().filter(x=>Number(x.category_id)===Number(c.id)).length;
     const active=Number(selectedMenuCategoryId)===Number(c.id);
     return `<div class="menu-category-row ${active?'active':''}" data-select-cat="${c.id}">
       <button class="menu-category-main" type="button" data-select-cat="${c.id}">
-        <span class="menu-category-icon">${escapeHtml(c.icon || '🍜')}</span>
+        <span class="menu-category-icon">${iconHtml(c.icon,'soup')}</span>
         <span class="menu-category-copy"><b>${escapeHtml(c.name)}</b><small>${count} รายการ</small></span>
       </button>
       <div class="menu-category-tools">
-        <button class="icon-btn" data-edit-cat="${c.id}" title="แก้ไข">✎</button>
+        <button class="icon-btn" data-edit-cat="${c.id}" title="แก้ไข"><i class="ic ic-pencil" aria-hidden="true"></i></button>
         <button class="icon-btn danger" data-del-cat="${c.id}" title="ลบ">×</button>
       </div>
     </div>`;
@@ -664,7 +664,7 @@ $('#categoriesList').addEventListener('click', (e) => {
   const editId = editBtn && editBtn.dataset.editCat, delId = delBtn && delBtn.dataset.delCat;
   if (editId) {
     const c = boot.categories.find(x => x.id === parseInt(editId, 10));
-    $('#categoryModalTitle').textContent = t('modal_edit_category_title'); $('#categoryId').value = c.id; $('#categoryIcon').value = c.icon; $('#categoryName').value = c.name; $('#categoryError').textContent = '';
+    $('#categoryModalTitle').textContent = t('modal_edit_category_title'); $('#categoryId').value = c.id; $('#categoryIcon').value = ICON_NAME_RE.test(c.icon||'') ? c.icon : 'utensils'; $('#categoryName').value = c.name; $('#categoryError').textContent = '';
     openModal('#categoryModal');
   } else if (delId) {
     if (!confirm(t('confirm_delete_category'))) return;
@@ -675,12 +675,12 @@ $('#categoriesList').addEventListener('click', (e) => {
   }
 });
 $('#addCategoryBtn').addEventListener('click', () => {
-  $('#categoryModalTitle').textContent = t('modal_add_category_title'); $('#categoryId').value = ''; $('#categoryIcon').value = '🍜'; $('#categoryName').value = ''; $('#categoryError').textContent = '';
+  $('#categoryModalTitle').textContent = t('modal_add_category_title'); $('#categoryId').value = ''; $('#categoryIcon').value = 'utensils'; $('#categoryName').value = ''; $('#categoryError').textContent = '';
   openModal('#categoryModal');
 });
 $('#categorySave').addEventListener('click', async () => {
   $('#categoryError').textContent = '';
-  const id = $('#categoryId').value, name = $('#categoryName').value.trim(), icon = $('#categoryIcon').value.trim() || '🍜';
+  const id = $('#categoryId').value, name = $('#categoryName').value.trim(), icon = $('#categoryIcon').value.trim() || 'utensils';
   if (!name) { $('#categoryError').textContent = t('err_category_name_required'); return; }
   try {
     if (id) await apiJson('/api/menu-categories/' + id, 'PUT', { name, icon });
@@ -701,23 +701,23 @@ function renderMenuItemsGrid() {
   const items = selectedMenuCategoryId==null ? allItems : allItems.filter(it=>Number(it.category_id)===Number(selectedMenuCategoryId));
   const grid = $('#menuItemsGrid');
   const title=$('#menuWorkspaceTitle'), count=$('#menuWorkspaceCount');
-  if(title) title.textContent=cat ? `${cat.icon||'🍜'} ${cat.name}` : 'เมนูทั้งหมด';
+  if(title) title.textContent=cat ? `${iconText(cat.icon)} ${cat.name}`.trim(): 'เมนูทั้งหมด';
   if(count) count.textContent=`${items.length} รายการ`;
-  if (!items.length) { grid.innerHTML = emptyState('📋', cat ? 'ยังไม่มีรายการในหมวดหมู่นี้' : t('empty_menu_items')); return; }
+  if (!items.length) { grid.innerHTML = emptyState('', cat ? 'ยังไม่มีรายการในหมวดหมู่นี้': t('empty_menu_items')); return; }
   grid.innerHTML = items.map(it => {
     const low = it.track_stock && it.stock_qty != null && it.stock_qty <= it.low_stock_threshold;
     return `<article class="menu-card menu-manager-card ${it.sold_out ? 'sold-out' : ''}">
-      <div class="menu-card-media">${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="${escapeHtml(it.name)}">` : `<div class="menu-photo-placeholder">🍽️</div>`}
+      <div class="menu-card-media">${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="${escapeHtml(it.name)}">`: `<div class="menu-photo-placeholder"></div>`}
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : (low ? `<span class="mc-badge-stock">${escapeHtml(it.stock_qty <= 0 ? t('badge_out_of_stock') : t('badge_low_stock'))}</span>` : '')}</div>
       <div class="menu-card-body">
         <div class="mc-top"><span class="mc-name">${escapeHtml(it.name)}</span><strong class="mc-price">${fmtMoney(it.base_price)}</strong></div>
         ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
-        <div class="menu-card-meta">${it.option_groups.length ? `<span>ตัวเลือก ${it.option_groups.length}</span>` : ''}${it.track_stock ? `<span>📦 ${it.stock_qty != null ? it.stock_qty : 0}</span>` : ''}</div>
+        <div class="menu-card-meta">${it.option_groups.length ? `<span>ตัวเลือก ${it.option_groups.length}</span>` : ''}${it.track_stock ? `<span><i class="ic ic-package" aria-hidden="true"></i> ${it.stock_qty != null ? it.stock_qty : 0}</span>` : ''}</div>
         <div class="mc-actions">
           <button class="ghost-btn" data-edit-item="${it.id}">${escapeHtml(t('btn_edit'))}</button>
           ${it.track_stock ? `<button class="ghost-btn" data-adjust-stock="${it.id}">${escapeHtml(t('btn_adjust_stock'))}</button>` : ''}
           <button class="ghost-btn" data-toggle-soldout="${it.id}">${escapeHtml(it.sold_out ? t('btn_mark_available') : t('btn_mark_sold_out'))}</button>
-          <button class="icon-btn danger" data-del-item="${it.id}">🗑️</button>
+          <button class="icon-btn danger" data-del-item="${it.id}"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
         </div>
       </div>
     </article>`;
@@ -817,13 +817,13 @@ function renderOptGroupsBox() {
         <select data-og-type="${gi}" style="margin:0;min-width:125px"><option value="single" ${g.selection_type !== 'multiple' ? 'selected' : ''}>เลือกได้ 1</option><option value="multiple" ${g.selection_type === 'multiple' ? 'selected' : ''}>เลือกได้หลายข้อ</option></select>
         <label style="margin:0;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" ${g.required || Number(g.min_select||0)>0 ? 'checked' : ''} data-og-required="${gi}" style="width:auto">${escapeHtml(t('label_required_choice'))}</label>
         ${g.selection_type === 'multiple' ? `<label style="margin:0;font-size:12px">สูงสุด <input type="number" min="1" max="20" value="${Number(g.max_select||2)}" data-og-max="${gi}" style="width:65px;margin:0"></label>` : ''}
-        <button type="button" data-og-del="${gi}" class="icon-btn danger">🗑️</button>
+        <button type="button" data-og-del="${gi}" class="icon-btn danger"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
       </div>
       ${(g.options || []).map((o, oi) => `
         <div class="opt-row" data-oi="${oi}">
           <input placeholder="${escapeHtml(t('placeholder_option_name'))}" value="${escapeHtml(o.name || '')}" data-opt-name="${gi}:${oi}">
           <input type="number" step="0.01" placeholder="${escapeHtml(t('placeholder_option_price'))}" value="${o.price_delta || 0}" data-opt-delta="${gi}:${oi}">
-          <button type="button" data-opt-del="${gi}:${oi}" class="icon-btn danger">✕</button>
+          <button type="button" data-opt-del="${gi}:${oi}" class="icon-btn danger"><i class="ic ic-x" aria-hidden="true"></i></button>
         </div>`).join('')}
       <button class="add-opt-btn" type="button" data-add-opt="${gi}">${escapeHtml(t('btn_add_option'))}</button>
     </div>`).join('');
@@ -884,7 +884,7 @@ $('#menuItemSave').addEventListener('click', async () => {
 async function loadUsers() {
   const users = await api('/api/users');
   const list = $('#usersList');
-  if (!users.length) { list.innerHTML = emptyState('👥', t('empty_users')); return; }
+  if (!users.length) { list.innerHTML = emptyState('', t('empty_users')); return; }
   list.innerHTML = users.map(u => `
     <div class="row">
       <div style="display:flex;align-items:center;gap:12px">
@@ -892,8 +892,8 @@ async function loadUsers() {
         <div><div style="font-weight:700">${escapeHtml(u.display_name)} ${u.active ? '' : `<small>${escapeHtml(t('label_inactive_suffix'))}</small>`}</div><small>@${escapeHtml(u.username)} · ${escapeHtml(t('role_' + u.role) || u.role)}</small></div>
       </div>
       <div class="row-right">
-        <button class="icon-btn" data-edit-user="${u.id}">✏️</button>
-        <button class="icon-btn danger" data-del-user="${u.id}">🗑️</button>
+        <button class="icon-btn" data-edit-user="${u.id}"><i class="ic ic-pencil" aria-hidden="true"></i></button>
+        <button class="icon-btn danger" data-del-user="${u.id}"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
       </div>
     </div>`).join('');
   list.dataset.cache = JSON.stringify(users);
@@ -940,7 +940,7 @@ $('#userSave').addEventListener('click', async () => {
 
 let tenantRows=[];
 function subLabel(s){return ({trialing:'Trial',active:'Active',past_due:'Past due',suspended:'Suspended',canceled:'Canceled',expired:'Expired'})[s]||s||'-'}
-function renderTenants(){const list=$('#tenantsList'),q=($('#tenantSearch').value||'').toLowerCase(),f=$('#tenantStatusFilter').value;const rows=tenantRows.filter(tn=>{const attention=!tn.active||['past_due','suspended','expired','canceled'].includes(tn.subscription_status);return(!q||tn.name.toLowerCase().includes(q))&&(!f||(f==='attention'?attention:tn.subscription_status===f))});if(!rows.length){list.innerHTML=emptyState('🏢',t('empty_tenants'));return;}list.innerHTML=rows.map(tn=>`<div class="tenant-card"><div class="tenant-card-main"><span class="avatar-badge">${escapeHtml(tn.icon||'🍽️')}</span><div><b>${escapeHtml(tn.name)}</b><small>${escapeHtml(tn.plan_code||'starter')} · ${subLabel(tn.subscription_status)} · ${tn.branch_count}/${tn.max_branches} สาขา · ${tn.user_count}/${tn.max_users} ผู้ใช้</small></div></div><div class="tenant-card-actions"><button class="ghost-btn" data-sub-tenant="${tn.id}">แพ็กเกจ</button>${tn.active?`<button class="ghost-btn danger" data-del-tenant="${tn.id}">ระงับ</button>`:`<button class="ghost-btn" data-reactivate-tenant="${tn.id}">เปิดใช้งาน</button>`}</div></div>`).join('')}
+function renderTenants(){const list=$('#tenantsList'),q=($('#tenantSearch').value||'').toLowerCase(),f=$('#tenantStatusFilter').value;const rows=tenantRows.filter(tn=>{const attention=!tn.active||['past_due','suspended','expired','canceled'].includes(tn.subscription_status);return(!q||tn.name.toLowerCase().includes(q))&&(!f||(f==='attention'?attention:tn.subscription_status===f))});if(!rows.length){list.innerHTML=emptyState('<i class="ic ic-building-2" aria-hidden="true"></i>',t('empty_tenants'));return;}list.innerHTML=rows.map(tn=>`<div class="tenant-card"><div class="tenant-card-main"><span class="avatar-badge">${iconHtml(tn.icon,'utensils')}</span><div><b>${escapeHtml(tn.name)}</b><small>${escapeHtml(tn.plan_code||'starter')} · ${subLabel(tn.subscription_status)} · ${tn.branch_count}/${tn.max_branches} สาขา · ${tn.user_count}/${tn.max_users} ผู้ใช้</small></div></div><div class="tenant-card-actions"><button class="ghost-btn" data-sub-tenant="${tn.id}">แพ็กเกจ</button>${tn.active?`<button class="ghost-btn danger" data-del-tenant="${tn.id}">ระงับ</button>`:`<button class="ghost-btn" data-reactivate-tenant="${tn.id}">เปิดใช้งาน</button>`}</div></div>`).join('')}
 async function loadTenants(){const [r,sum]=await Promise.all([api('/api/tenants'),api('/api/admin/saas-summary')]);tenantRows=r.tenants;renderTenants();$('#saasSummary').innerHTML=`<div><b>${sum.total||0}</b><span>ร้านทั้งหมด</span></div><div><b>${sum.trialing||0}</b><span>Trial</span></div><div><b>${sum.subscribed||0}</b><span>Active</span></div><div><b>${sum.attention||0}</b><span>ต้องตรวจสอบ</span></div>`}
 $('#tenantSearch').addEventListener('input',renderTenants);$('#tenantStatusFilter').addEventListener('change',renderTenants);
 function localInput(v){if(!v)return '';const d=new Date(v);if(Number.isNaN(d.getTime()))return '';const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`}
@@ -996,7 +996,7 @@ syncHistoryDateControls();
 $('#refreshOrdersBtn').addEventListener('click',()=>{loadOrders();if(historyView==='kitchen')loadHistoryKitchen();});
 $('#refreshPosBtn').addEventListener('click', loadBoardData);
 async function loadHistoryKitchenStations(){if(!currentBranchId)return;try{const rows=await api('/api/kitchen/stations?branch_id='+currentBranchId),sel=$('#historyKitchenStation'),cur=sel.value;sel.innerHTML='<option value="">ทุกสถานี</option>'+rows.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');sel.value=rows.some(x=>String(x.id)===cur)?cur:'';}catch(e){}}
-async function loadHistoryKitchen(){if(!currentBranchId)return;await loadHistoryKitchenStations();const qs=new URLSearchParams({branch_id:currentBranchId}),station=$('#historyKitchenStation').value;if(station)qs.set('station_id',station);try{const r=await api('/api/kitchen/orders?'+qs),rows=(r.orders||[]).filter(o=>['received','preparing','ready'].includes(o.status));$('#historyKitchenCount').textContent=rows.length;$('#historyKitchenBoard').innerHTML=rows.length?rows.map(o=>`<article class="hk-card ${o.status}"><div class="hk-head"><div><b>#${escapeHtml(o.order_no)}</b><span>${escapeHtml(o.table_name_snapshot||orderTypeLabel(o.order_type))}</span></div><time>${fmtClock(o.created_at)}</time></div><div class="hk-items">${o.items.filter(it=>it.kitchen_sent_at&&Number(it.quantity||0)>Number(it.cancelled_quantity||0)).map(it=>`<div><b>${Number(it.quantity||0)-Number(it.cancelled_quantity||0)}×</b><span>${escapeHtml(it.item_name_snapshot)}</span></div>`).join('')}</div><div class="hk-actions">${o.status!=='ready'?`<button data-hk-status="${o.id}:ready" class="hk-ready">✓ พร้อมเสิร์ฟ</button>`:`<button data-hk-status="${o.id}:served" class="hk-served">✓ เสิร์ฟแล้ว</button>`}</div></article>`).join(''):emptyState('👨‍🍳','ไม่มีออเดอร์ที่ต้องติดตามในครัว');}catch(e){toast(e.message,'err')}}
+async function loadHistoryKitchen(){if(!currentBranchId)return;await loadHistoryKitchenStations();const qs=new URLSearchParams({branch_id:currentBranchId}),station=$('#historyKitchenStation').value;if(station)qs.set('station_id',station);try{const r=await api('/api/kitchen/orders?'+qs),rows=(r.orders||[]).filter(o=>['received','preparing','ready'].includes(o.status));$('#historyKitchenCount').textContent=rows.length;$('#historyKitchenBoard').innerHTML=rows.length?rows.map(o=>`<article class="hk-card ${o.status}"><div class="hk-head"><div><b>#${escapeHtml(o.order_no)}</b><span>${escapeHtml(o.table_name_snapshot||orderTypeLabel(o.order_type))}</span></div><time>${fmtClock(o.created_at)}</time></div><div class="hk-items">${o.items.filter(it=>it.kitchen_sent_at&&Number(it.quantity||0)>Number(it.cancelled_quantity||0)).map(it=>`<div><b>${Number(it.quantity||0)-Number(it.cancelled_quantity||0)}×</b><span>${escapeHtml(it.item_name_snapshot)}</span></div>`).join('')}</div><div class="hk-actions">${o.status!=='ready'?`<button data-hk-status="${o.id}:ready" class="hk-ready"> พร้อมเสิร์ฟ</button>`:`<button data-hk-status="${o.id}:served" class="hk-served"> เสิร์ฟแล้ว</button>`}</div></article>`).join(''):emptyState('','ไม่มีออเดอร์ที่ต้องติดตามในครัว');}catch(e){toast(e.message,'err')}}
 $('#historyKitchenStation').addEventListener('change',loadHistoryKitchen);
 $('#historyKitchenBoard').addEventListener('click',async e=>{const b=e.target.closest('[data-hk-status]');if(!b)return;const [id,status]=b.dataset.hkStatus.split(':');try{await apiJson('/api/orders/'+id+'/status','PUT',{status});toast(status==='ready'?'พร้อมเสิร์ฟแล้ว':'บันทึกว่าเสิร์ฟแล้ว','ok');loadHistoryKitchen();loadOrders();}catch(err){toast(err.message,'err')}});
 
@@ -1011,12 +1011,12 @@ function orderCardHtml(o) {
   const itemsHtml = o.items.map(it => {
     const optsHtml = it.options.length ? ` <span class="hint">(${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')})</span>` : '';
     const sentBadge = it.kitchen_sent_at
-      ? `<span class="oc-kitchen-sent-badge" title="${escapeHtml(t('label_kitchen_sent_at'))} ${fmtClock(it.kitchen_sent_at)}">🔔 ${fmtClock(it.kitchen_sent_at)}</span>` : '';
+      ? `<span class="oc-kitchen-sent-badge" title="${escapeHtml(t('label_kitchen_sent_at'))} ${fmtClock(it.kitchen_sent_at)}"><i class="ic ic-bell" aria-hidden="true"></i> ${fmtClock(it.kitchen_sent_at)}</span>` : '';
     const activeQty = Math.max(0, Number(it.quantity || 0) - Number(it.cancelled_quantity || 0));
     const editable = kitchenEligible && o.payment_status === 'unpaid' && o.status !== 'completed';
     const cb = editable && activeQty > 0 && !it.kitchen_sent_at
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
-    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" title="ยกเลิกรายการ" aria-label="ยกเลิกรายการ" data-cancel-item="${o.id}:${it.id}:${activeQty}">✕ ยกเลิก</button></span>` : '';
+    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" title="ยกเลิกรายการ" aria-label="ยกเลิกรายการ" data-cancel-item="${o.id}:${it.id}:${activeQty}"><i class="ic ic-x" aria-hidden="true"></i> ยกเลิก</button></span>` : '';
     return `<li class="oc-item-row">
       <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
       ${sentBadge}
@@ -1027,7 +1027,7 @@ function orderCardHtml(o) {
       <div class="oc-head">
         <div>
           <div class="oc-no">#${escapeHtml(o.order_no)} — ${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''}</div>
-          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${zaabosDateTime(o.created_at)}${o.scheduled_for ? ' · ⏰ '+escapeHtml(zaabosDateTime(o.scheduled_for)) : ''}${o.order_type==='delivery' && Number(o.delivery_fee||0)>0 ? ' · 🛵 '+fmtMoney(o.delivery_fee) : ''}</div>
+          <div class="oc-meta">${escapeHtml(o.customer_name)}${o.customer_phone ? ' · ' + escapeHtml(o.customer_phone) : ''} · ${zaabosDateTime(o.created_at)}${o.scheduled_for ? ' · <i class="ic ic-alarm-clock" aria-hidden="true"></i> '+escapeHtml(zaabosDateTime(o.scheduled_for)) : ''}${o.order_type==='delivery' && Number(o.delivery_fee||0)>0 ? ' · <i class="ic ic-bike" aria-hidden="true"></i> '+fmtMoney(o.delivery_fee) : ''}</div>
         </div>
         <div style="text-align:right">
           <span class="pill ${o.status}"><span class="pill-dot ${o.status}"></span>${escapeHtml(statusLabel(o.status))}</span><br>
@@ -1046,16 +1046,16 @@ function orderCardHtml(o) {
       <div class="oc-kitchen-actions">
         <span class="hint">รายการใหม่ที่ยังไม่เข้าครัว:</span>
         <label class="oc-select-all"><input type="checkbox" data-select-all-kitchen="${o.id}"> ${escapeHtml(t('label_select_all'))}</label>
-        <button class="ghost-btn btn-send-kitchen" data-send-kitchen="${o.id}" disabled>🔔 ${escapeHtml(t('btn_send_to_kitchen'))}</button>
-      </div>` : `<div class="hint oc-auto-kitchen">✅ รายการที่ต้องส่งเข้าครัวถูกส่งแล้ว</div>`}
+        <button class="ghost-btn btn-send-kitchen" data-send-kitchen="${o.id}" disabled><i class="ic ic-bell" aria-hidden="true"></i> ${escapeHtml(t('btn_send_to_kitchen'))}</button>
+      </div>` : `<div class="hint oc-auto-kitchen"><i class="ic ic-circle-check" aria-hidden="true"></i> รายการที่ต้องส่งเข้าครัวถูกส่งแล้ว</div>`}
       <div class="oc-pay-actions">
-        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn primary" data-add-items="${o.id}">➕ เพิ่มอาหาร</button>` : ''}
-        ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}">↔️ ย้ายโต๊ะ</button>` : ''}
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn primary" data-add-items="${o.id}"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มอาหาร</button>` : ''}
+        ${o.order_type === 'dine_in' && o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-move-order="${o.id}"><i class="ic ic-arrow-left-right" aria-hidden="true"></i> ย้ายโต๊ะ</button>` : ''}
         ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn btn-confirm-pay" data-confirm-payment="${o.id}">${escapeHtml(t('btn_confirm_payment_done'))}</button>` : ''}
         <button class="ghost-btn" data-print-receipt="${o.id}">${escapeHtml(t('btn_print_receipt'))}</button>
-        ${o.payment_status === 'paid' && (me.role === 'owner' || me.role === 'manager' || me.role === 'super_admin') ? `<button class="ghost-btn danger" data-refund-order="${o.id}">↩️ คืนเงิน</button>` : ''}
-        ${o.payment_status === 'paid' ? `<button class="ghost-btn" data-reopen-order="${o.id}">↩️ เปิดบิลกลับมาแก้ไข</button>` : ''}
-        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-bill-manager="${o.id}">🧾 จัดการบิล</button>` : ''}\n
+        ${o.payment_status === 'paid' && (me.role === 'owner' || me.role === 'manager' || me.role === 'super_admin') ? `<button class="ghost-btn danger" data-refund-order="${o.id}"><i class="ic ic-undo-2" aria-hidden="true"></i> คืนเงิน</button>` : ''}
+        ${o.payment_status === 'paid' ? `<button class="ghost-btn" data-reopen-order="${o.id}"><i class="ic ic-undo-2" aria-hidden="true"></i> เปิดบิลกลับมาแก้ไข</button>` : ''}
+        ${o.payment_status === 'unpaid' && o.status !== 'cancelled' && o.status !== 'completed' ? `<button class="ghost-btn" data-bill-manager="${o.id}"><i class="ic ic-receipt" aria-hidden="true"></i> จัดการบิล</button>` : ''}\n
       </div>
     </div>`;
 }
@@ -1063,7 +1063,7 @@ function orderCardHtml(o) {
 function historyDayLabel(iso){try{const d=new Date(iso),today=new Date(),yesterday=new Date();yesterday.setDate(today.getDate()-1);const key=x=>`${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;if(key(d)===key(today))return 'วันนี้';if(key(d)===key(yesterday))return 'เมื่อวาน';return new Intl.DateTimeFormat(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'}).format(d)}catch(e){return ''}}
 function renderOrdersList(orders) {
   const list = $('#ordersList');
-  if (!orders.length) { list.innerHTML = emptyState('🧾', t('empty_orders')); return; }
+  if (!orders.length) { list.innerHTML = emptyState('', t('empty_orders')); return; }
   let lastDay=''; list.innerHTML=orders.map(o=>{const d=new Date(o.created_at),day=`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`,head=day!==lastDay?`<div class="history-date-divider"><span>${escapeHtml(historyDayLabel(o.created_at))}</span><b>${escapeHtml(zaabosDateTime(o.created_at).split(' ')[0]||'')}</b></div>`:'';lastDay=day;return `${head}<div class="history-order-wrap">${orderCardHtml(o)}</div>`}).join('');
 }
 
@@ -1229,8 +1229,8 @@ function renderBillManager(){
   const o=billManagerSource, body=$('#billManagerBody'); if(!o)return;
   if(billManagerMode==='move'){
     const tables=branchTables().filter(t=>String(t.id)!==String(o.table_id));
-    body.innerHTML=`<div class="bm-move-head"><div><span class="bm-kicker">ย้ายทั้งบิล</span><h3>${escapeHtml(o.table_name_snapshot||'โต๊ะปัจจุบัน')} <span>→</span> เลือกโต๊ะปลายทาง</h3><p>โต๊ะที่มีออเดอร์อยู่จะย้ายทั้งบิลเข้าไปไม่ได้ เพื่อป้องกันบิลชนกัน</p></div><span class="bm-bill-no">#${escapeHtml(o.order_no)}</span></div>
-      <div class="bm-grid bm-table-grid">${tables.map(t=>{const active=tableActiveOrders(t.id).filter(x=>x.id!==o.id&&!['cancelled','completed'].includes(x.status));const occupied=active.length>0;return `<button class="bm-choice bm-table-choice ${occupied?'is-occupied':''}" ${occupied?'disabled':''} data-bm-table="${t.id}"><span class="bm-table-icon">${occupied?'●':'▦'}</span><span><b>${escapeHtml(t.name||('โต๊ะ '+t.id))}</b><small>${occupied?'มีออเดอร์อยู่ · ย้ายทั้งบิลไม่ได้':'ว่าง · แตะเพื่อย้ายทั้งบิล'}</small></span><span class="bm-arrow">${occupied?'ล็อก':'→'}</span></button>`}).join('')||'<div class="bm-empty">ไม่มีโต๊ะปลายทาง</div>'}</div>`;
+    body.innerHTML=`<div class="bm-move-head"><div><span class="bm-kicker">ย้ายทั้งบิล</span><h3>${escapeHtml(o.table_name_snapshot||'โต๊ะปัจจุบัน')} <span><i class="ic ic-arrow-right" aria-hidden="true"></i></span> เลือกโต๊ะปลายทาง</h3><p>โต๊ะที่มีออเดอร์อยู่จะย้ายทั้งบิลเข้าไปไม่ได้ เพื่อป้องกันบิลชนกัน</p></div><span class="bm-bill-no">#${escapeHtml(o.order_no)}</span></div>
+      <div class="bm-grid bm-table-grid">${tables.map(t=>{const active=tableActiveOrders(t.id).filter(x=>x.id!==o.id&&!['cancelled','completed'].includes(x.status));const occupied=active.length>0;return `<button class="bm-choice bm-table-choice ${occupied?'is-occupied':''}" ${occupied?'disabled':''} data-bm-table="${t.id}"><span class="bm-table-icon">${occupied?'●':'▦'}</span><span><b>${escapeHtml(t.name||('โต๊ะ '+t.id))}</b><small>${occupied?'มีออเดอร์อยู่ · ย้ายทั้งบิลไม่ได้':'ว่าง · แตะเพื่อย้ายทั้งบิล'}</small></span><span class="bm-arrow">${occupied?'ล็อก':'<i class="ic ic-arrow-right" aria-hidden="true"></i>'}</span></button>`}).join('')||'<div class="bm-empty">ไม่มีโต๊ะปลายทาง</div>'}</div>`;
   }else if(billManagerMode==='merge'){
     const targets=(activeOrders||[]).filter(x=>x.id!==o.id&&x.branch_id===o.branch_id&&x.payment_status==='unpaid'&&!['cancelled','completed'].includes(x.status));
     body.innerHTML=`<div class="bm-section-head"><div><span class="bm-kicker">รวมทั้งบิล</span><h3>เลือกบิลปลายทาง</h3><p>รายการทั้งหมดจากบิลนี้จะถูกรวมเข้าบิลที่เลือก</p></div></div><div class="bm-grid">${targets.map(x=>`<button class="bm-choice" data-bm-target="${x.id}"><b>${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}</b><small>#${escapeHtml(x.order_no)} · ${fmtMoney(x.total_amount)}</small></button>`).join('')||'<div class="bm-empty">ไม่มีบิลที่รวมได้</div>'}</div>`;
@@ -1240,7 +1240,7 @@ function renderBillManager(){
     body.innerHTML=`<div class="bm-section-head"><div><span class="bm-kicker">ย้ายบางรายการ</span><h3>เลือกรายการและจำนวน</h3><p>ใช้เมื่อลูกค้าย้ายบางเมนูไปอีกโต๊ะ หรืออยากแยกเป็นบิลใหม่ โดยสต็อกและครัวจะไม่ถูกนับซ้ำ</p></div></div>
       <div class="bm-items">${rows.map(it=>{const q=Number(it.quantity||0)-Number(it.cancelled_quantity||0);return `<div class="bm-item"><div><b>${escapeHtml(it.item_name_snapshot)}</b><small>ในบิล ${q}</small></div><div class="qty-stepper"><button data-bm-minus="${it.id}">−</button><span data-bm-qty="${it.id}" data-max="${q}">0</span><button data-bm-plus="${it.id}">+</button></div></div>`}).join('')}</div>
       <div class="bm-destination"><span class="bm-kicker">ปลายทาง</span><div class="bm-destination-actions"><button class="bm-new-bill" id="bmSplitConfirm">＋ แยกเป็นบิลใหม่</button></div>
-      ${occupiedTargets.length?`<div class="bm-target-label">หรือย้ายรายการที่เลือกไปยังบิล/โต๊ะที่มีออเดอร์อยู่</div><div class="bm-grid bm-target-grid">${occupiedTargets.map(x=>`<button class="bm-choice bm-target-choice" data-bm-split-target="${x.id}"><span><b>${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}</b><small>#${escapeHtml(x.order_no)} · ${fmtMoney(x.total_amount)}</small></span><span class="bm-arrow">→</span></button>`).join('')}</div>`:'<div class="bm-target-label">ตอนนี้ไม่มีโต๊ะอื่นที่มีบิลเปิดอยู่</div>'}</div>`;
+      ${occupiedTargets.length?`<div class="bm-target-label">หรือย้ายรายการที่เลือกไปยังบิล/โต๊ะที่มีออเดอร์อยู่</div><div class="bm-grid bm-target-grid">${occupiedTargets.map(x=>`<button class="bm-choice bm-target-choice" data-bm-split-target="${x.id}"><span><b>${escapeHtml(x.table_name_snapshot||'ไม่มีโต๊ะ')}</b><small>#${escapeHtml(x.order_no)} · ${fmtMoney(x.total_amount)}</small></span><span class="bm-arrow"><i class="ic ic-arrow-right" aria-hidden="true"></i></span></button>`).join('')}</div>`:'<div class="bm-target-label">ตอนนี้ไม่มีโต๊ะอื่นที่มีบิลเปิดอยู่</div>'}</div>`;
     $('#bmSplitConfirm').onclick=async()=>{const items=bmSelectedItems(body);if(!items.length){toast('เลือกรายการก่อน','err');return;}try{const r=await apiJson(`/api/orders/${o.id}/split`,'POST',{items});closeModals();toast(`แยกเป็นบิล #${r.new_order_no}`,'ok');onOrderActionDone()}catch(e){toast(e.message,'err')}};
   }
 }
@@ -1271,7 +1271,7 @@ async function splitOrder(sourceId){
   for(const part of raw.split(',')){const m=part.trim().match(/^(\d+)\s*[xX×]\s*(\d+)$/);if(!m){toast('รูปแบบไม่ถูกต้อง เช่น 1x1, 2x2','err');return;}const pos=Number(m[1])-1,qty=Number(m[2]);if(!rows[pos]||qty<1||qty>rows[pos].active||used.has(pos)){toast('รายการหรือจำนวนไม่ถูกต้อง','err');return;}used.add(pos);selected.push({item_id:rows[pos].it.id,quantity:qty});}
   const moved=selected.reduce((a,x)=>a+x.quantity,0),all=rows.reduce((a,x)=>a+x.active,0);if(!selected.length||moved>=all){toast('ต้องเหลืออย่างน้อย 1 รายการในบิลเดิม','err');return;}
   if(!confirm(`ยืนยันแยก ${moved} รายการเป็นบิลใหม่?\nจะไม่หักสต็อกหรือส่งครัวซ้ำ`))return;
-  try{const r=await apiJson(`/api/orders/${sourceId}/split`,'POST',{items:selected});closeModals();toast(`แยกบิลสำเร็จ → #${r.new_order_no}`,'ok');onOrderActionDone();}catch(e){toast(e.message,'err');}
+  try{const r=await apiJson(`/api/orders/${sourceId}/split`,'POST',{items:selected});closeModals();toast(`แยกบิลสำเร็จ  #${r.new_order_no}`,'ok');onOrderActionDone();}catch(e){toast(e.message,'err');}
 }
 
 function onOrderActionDone() { loadOrders(); loadBoardData(); }
@@ -1308,7 +1308,7 @@ function renderCashQuick(){
 }
 function paymentMethodName(m){return({cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'})[m]||m}
 function updateCpPaymentSummary(){const due=cpBaseDue(),method=$('#cpMethod').value;$('#cpCashLabel').classList.toggle('hidden',method!=='cash');const primary=Math.max(0,Number($('#cpPrimaryAmount').value||0)),extras=extraPaymentParts.reduce((a,x)=>a+Math.max(0,Number(x.amount||0)),0),paid=primary+extras,remaining=Math.max(0,due-paid),cash=method==='cash'?Math.max(0,Number($('#cpCash').value||0)):0;$('#cpPaidTotal').textContent=fmtMoney(paid);$('#cpRemaining').textContent=fmtMoney(remaining);$('#cpRemaining').classList.toggle('payment-ok',Math.abs(paid-due)<.005);$('#cpChange').textContent=fmtMoney(method==='cash'?Math.max(0,cash-primary):0);}
-function renderPaymentParts(){const el=$('#cpPaymentParts');if(!el)return;el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="ยอดช่องทางนี้" value="${p.amount||''}"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method});updateCpPaymentSummary();}
+function renderPaymentParts(){const el=$('#cpPaymentParts');if(!el)return;el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash"> เงินสด</option><option value="qr"> QR</option><option value="card"> บัตร</option><option value="bank_transfer"> โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="ยอดช่องทางนี้" value="${p.amount||''}"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method});updateCpPaymentSummary();}
 let cpRequestKey=null;
 function newCheckoutKey(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():('pay-'+Date.now()+'-'+Math.random().toString(36).slice(2))}
 function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;cpRequestKey=newCheckoutKey();checkCheckoutShift();extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpAdvanced').open=false;$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';cpQuote=null;$('#cpBreakdown').innerHTML='';renderPaymentParts();openModal('#confirmPaymentModal');refreshCpQuote(true);}
@@ -1418,7 +1418,7 @@ function printKitchenTicket(orderId, itemIds) {
   if (!items.length) return;
   const itemsHtml = items.map(it => {
     const optLine = it.options.length ? `<div class="kt-print-opts">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
-    const noteLine = it.notes ? `<div class="kt-print-notes">📝 ${escapeHtml(it.notes)}</div>` : '';
+    const noteLine = it.notes ? `<div class="kt-print-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : '';
     return `<div class="kt-print-item">${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${optLine}${noteLine}</div>`;
   }).join('');
   $('#kitchenTicketPrintArea').innerHTML = `
@@ -1427,7 +1427,7 @@ function printKitchenTicket(orderId, itemIds) {
     <div class="rp-sub">${zaabosDateTime(new Date())}</div>
     <div class="rp-line"></div>
     ${itemsHtml}
-    ${o.notes ? `<div class="rp-line"></div><div class="kt-print-notes">📝 ${escapeHtml(o.notes)}</div>` : ''}`;
+    ${o.notes ? `<div class="rp-line"></div><div class="kt-print-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(o.notes)}</div>` : ''}`;
   printElement($('#kitchenTicketPrintArea'));
 }
 
@@ -1462,7 +1462,7 @@ function tableActiveOrders(tableId) {
 function renderTableBoard() {
   const board = $('#tableBoard');
   const tables = branchTables();
-  if (!tables.length) { board.innerHTML = emptyState('🍽️', t('empty_tables')); return; }
+  if (!tables.length) { board.innerHTML = emptyState('', t('empty_tables')); return; }
   board.innerHTML = tables.map(tb => {
     const orders = tableActiveOrders(tb.id);
     if (!orders.length) {
@@ -1583,7 +1583,7 @@ function renderTakeOrderCategories() {
   const cats = branchCategories();
   takeOrderActiveCat = null;
   const el = $('#takeOrderCatScroll');
-  el.innerHTML = `<button class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` + cats.map(c => `<button class="cat-chip" data-cat="${c.id}">${escapeHtml(c.icon || '')} ${escapeHtml(c.name)}</button>`).join('');
+  el.innerHTML = `<button class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` + cats.map(c => `<button class="cat-chip" data-cat="${c.id}">${iconHtml(c.icon)} ${escapeHtml(c.name)}</button>`).join('');
 }
 $('#takeOrderCatScroll').addEventListener('click', (e) => {
   const btn = e.target.closest('.cat-chip');
@@ -1596,7 +1596,7 @@ function renderTakeOrderMenu() {
   let items = branchItems();
   if (takeOrderActiveCat) items = items.filter(i => String(i.category_id) === String(takeOrderActiveCat));
   const grid = $('#takeOrderMenuGrid');
-  if (!items.length) { grid.innerHTML = emptyState('📋', t('empty_menu')); return; }
+  if (!items.length) { grid.innerHTML = emptyState('', t('empty_menu')); return; }
   grid.innerHTML = items.map(it => `
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick-item="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
@@ -1621,7 +1621,7 @@ function updateTakeOrderFeedback() {
   const btn = $('#takeOrderSubmit');
   if (btn && !btn.disabled) {
     const qty = cart.reduce((a, c) => a + c.qty, 0), total = cart.reduce((a, c) => a + c.unit_price * c.qty, 0);
-    btn.textContent = qty ? `✅ ${t('btn_confirm_order').replace(/^✅\s*/, '')} · ${qty} · ${fmtMoney(total)}` : t('btn_confirm_order');
+    btn.textContent = qty ? `${t('btn_confirm_order').replace(/^\s*/, '')} · ${qty} · ${fmtMoney(total)}`: t('btn_confirm_order');
   }
 }
 $('#takeOrderMenuGrid').addEventListener('click', (e) => {
@@ -1692,7 +1692,7 @@ function renderCart() {
     const lineTotal = c.unit_price * c.qty; total += lineTotal;
     return `<div class="cart-line">
       <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
-      <div style="text-align:right"><div class="cl-price">${fmtMoney(lineTotal)}</div><div class="cart-steps"><button data-cart-minus="${idx}">−</button><b>${c.qty}</b><button data-cart-plus="${idx}">+</button><button class="icon-btn danger" data-cart-remove="${idx}">✕</button></div></div>
+      <div style="text-align:right"><div class="cl-price">${fmtMoney(lineTotal)}</div><div class="cart-steps"><button data-cart-minus="${idx}">−</button><b>${c.qty}</b><button data-cart-plus="${idx}">+</button><button class="icon-btn danger" data-cart-remove="${idx}"><i class="ic ic-x" aria-hidden="true"></i></button></div></div>
     </div>`;
   }).join('');
   $('#takeOrderTotal').textContent = fmtMoney(total);
@@ -1739,7 +1739,7 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
       }
       throw netErr;
     }
-    const kitchenNote = r.sent_to_kitchen ? ' — ส่งเข้าครัวแล้ว 👨‍🍳' : ' — กรุณากดส่งเข้าครัว';
+    const kitchenNote = r.sent_to_kitchen ? ' — ส่งเข้าครัวแล้ว' : ' — กรุณากดส่งเข้าครัว';
     closeModals(); toast((addItemsOrderId ? 'เพิ่มรายการแล้ว' : t('toast_order_saved', { no: r.order_no })) + kitchenNote, 'ok');
     const sentOrderId = addItemsOrderId || r.order_id;
     addItemsOrderId = null; await loadOrders(); loadBoardData();
@@ -1770,7 +1770,7 @@ async function openMoveTable(orderId) {
 
 // ===================== Misc =====================
 
-function emptyState(icon, text) { return `<div class="empty-state"><span class="es-ic">${icon}</span>${escapeHtml(text)}</div>`; }
+function emptyState(icon, text) { return `<div class="empty-state">${icon ? `<span class="es-ic">${icon}</span>` : ''}${escapeHtml(text)}</div>`; }
 
 // ===================== Bootstrap on load =====================
 
@@ -1819,9 +1819,9 @@ async function loadOperations(){
       actions.innerHTML=`<div class="shift-open-box"><div><b>เริ่มกะใหม่</b><div class="muted">กรอกเฉพาะเงินทอนที่มีอยู่จริงก่อนเริ่มขาย</div></div><div class="shift-open-controls"><input id="shiftOpeningCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินทอนตั้งต้น"><input id="shiftOpenNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="save" id="openShiftBtn" type="button">เปิดกะ</button></div></div>`;
       $('#openShiftBtn').onclick=()=>opsPost('/api/operations/shift/open',{branch_id:currentBranchId,opening_cash:Number($('#shiftOpeningCash').value||0),notes:$('#shiftOpenNote').value});
     }
-    $('#cashMovementList').innerHTML=data.movements.length?data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(formatDateTime(m.created_at))}</div></div><strong>${m.movement_type==='cash_in'?'+':'−'}${fmtMoney(m.amount)}</strong></div>`).join(''):emptyState('💵','ยังไม่มีรายการเงินสดในกะนี้');
+    $('#cashMovementList').innerHTML=data.movements.length?data.movements.map(m=>`<div class="list-row"><div><b>${m.movement_type==='cash_in'?'เงินเข้า':'เงินออก'}</b><div class="muted">${escapeHtml(m.reason)} · ${escapeHtml(formatDateTime(m.created_at))}</div></div><strong>${m.movement_type==='cash_in'?'+':'−'}${fmtMoney(m.amount)}</strong></div>`).join(''):emptyState('<i class="ic ic-banknote" aria-hidden="true"></i>','ยังไม่มีรายการเงินสดในกะนี้');
     loadShiftHistory();
-    if(me && ['owner','manager'].includes(me.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('🛡️','ยังไม่มีรายการอนุมัติ');}
+    if(me && ['owner','manager'].includes(me.role)){const cr=await api('/api/operations/critical');$('#criticalOpsList').innerHTML=cr.length?cr.slice(0,50).map(x=>`<div class="list-row"><div><b>${escapeHtml(x.operation_type)}</b><div class="muted">${escapeHtml(x.reason)} · ทำโดย ${escapeHtml(x.performed_by_name||'')} · อนุมัติโดย ${escapeHtml(x.approved_by_name||'')}</div></div><small>${escapeHtml(formatDateTime(x.created_at))}</small></div>`).join(''):emptyState('<i class="ic ic-shield" aria-hidden="true"></i>','ยังไม่มีรายการอนุมัติ');}
   }catch(e){toast(e.message,'err')}
 }
 let pendingCloseShift=null;
@@ -1850,7 +1850,7 @@ $('#confirmCloseShiftBtn').onclick=async()=>{
 
 async function opsPost(url,payload){try{const r=await apiJson(url,'POST',payload);if(r.expected_cash!=null){toast(`ปิดกะแล้ว · ควรมี ${fmtMoney(r.expected_cash)} · ต่าง ${fmtMoney(r.difference)}`,'ok');await printShiftCloseReport(r);}else toast('บันทึกแล้ว','ok');$('#opsAmount').value='';$('#opsReason').value='';loadOperations();}catch(e){toast(e.message,'err')}}
 async function printShiftCloseReport(sh){let rs={};try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(currentBranchId))}catch(e){}const b=(boot.branches||[]).find(x=>Number(x.id)===Number(currentBranchId));const sm=sh.summary||{},pb=sm.payment_breakdown||{};$('#receiptPrintArea').className='receipt-print paper-'+(rs.paper_width||'80')+' font-'+(rs.font_scale||'normal')+' head-'+(rs.header_align||'center');$('#receiptPrintArea').innerHTML=`<div class="rp-brand">${escapeHtml(rs.shop_name||((me&&me.tenant&&me.tenant.name)||'ZaabOS'))}</div><div class="rp-brand-sub">SHIFT CLOSING REPORT · สรุปปิดกะ</div><div class="rp-center">${escapeHtml(rs.branch_name||(b&&b.name)||'')}</div><div class="rp-sep"></div><div class="rp-footrow"><span>เปิดกะ</span><span>${escapeHtml(formatDateTime(sh.opened_at))}</span></div><div class="rp-footrow"><span>ปิดกะ</span><span>${escapeHtml(formatDateTime(sh.closed_at))}</span></div><div class="rp-sep"></div><div class="rp-row"><span>จำนวนบิล</span><span>${Number(sm.bill_count||0)}</span></div><div class="rp-row"><span>ยอดรับชำระ</span><span>${fmtMoney(sm.gross_received||0)}</span></div><div class="rp-row"><span>เงินสด</span><span>${fmtMoney(pb.cash||0)}</span></div><div class="rp-row"><span>QR / โอน</span><span>${fmtMoney((pb.qr||0)+(pb.bank_transfer||0)+(pb.transfer||0))}</span></div><div class="rp-row"><span>คืนเงิน</span><span>−${fmtMoney(sm.refund_total||0)}</span></div><div class="rp-total"><span>ยอดสุทธิ</span><span>${fmtMoney(sm.net_received||0)}</span></div><div class="rp-sep"></div><div class="rp-row"><span>เงินทอนตั้งต้น</span><span>${fmtMoney((sm.expected_cash||0)-(sm.cash_sales||0)-(sm.cash_in||0)+(sm.cash_out||0)+(sm.cash_refunds||0)+(sm.cash_reversals||0))}</span></div><div class="rp-row"><span>เงินเข้า</span><span>${fmtMoney(sm.cash_in||0)}</span></div><div class="rp-row"><span>เงินออก</span><span>${fmtMoney(sm.cash_out||0)}</span></div><div class="rp-row"><span>เงินสดที่ควรมี</span><span>${fmtMoney(sh.expected_cash||sm.expected_cash||0)}</span></div><div class="rp-row"><span>เงินสดนับจริง</span><span>${fmtMoney(sh.counted_cash||0)}</span></div><div class="rp-total"><span>ขาด / เกิน</span><span>${fmtMoney(sh.difference||0)}</span></div>${sh.notes?`<div class="rp-note">หมายเหตุ: ${escapeHtml(sh.notes)}</div>`:''}<div class="rp-thanks">ลงชื่อผู้ปิดกะ __________________</div><div class="rp-powered">ZaabOS</div>`;printElement($('#receiptPrintArea'));}
-async function loadShiftHistory(){const el=$('#shiftHistoryList');if(!el)return;try{const rows=await api('/api/operations/shifts?branch_id='+currentBranchId);el.innerHTML=rows.length?rows.map(x=>`<div class="list-row shift-history-row"><div><b>${escapeHtml(formatDateTime(x.closed_at))}</b><div class="muted">${escapeHtml(x.opened_by_name||'')} · ${Number(x.summary?.bill_count||0)} บิล · สุทธิ ${fmtMoney(x.summary?.net_received||0)}</div></div><button class="ghost-btn" data-print-shift="${x.id}">🧾 พิมพ์</button></div>`).join(''):emptyState('🧾','ยังไม่มีประวัติกะที่ปิด');el.onclick=async e=>{const b=e.target.closest('[data-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.printShift));if(x)await printShiftCloseReport({...x,expected_cash:x.expected_cash,counted_cash:x.counted_cash,difference:x.difference})}}catch(e){el.innerHTML=`<div class="error-text">${escapeHtml(e.message)}</div>`}}
+async function loadShiftHistory(){const el=$('#shiftHistoryList');if(!el)return;try{const rows=await api('/api/operations/shifts?branch_id='+currentBranchId);el.innerHTML=rows.length?rows.map(x=>`<div class="list-row shift-history-row"><div><b>${escapeHtml(formatDateTime(x.closed_at))}</b><div class="muted">${escapeHtml(x.opened_by_name||'')} · ${Number(x.summary?.bill_count||0)} บิล · สุทธิ ${fmtMoney(x.summary?.net_received||0)}</div></div><button class="ghost-btn" data-print-shift="${x.id}"><i class="ic ic-receipt" aria-hidden="true"></i> พิมพ์</button></div>`).join(''):emptyState('<i class="ic ic-receipt" aria-hidden="true"></i>','ยังไม่มีประวัติกะที่ปิด');el.onclick=async e=>{const b=e.target.closest('[data-print-shift]');if(!b)return;const x=rows.find(r=>String(r.id)===String(b.dataset.printShift));if(x)await printShiftCloseReport({...x,expected_cash:x.expected_cash,counted_cash:x.counted_cash,difference:x.difference})}}catch(e){el.innerHTML=`<div class="error-text">${escapeHtml(e.message)}</div>`}}
 
 $('#refreshOpsBtn').onclick=loadOperations;
 $('#cashInBtn').onclick=()=>opsPost('/api/operations/cash-movement',{branch_id:currentBranchId,movement_type:'cash_in',amount:Number($('#opsAmount').value||0),reason:$('#opsReason').value});
@@ -1874,7 +1874,7 @@ async function loadPricing(){
     const st=await api('/api/pricing/settings?branch_id='+currentBranchId);
     $('#pricingTax').value=st.tax_rate||0; $('#pricingService').value=st.service_charge_rate||0;
     const promos=await api('/api/promotions');
-    $('#promotionsList').innerHTML=promos.length?promos.map(x=>`<div class="list-card"><div><b>${escapeHtml(x.code)}</b> · ${escapeHtml(x.name)}<br><small>${x.discount_type==='percent'?x.discount_value+'%':fmtMoney(x.discount_value)} · ขั้นต่ำ ${fmtMoney(x.min_spend||0)} ${x.active?'':'· ปิดแล้ว'}</small></div>${x.active?`<button class="icon-btn danger" data-disable-promo="${x.id}">×</button>`:''}</div>`).join(''):emptyState('🏷️','ยังไม่มีโปรโมชั่น');
+    $('#promotionsList').innerHTML=promos.length?promos.map(x=>`<div class="list-card"><div><b>${escapeHtml(x.code)}</b> · ${escapeHtml(x.name)}<br><small>${x.discount_type==='percent'?x.discount_value+'%':fmtMoney(x.discount_value)} · ขั้นต่ำ ${fmtMoney(x.min_spend||0)} ${x.active?'':'· ปิดแล้ว'}</small></div>${x.active?`<button class="icon-btn danger" data-disable-promo="${x.id}">×</button>`:''}</div>`).join(''):emptyState('<i class="ic ic-tag" aria-hidden="true"></i>','ยังไม่มีโปรโมชั่น');
   }catch(e){toast(e.message,'err')}
 }
 $('#savePricingBtn').addEventListener('click',async()=>{try{await apiJson('/api/pricing/settings','PUT',{branch_id:currentBranchId,tax_rate:parseFloat($('#pricingTax').value)||0,service_charge_rate:parseFloat($('#pricingService').value)||0});toast('บันทึกอัตราแล้ว','ok');loadPricing()}catch(e){toast(e.message,'err')}});
@@ -1887,7 +1887,7 @@ async function loadInventory(){
     const rows=await api('/api/inventory/ingredients?branch_id='+currentBranchId);
     const low=rows.filter(x=>Number(x.stock_qty)<=Number(x.low_stock_threshold));
     $('#inventorySummary').innerHTML=`<div class="report-card"><small>วัตถุดิบ</small><b>${rows.length}</b></div><div class="report-card"><small>ใกล้หมด</small><b>${low.length}</b></div>`;
-    $('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button></div>`).join(''):emptyState('📦','ยังไม่มีวัตถุดิบ');
+    $('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button></div>`).join(''):emptyState('<i class="ic ic-package" aria-hidden="true"></i>','ยังไม่มีวัตถุดิบ');
   }catch(e){toast(e.message,'err')}
 }
 $('#addIngredientBtn').addEventListener('click',()=>openModal('#ingredientModal'));
@@ -1910,7 +1910,7 @@ $('#stationAdd').addEventListener('click',async()=>{const name=$('#newStationNam
 $('#stationsList').addEventListener('click',async e=>{const b=e.target.closest('[data-station-off]');if(!b)return;try{await apiJson('/api/kitchen/stations/'+b.dataset.stationOff,'PUT',{active:false});await loadStationsManager();await fillKitchenStationSelect()}catch(err){toast(err.message,'err')}});
 $('#inventoryHistoryBtn').addEventListener('click',async()=>{const box=$('#inventoryHistory');box.classList.toggle('hidden');if(box.classList.contains('hidden'))return;try{const rows=await api('/api/inventory/movements?branch_id='+currentBranchId+'&limit=100');box.innerHTML='<h3>ประวัติสต็อกล่าสุด</h3>'+rows.map(x=>`<div class="inventory-history-row"><div><b>${escapeHtml(x.ingredient_name)}</b><small>${escapeHtml(x.movement_type)} · ${escapeHtml(x.reason||'')}</small></div><strong>${Number(x.quantity)>0?'+':''}${Number(x.quantity).toLocaleString()} ${escapeHtml(x.unit)}</strong></div>`).join('')||'<div class="muted">ยังไม่มีประวัติ</div>';}catch(e){toast(e.message,'err')}});
 const _r17LoadInventory=loadInventory;
-loadInventory=async function(){await _r17LoadInventory();const rows=await api('/api/inventory/ingredients?branch_id='+currentBranchId);$('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><div class="ingredient-actions"><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button><button class="ghost-btn" data-ing-waste="${x.id}">ของเสีย</button><button class="ghost-btn" data-ing-count="${x.id}">ตรวจนับ</button></div></div>`).join(''):emptyState('📦','ยังไม่มีวัตถุดิบ');};
+loadInventory=async function(){await _r17LoadInventory();const rows=await api('/api/inventory/ingredients?branch_id='+currentBranchId);$('#ingredientsList').innerHTML=rows.length?rows.map(x=>`<div class="ingredient-row ${Number(x.stock_qty)<=Number(x.low_stock_threshold)?'low':''}"><div><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.unit)} · เตือนที่ ${x.low_stock_threshold}</small></div><strong>${Number(x.stock_qty).toLocaleString()}</strong><div class="ingredient-actions"><button class="ghost-btn" data-ing-adjust="${x.id}">ปรับ</button><button class="ghost-btn" data-ing-waste="${x.id}">ของเสีย</button><button class="ghost-btn" data-ing-count="${x.id}">ตรวจนับ</button></div></div>`).join(''):emptyState('<i class="ic ic-package" aria-hidden="true"></i>','ยังไม่มีวัตถุดิบ');};
 $('#ingredientsList').addEventListener('click',async e=>{const w=e.target.closest('[data-ing-waste]');if(w){const q=prompt('จำนวนวัตถุดิบที่เสีย/ทิ้ง');if(q===null)return;const reason=prompt('สาเหตุของเสีย');if(!reason)return;try{await apiJson(`/api/inventory/ingredients/${w.dataset.ingWaste}/waste`,'POST',{quantity:Number(q),reason});toast('บันทึกของเสียแล้ว','ok');loadInventory()}catch(err){toast(err.message,'err')}return;}const c=e.target.closest('[data-ing-count]');if(c){const q=prompt('จำนวนที่ตรวจนับได้จริง');if(q===null)return;const note=prompt('หมายเหตุการตรวจนับ (ถ้ามี)')||'';try{const r=await apiJson(`/api/inventory/ingredients/${c.dataset.ingCount}/count`,'POST',{counted_qty:Number(q),note});toast(`ตรวจนับแล้ว · ต่าง ${Number(r.difference).toLocaleString()}`,'ok');loadInventory()}catch(err){toast(err.message,'err')}}});
 
 // Round 20 sync lifecycle
@@ -1940,8 +1940,8 @@ function npRenderAssign(){
 }
 function npRenderFound(){
   const have=new Set(npPrinters.map(p=>p.connection==='system'?'usb:'+p.host:'net:'+p.host));
-  const rows=[...npUsb.map(u=>({key:'usb:'+u.queue,icon:'🔌',title:u.label,sub:'USB ต่อกับเครื่องนี้',add:{connection:'system',host:u.queue,name:u.label}})),
-              ...npNet.map(n=>({key:'net:'+n.host,icon:'📶',title:'เครื่องพิมพ์ Wi‑Fi',sub:n.host,add:{connection:'network',host:n.host,port:9100,name:'Wi‑Fi '+n.host}}))]
+  const rows=[...npUsb.map(u=>({key:'usb:'+u.queue,icon:iconHtml('plug'),title:u.label,sub:'USB ต่อกับเครื่องนี้',add:{connection:'system',host:u.queue,name:u.label}})),
+              ...npNet.map(n=>({key:'net:'+n.host,icon:iconHtml('wifi'),title:'เครื่องพิมพ์ Wi‑Fi',sub:n.host,add:{connection:'network',host:n.host,port:9100,name:'Wi‑Fi '+n.host}}))]
     .filter(r=>!have.has(r.key));
   $('#npFound').innerHTML=rows.map((r,i)=>`<div class="np-found"><div><b>${r.icon} ${escapeHtml(r.title)}</b><small>${escapeHtml(r.sub)}</small></div><button class="save settings-save-compact" data-np-found="${i}" type="button">ใช้เครื่องนี้</button></div>`).join('');
   $('#npFound')._rows=rows;
@@ -1954,7 +1954,7 @@ async function loadNetPrinters(){
     $('#npMode').textContent=r.local?'พิมพ์ตรงถึงเครื่องพิมพ์ในร้าน (USB หรือ Wi‑Fi) โดยไม่ขึ้นหน้าต่าง Print':'ตอนนี้เปิดจากคลาวด์ — พิมพ์ตรงได้เมื่อเปิดโปรแกรม ZaabOS บนเครื่องในร้าน';
     $('#npScanBtn').classList.toggle('hidden',!r.local);
     npRenderAssign();npRenderFound();
-    $('#npList').innerHTML=npPrinters.length?npPrinters.map(p=>{const jobs=[(p.role==='receipt'||p.role==='both')&&'ใบเสร็จ',(p.role==='kitchen'||p.role==='both')&&'ครัว'].filter(Boolean).join(' + ')||'ยังไม่ได้ใช้';return `<div class="np-row"><div><b>${p.connection==='system'?'🔌':'📶'} ${escapeHtml(p.name)}</b><small>${escapeHtml(npWhere(p))} · ${p.paper_width} mm · ${jobs}${p.station_name?' · '+escapeHtml(p.station_name):''}</small></div><div class="np-actions"><button class="ghost-btn" data-np-test="${p.id}">พิมพ์ทดสอบ</button><button class="icon-btn danger" data-np-del="${p.id}" title="ลบ">×</button></div></div>`}).join(''):emptyState('🖨️','ยังไม่มีเครื่องพิมพ์ — เลือกจากรายการด้านล่างได้เลย');
+    $('#npList').innerHTML=npPrinters.length?npPrinters.map(p=>{const jobs=[(p.role==='receipt'||p.role==='both')&&'ใบเสร็จ',(p.role==='kitchen'||p.role==='both')&&'ครัว'].filter(Boolean).join(' + ')||'ยังไม่ได้ใช้';return `<div class="np-row"><div><b>${p.connection==='system'?'<i class="ic ic-plug" aria-hidden="true"></i>':'<i class="ic ic-wifi" aria-hidden="true"></i>'} ${escapeHtml(p.name)}</b><small>${escapeHtml(npWhere(p))} · ${p.paper_width} mm · ${jobs}${p.station_name?' · '+escapeHtml(p.station_name):''}</small></div><div class="np-actions"><button class="ghost-btn" data-np-test="${p.id}">พิมพ์ทดสอบ</button><button class="icon-btn danger" data-np-del="${p.id}" title="ลบ">×</button></div></div>`}).join(''):emptyState('<i class="ic ic-printer" aria-hidden="true"></i>','ยังไม่มีเครื่องพิมพ์ — เลือกจากรายการด้านล่างได้เลย');
   }catch(e){toast(e.message,'err')}
 }
 async function npAdd(payload){
@@ -1965,17 +1965,17 @@ async function npAdd(payload){
 }
 document.querySelectorAll('[data-np-assign]').forEach(sel=>sel.addEventListener('change',async()=>{try{await apiJson('/api/printers/assign','PUT',{branch_id:currentBranchId,job:sel.dataset.npAssign,printer_id:sel.value?Number(sel.value):null});toast('บันทึกแล้ว','ok');loadNetPrinters()}catch(e){toast(e.message,'err')}}));
 $('#npFound').addEventListener('click',async e=>{const b=e.target.closest('[data-np-found]');if(!b)return;b.disabled=true;try{await npAdd($('#npFound')._rows[Number(b.dataset.npFound)].add)}catch(err){toast(err.message,'err');b.disabled=false}});
-$('#npScanBtn').addEventListener('click',async()=>{const b=$('#npScanBtn');b.disabled=true;b.textContent='กำลังค้นหา… (ประมาณ 3 วินาที)';try{const d=await api('/api/printers/discover?network=1');npUsb=d.usb||[];npNet=d.network||[];npRenderFound();if(!npNet.length)toast('ไม่พบเครื่องพิมพ์ Wi‑Fi — เครื่องพิมพ์ต้องต่อ Wi‑Fi เดียวกับ Mac ก่อน','err')}catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='🔍 ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน'}});
+$('#npScanBtn').addEventListener('click',async()=>{const b=$('#npScanBtn');b.disabled=true;b.textContent='กำลังค้นหา… (ประมาณ 3 วินาที)';try{const d=await api('/api/printers/discover?network=1');npUsb=d.usb||[];npNet=d.network||[];npRenderFound();if(!npNet.length)toast('ไม่พบเครื่องพิมพ์ Wi‑Fi — เครื่องพิมพ์ต้องต่อ Wi‑Fi เดียวกับ Mac ก่อน','err')}catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน'}});
 $('#npAddIpBtn').addEventListener('click',async()=>{const host=$('#npHost').value.trim();try{await npAdd({connection:'network',host,port:Number($('#npPort').value||9100),name:'Wi‑Fi '+host});$('#npHost').value=''}catch(e){toast(e.message,'err')}});
 $('#npList').addEventListener('click',async e=>{
   const tb=e.target.closest('[data-np-test]');
-  if(tb){tb.disabled=true;const old=tb.textContent;tb.textContent='กำลังพิมพ์…';try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('พิมพ์ทดสอบแล้ว ✓','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false;tb.textContent=old}return;}
+  if(tb){tb.disabled=true;const old=tb.textContent;tb.textContent='กำลังพิมพ์…';try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('พิมพ์ทดสอบแล้ว ','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false;tb.textContent=old}return;}
   const db=e.target.closest('[data-np-del]');
   if(db&&confirm('ลบเครื่องพิมพ์นี้?')){try{await apiJson('/api/printers/'+db.dataset.npDel,'DELETE');loadNetPrinters()}catch(err){toast(err.message,'err')}}
 });
 async function refreshPrintStatus(){
   const b=$('#printFailBanner');if(!b||!currentBranchId||!me||me.role==='super_admin'&&!me.tenant)return;
-  try{const r=await api('/api/printers?branch_id='+currentBranchId);b.classList.toggle('hidden',!r.failed);b.textContent=`🖨 พิมพ์ไม่สำเร็จ ${r.failed} งาน — แตะเพื่อพิมพ์ซ้ำ`;}catch(e){}
+  try{const r=await api('/api/printers?branch_id='+currentBranchId);b.classList.toggle('hidden',!r.failed);b.textContent=`พิมพ์ไม่สำเร็จ ${r.failed} งาน — แตะเพื่อพิมพ์ซ้ำ`;}catch(e){}
 }
 $('#printFailBanner').addEventListener('click',async()=>{
   try{
@@ -1994,11 +1994,11 @@ async function loadLocalPanel(){
   $('#localPanel').classList.remove('hidden');
   $('#lpVersion').textContent=`ZaabOS เวอร์ชัน ${st.version} · ข้อมูลอยู่ที่ ${st.data_dir}`;
   $('#lpUpdateText').textContent=st.update?`มีเวอร์ชันใหม่ ${st.update.version}`:`เวอร์ชัน ${st.version}`;
-  $('#lpUpdateBtn').textContent=st.update?`⬆️ อัปเดตเป็น ${st.update.version}`:'ตรวจหาอัปเดต';
+  $('#lpUpdateBtn').textContent=st.update?`อัปเดตเป็น ${st.update.version}`:'ตรวจหาอัปเดต';
   $('#lpUpdateBtn').dataset.ready=st.update?'1':'';
   $('#lpAutostart').checked=!!st.autostart;
   $('#lpAddress').value=st.address_mode||'ip';
-  $('#lpAddressHelp').innerHTML=`ตอนนี้: <b>${escapeHtml(st.public_url||'')}</b>${st.address_warning?'<br>⚠️ '+escapeHtml(st.address_warning):''}<br>ชื่อเครื่อง = ${escapeHtml(st.hostname)} (ไม่เปลี่ยนแม้ IP เปลี่ยน แต่มือถือ Android บางรุ่นอาจเปิดไม่ได้) · แนะนำ: ใช้ IP แล้วล็อก IP ที่เราเตอร์ (DHCP reservation)`;
+  $('#lpAddressHelp').innerHTML=`ตอนนี้: <b>${escapeHtml(st.public_url||'')}</b>${st.address_warning?'<br><i class="ic ic-triangle-alert" aria-hidden="true"></i> '+escapeHtml(st.address_warning):''}<br>ชื่อเครื่อง = ${escapeHtml(st.hostname)} (ไม่เปลี่ยนแม้ IP เปลี่ยน แต่มือถือ Android บางรุ่นอาจเปิดไม่ได้) · แนะนำ: ใช้ IP แล้วล็อก IP ที่เราเตอร์ (DHCP reservation)`;
   $('#lpMirror').textContent=st.mirror_dir?`สำรองอัตโนมัติทุก 2 ชั่วโมง และคัดลอกไปที่ ${st.mirror_dir} (อยู่รอดแม้เครื่องเสีย)`:'สำรองอัตโนมัติทุก 2 ชั่วโมง (ยังไม่มีที่เก็บนอกเครื่อง — เปิด iCloud Drive / OneDrive เพื่อให้คัดลอกอัตโนมัติ)';
   $('#lpBackups').innerHTML=(st.backups||[]).slice(0,10).map(b=>`<div class="np-row"><div><b>${escapeHtml(new Date(b.mtime*1000).toLocaleString(localeFor(currentLang)))}</b><small>${escapeHtml(b.where)} · ${(b.bytes/1024).toFixed(0)} KB · ${escapeHtml(b.file)}</small></div><div class="np-actions"><button class="ghost-btn" data-lp-restore="${escapeHtml(b.file)}">กู้คืน</button></div></div>`).join('');
 }
@@ -2022,7 +2022,7 @@ $('#lpImportBtn').addEventListener('click',async()=>{const b=$('#lpImportBtn');
 
 try { const v = localStorage.getItem('zaabos_send_kitchen'); if (v !== null && $('#takeOrderSendKitchen')) $('#takeOrderSendKitchen').checked = v === '1'; } catch (e) {}
 
-$('#lpHealthBtn').addEventListener('click',async()=>{const b=$('#lpHealthBtn');b.disabled=true;try{const r=await api('/api/local/health');const icon={ok:'🟢',warn:'🟡',bad:'🔴'};
+$('#lpHealthBtn').addEventListener('click',async()=>{const b=$('#lpHealthBtn');b.disabled=true;try{const r=await api('/api/local/health');const icon={ok:'',warn:'',bad:''};
   const bad=r.checks.filter(c=>c.level!=='ok').length;
-  $('#lpHealth').innerHTML=`<div class="np-row"><b>${bad?`ต้องดู ${bad} เรื่อง`:'ทุกอย่างปกติ ✓ ปิดร้านได้'}</b></div>`+r.checks.map(c=>`<div class="np-row"><div><b>${icon[c.level]} ${escapeHtml(c.title)}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</div></div>`).join('');
+  $('#lpHealth').innerHTML=`<div class="np-row"><b>${bad?`ต้องดู ${bad} เรื่อง`:'ทุกอย่างปกติ <i class="ic ic-check" aria-hidden="true"></i> ปิดร้านได้'}</b></div>`+r.checks.map(c=>`<div class="np-row"><div><b>${icon[c.level]} ${escapeHtml(c.title)}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</div></div>`).join('');
 }catch(e){toast(e.message,'err')}finally{b.disabled=false}});

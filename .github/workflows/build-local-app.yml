@@ -1,7 +1,7 @@
 name: Build ZaabOS Local (Windows + macOS)
 on:
   push:
-    branches: [step3-6-shop-ready, main]
+    branches: [ux/icons-windows-parity, main]
     tags: ['local-v*']
   pull_request:
     branches: [main]
@@ -57,6 +57,27 @@ jobs:
           grep -q '<title>ZaabOS' "$RUNNER_TEMP/zaabos-home.html"
           test -f "$RUNNER_TEMP/zaabos-data/zaabos.db"
           ls "$RUNNER_TEMP/zaabos-data/backups" | grep zaabos_local_ >/dev/null
+      - name: Windows crash restart + spooler (real install mode)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -c "import sys; sys.path.insert(0,'.'); import printing; q=printing.system_queues(); print('printers:', q); assert q, 'no Windows printers listed'"
+          $env:ZAABOS_UPDATE_FEED = 'http://127.0.0.1:9/none'   # no update check traffic in CI
+          $sup = Start-Process -FilePath dist/ZaabOS/ZaabOS.exe -PassThru -WindowStyle Hidden
+          function Up { try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:8080/healthz).StatusCode -eq 200 } catch { $false } }
+          for ($i=0; $i -lt 60 -and -not (Up); $i++) { Start-Sleep 1 }
+          if (-not (Up)) { throw 'POS did not start under the supervisor' }
+          $worker = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--worker*' -and $_.Name -eq 'ZaabOS.exe' } | Select-Object -First 1
+          if (-not $worker) { throw 'no worker process found' }
+          Stop-Process -Id $worker.ProcessId -Force          # crash
+          Start-Sleep 2
+          for ($i=0; $i -lt 30 -and -not (Up); $i++) { Start-Sleep 1 }
+          if (-not (Up)) { throw 'POS was not restarted after a crash' }
+          $again = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--worker*' -and $_.Name -eq 'ZaabOS.exe' } | Select-Object -First 1
+          if ($again.ProcessId -eq $worker.ProcessId) { throw 'same worker pid' }
+          Write-Host "restarted: $($worker.ProcessId) -> $($again.ProcessId)"
+          Get-Process ZaabOS -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 2
       # Zip it ourselves: upload-artifact drops the .app folder and its internal symlinks, which
       # leaves a Mac bundle that fails with "Failed to load Python shared library".
       - name: Package

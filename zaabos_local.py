@@ -139,7 +139,10 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
 
     class ZaabOSMenu(rumps.App):
         def __init__(self):
-            super().__init__('ZaabOS', title='🍜', quit_button=None)
+            icon = Path(__file__).resolve().parent / 'static' / 'menubar-icon.png'
+            # Brand icon in the menu bar (no emoji: consistent on every Mac); text fallback if missing.
+            super().__init__('ZaabOS', title=None if icon.exists() else 'ZaabOS', icon=str(icon) if icon.exists() else None,
+                             template=False, quit_button=None)
             self.update_info = None
             self.autostart_item = rumps.MenuItem('เปิดอัตโนมัติเมื่อเปิดเครื่อง', callback=self.toggle_autostart)
             self.autostart_item.state = local_ops.autostart_enabled()
@@ -162,9 +165,9 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
 
         def found_update(self, info):
             self.update_info = info
-            self.update_item.title = f'⬆️ อัปเดตเป็นเวอร์ชัน {info["version"]}'
-            self.title = '🍜•'
-            notify('มีเวอร์ชันใหม่', f'กด 🍜 → อัปเดตเป็นเวอร์ชัน {info["version"]}')
+            self.update_item.title = f'อัปเดตเป็นเวอร์ชัน {info["version"]} (ใหม่)'
+            self.title = ' ใหม่'
+            notify('มีเวอร์ชันใหม่', f'กดไอคอน ZaabOS ด้านบนจอ → อัปเดตเป็นเวอร์ชัน {info["version"]}')
 
         def open_pos(self, _):
             open_url(local_url)
@@ -213,7 +216,7 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
             except Exception as exc:
                 rumps.alert('ตรวจไม่สำเร็จ', str(exc))
                 return
-            icon = {'ok': '🟢', 'warn': '🟡', 'bad': '🔴'}
+            icon = {'ok': '✓', 'warn': '!', 'bad': '✗'}
             bad = sum(c['level'] != 'ok' for c in checks)
             rumps.alert('ทุกอย่างปกติ ✓' if not bad else f'ต้องดู {bad} เรื่อง',
                         '\n'.join(f"{icon[c['level']]} {c['title']}" + (f"\n     {c['detail']}" if c['detail'] and c['level'] != 'ok' else '') for c in checks))
@@ -273,6 +276,7 @@ def main(argv=None):
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--data-dir', default=None)
     ap.add_argument(local_ops.LAUNCHD_FLAG, dest='from_launchd', action='store_true', help=argparse.SUPPRESS)
+    ap.add_argument('--worker', action='store_true', help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     local_url = f'http://127.0.0.1:{args.port}'
@@ -297,6 +301,12 @@ def main(argv=None):
             print(f'[ZaabOS] auto-start not set: {exc}', flush=True)
         cfg['autostart_initialized'] = True
         local_ops.save_config(data_dir, cfg)
+    if real_install and sys.platform.startswith('win') and not args.worker:
+        # Windows has no launchd: this copy stays as a small supervisor that restarts the POS if it crashes.
+        env = dict(os.environ, ZAABOS_SUPERVISOR_PID=str(os.getpid()))
+        cmd = [sys.executable, '--worker'] + [a for a in (argv if argv is not None else sys.argv[1:])]
+        print('[ZaabOS] supervisor running — the POS restarts itself if it crashes', flush=True)
+        return local_ops.supervise(cmd, env=env)
     if real_install and not args.from_launchd and local_ops.launchd_handoff():
         print('[ZaabOS] started under launchd (restarts itself if it crashes)', flush=True)
         return 0

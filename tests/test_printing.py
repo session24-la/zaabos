@@ -325,3 +325,53 @@ def test_confirm_order_sends_to_kitchen_in_one_step(shop, local_print):
     assert sent == 2
     printing.process_once(core)
     assert _wait(lambda: len(local_print.received) == 2)
+
+
+class FakeWin32Print:
+    PRINTER_ENUM_LOCAL, PRINTER_ENUM_CONNECTIONS, JOB_CONTROL_DELETE = 2, 4, 5
+
+    def __init__(self, takes_job=True):
+        self.takes_job, self.written, self.deleted = takes_job, b'', []
+
+    def EnumPrinters(self, flags, name, level):
+        return [(0, 'desc', 'RONGTA 80mm', '')]
+
+    def OpenPrinter(self, name):
+        return 'h'
+
+    def StartDocPrinter(self, h, level, info):
+        assert info[2] == 'RAW'
+        return 42
+
+    def StartPagePrinter(self, h): pass
+    def EndPagePrinter(self, h): pass
+    def EndDocPrinter(self, h): pass
+    def ClosePrinter(self, h): pass
+
+    def WritePrinter(self, h, data):
+        self.written += data
+
+    def EnumJobs(self, h, first, n, level):
+        return [] if self.takes_job else [{'JobId': 42}]
+
+    def SetJob(self, h, job, level, info, cmd):
+        self.deleted.append(job)
+
+
+def test_windows_usb_printing_through_spooler(monkeypatch):
+    wp = FakeWin32Print()
+    monkeypatch.setattr(printing.sys, 'platform', 'win32')
+    monkeypatch.setattr(printing, '_win32print', lambda: wp)
+    assert printing.system_queues() == ['RONGTA 80mm']
+    assert printing.system_printers() == [{'queue': 'RONGTA 80mm', 'label': 'RONGTA 80mm'}]
+    printing.send_system('RONGTA 80mm', b'\x1b@ticket', wait=1)
+    assert wp.written == b'\x1b@ticket' and not wp.deleted
+
+
+def test_windows_usb_printer_offline_job_is_deleted(monkeypatch):
+    wp = FakeWin32Print(takes_job=False)
+    monkeypatch.setattr(printing.sys, 'platform', 'win32')
+    monkeypatch.setattr(printing, '_win32print', lambda: wp)
+    with pytest.raises(OSError):
+        printing.send_system('RONGTA 80mm', b'\x1b@ticket', wait=0.3)
+    assert wp.deleted == [42], 'a job the printer did not take must be removed from the spooler'
