@@ -50,6 +50,19 @@ def test_backup_is_mirrored_off_machine_and_pruned(tmp_path, monkeypatch):
     assert local_ops.mirror_backup(tmp_path, f) is None, 'owner can switch the copy off'
 
 
+def test_only_the_installed_shop_copies_to_icloud_by_default(tmp_path, monkeypatch):
+    cloud = tmp_path / 'iCloud' / 'ZaabOS Backups'
+    monkeypatch.setattr(local_ops, 'default_mirror_dir', lambda: cloud)
+    install = tmp_path / 'install'; install.mkdir()
+    monkeypatch.setattr(local_ops, 'install_data_dir', lambda: install)
+    monkeypatch.setenv('ZAABOS_DATA_DIR', str(tmp_path / 'test-run'))   # what zaabos_local exports for --data-dir
+    assert local_ops.mirror_dir(install) == cloud
+    other = tmp_path / 'test-run'; other.mkdir()
+    assert local_ops.mirror_dir(other) is None, 'a test/dev instance must not evict the shop backups'
+    local_ops.save_config(other, {'mirror_dir': str(tmp_path / 'mine')})
+    assert local_ops.mirror_dir(other) == tmp_path / 'mine'
+
+
 def test_restore_swaps_database_on_next_start_and_keeps_the_old_one(tmp_path):
     data = tmp_path / 'data'; (data / 'backups').mkdir(parents=True)
     _zaabos_db(data / 'zaabos.db', orders=1)

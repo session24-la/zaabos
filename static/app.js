@@ -32,6 +32,8 @@ let cart = []; // staff take-order cart: {menu_item_id,name,unit_price,qty,selec
 let pendingCartItem = null; // item being configured in the option picker
 let activeOrders = []; // live, non-terminal orders for the current branch (feeds the table board + side panel)
 let ordersPollTimer = null;
+let printFailures = 0; // failed print jobs on this branch (header printer badge + notifications)
+let customerOrdersCache = []; // orders opened from the Customers page, so bill actions can find them
 
 let zaabosOfflineMode=false, zaabosSyncRunning=false, offlineOutboxRows=[];
 const ZAABOS_OFFLINE_DB='ZaabOSOfflineV1', ZAABOS_OFFLINE_MAX_AGE=24*60*60*1000;
@@ -160,8 +162,12 @@ function apiJson(url, method, data) {
 
 function openModal(sel) { $(sel).classList.add('show'); }
 function closeModals() { $$('.modal').forEach(m => m.classList.remove('show')); }
+// × or a tap on the dimmed backdrop closes that sheet only (an option picker over the order workspace
+// must not throw away the order being taken).
 document.addEventListener('click', (e) => {
-  if (e.target.matches('[data-close]') || e.target.classList.contains('modal')) closeModals();
+  const x = e.target.closest('[data-close]');
+  if (x) { const m = x.closest('.modal'); if (m) m.classList.remove('show'); else closeModals(); }
+  else if (e.target.classList.contains('modal') && !e.target.classList.contains('workspace')) e.target.classList.remove('show');
 });
 
 // ===================== i18n wiring =====================
@@ -173,6 +179,8 @@ onLangChange(() => {
   applyI18n();
   if (me) {
     $('#whoRole').textContent = t('role_' + me.role) || me.role;
+    $('#navUserRole').textContent = $('#whoRole').textContent;
+    buildMoreMenu();
     refreshCurrentTab();
   }
   if ($('#menuItemModal').classList.contains('show')) renderMenuItemImagePreview();
@@ -221,6 +229,9 @@ async function afterLogin() {
   $('#whoAvatar').textContent = (me.display_name || me.username || '?').slice(0, 1).toUpperCase();
   $('#whoName').textContent = me.display_name || me.username;
   $('#whoRole').textContent = t('role_' + me.role) || me.role;
+  $('#navUserAvatar').textContent = $('#whoAvatar').textContent;
+  $('#navUserName').textContent = me.display_name || me.username;
+  $('#navUserRole').textContent = t('role_' + me.role) || me.role;
 
   if (me.role === 'super_admin') {
     $('#tenantSwitcher').classList.remove('hidden');
@@ -235,12 +246,14 @@ async function afterLogin() {
   }
 
   applyRoleVisibility();
+  buildMoreMenu();
 
   if (me.must_change_password) openModal('#pwModal');
 
   await loadBootstrap();
   renderBranchSelect();
-  switchTab('orders');
+  switchTab(['owner', 'manager', 'super_admin'].includes(me.role) ? 'dashboard' : 'orders');
+  refreshPosShiftBadge(); refreshPrintStatus();
 
   if (ordersPollTimer) clearInterval(ordersPollTimer);
   ordersPollTimer = setInterval(() => { if (me) loadBoardData(); }, 8000);
@@ -252,7 +265,8 @@ function applyRoleVisibility() {
   $$('.tabs button[data-tab="branches"], .tabs button[data-tab="users"]').forEach(b => {
     b.classList.toggle('hidden', !isOwner);
   });
-  $$('.tabs button[data-tab="reports"], .tabs button[data-tab="pricing"], .tabs button[data-tab="inventory"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
+  $$('.tabs button[data-tab="reports"], .tabs button[data-tab="pricing"], .tabs button[data-tab="inventory"], .tabs button[data-tab="dashboard"]').forEach(b => b.classList.toggle('hidden', !isManagerPlus));
+  $$('#settingsList [data-need]').forEach(b => b.classList.toggle('hidden', b.dataset.need === 'owner' ? !isOwner : !isManagerPlus));
   $('#addTableBtn').classList.toggle('hidden', !isManagerPlus);
   $('#bulkAddTablesBtn').classList.toggle('hidden', !isManagerPlus);
   $('#addCategoryBtn').classList.toggle('hidden', !isManagerPlus);
@@ -275,7 +289,7 @@ function renderBranchSelect() {
   sel.innerHTML = boot.branches.map(b => `<option value="${b.id}">${escapeHtml(iconText(b.icon))} ${escapeHtml(b.name)}</option>`).join('');
   if (currentBranchId) sel.value = String(currentBranchId);
   sel.onchange = () => { currentBranchId = parseInt(sel.value, 10); refreshCurrentTab(); };
-  $('#branchScopeBar').classList.toggle('hidden', boot.branches.length === 0 && me.role !== 'owner' && me.role !== 'super_admin');
+  $('#branchScopeBar').classList.toggle('hidden', boot.branches.length <= 1);
 }
 
 function branchTables() { return boot.tables.filter(t => t.branch_id === currentBranchId); }
@@ -284,32 +298,63 @@ function branchItems() { return boot.items.filter(i => i.branch_id === currentBr
 
 // ===================== Tabs =====================
 
+// Sub-pages reached from Settings keep "ตั้งค่า" highlighted in the sidebar.
+const NAV_PARENT = { tables: 'settings', pricing: 'settings', receiptsettings: 'settings', branches: 'settings', inventory: 'settings' };
+let currentTab = 'orders';
+function setNavActive(tab) {
+  const navTab = NAV_PARENT[tab] || tab;
+  $$('#mainTabs button[data-tab], #moreNavMenu button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === navTab));
+  const more = $('#moreNavBtn');
+  if (more) more.classList.toggle('active', !!$('#moreNavMenu button.active'));
+}
+function closeMoreMenu() { $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded', 'false'); }
+function navigate(tab, anchor) {
+  closeMoreMenu();
+  if (tab === 'takeorder') { openTakeOrderForTable(); return; }
+  closeModals();
+  switchTab(tab);
+  if (anchor) setTimeout(() => { const el = document.getElementById(anchor); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 250);
+}
 $('#mainTabs').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-tab]');
-  if (btn) { switchTab(btn.dataset.tab); $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded','false'); }
+  if (btn) navigate(btn.dataset.tab);
+});
+document.addEventListener('click', (e) => {
+  const go = e.target.closest('[data-goto-tab]');
+  if (go) navigate(go.dataset.gotoTab, go.dataset.gotoAnchor);
 });
 $('#moreNavBtn').addEventListener('click', (e) => {
   e.stopPropagation();
-  const menu=$('#moreNavMenu'); const open=menu.classList.toggle('hidden');
+  const menu = $('#moreNavMenu'); const open = menu.classList.toggle('hidden');
   $('#moreNavBtn').setAttribute('aria-expanded', String(!open));
 });
-document.addEventListener('click', (e) => { if (!e.target.closest('.nav-more-wrap')) { $('#moreNavMenu').classList.add('hidden'); $('#moreNavBtn').setAttribute('aria-expanded','false'); } });
-let historyView='orders';
-$('#historyWorkspaceSwitch').addEventListener('click',e=>{const b=e.target.closest('[data-history-view]');if(!b)return;historyView=b.dataset.historyView;$$('#historyWorkspaceSwitch button').forEach(x=>x.classList.toggle('active',x===b));$('#ordersList').classList.toggle('hidden',historyView!=='orders');$('#historyKitchenWorkspace').classList.toggle('hidden',historyView!=='kitchen');if(historyView==='kitchen')loadHistoryKitchen();});
+document.addEventListener('click', (e) => { if (!e.target.closest('.nav-more-wrap')) closeMoreMenu(); });
+// Phones show 5 tabs at the bottom; everything else goes into "เพิ่มเติม".
+function buildMoreMenu() {
+  $('#moreNavMenu').innerHTML = $$('#mainTabs .nav-list > button[data-tab]').filter(b => !b.classList.contains('nav-phone') && !b.classList.contains('hidden'))
+    .map(b => `<button type="button" data-tab="${b.dataset.tab}">${b.querySelector('.tab-ic').outerHTML}<span class="tab-lb">${escapeHtml(b.querySelector('.tab-lb').textContent)}</span></button>`).join('');
+  setNavActive(currentTab);
+}
 
 function switchTab(tab) {
-  $$('#mainTabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  if (!$('#tab-' + tab)) tab = 'orders';
+  currentTab = tab;
+  setNavActive(tab);
   $$('.tab-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'tab-' + tab));
+  if (tab !== 'kitchen') unloadKitchenFrame();
+  window.scrollTo(0, 0);
   refreshCurrentTab(tab);
 }
-function activeTab() {
-  const b = $('#mainTabs button.active');
-  return b ? b.dataset.tab : 'orders';
-}
+function activeTab() { return currentTab; }
 function refreshCurrentTab(tab) {
   if (!me) return;
   tab = tab || activeTab();
   if (tab === 'orders') { loadBoardData(); }
+  else if (tab === 'dashboard') loadDashboard();
+  else if (tab === 'kitchen') loadKitchenFrame();
+  else if (tab === 'billing') loadBoardData();
+  else if (tab === 'customers') loadCustomers();
+  else if (tab === 'settings') renderSettingsHub();
   else if (tab === 'history') loadOrders();
   else if (tab === 'tables') renderTables();
   else if (tab === 'menu') loadBootstrap().then(renderMenu); // re-fetch so stock counts (which change from orders placed elsewhere — staff or customer QR) are current whenever this tab is opened
@@ -433,6 +478,7 @@ function renderReportCards(s) {
   const pb=$('#paymentBreakdown'); if(pb) pb.innerHTML=(s.payment_breakdown||[]).length ? s.payment_breakdown.map(x=>`<div class="report-card"><div class="rc-label">${labels[x.payment_method]||escapeHtml(x.payment_method)}</div><div class="rc-value">${fmtMoney(x.total)}</div><div class="hint">${x.count} รายการ</div></div>`).join('') : emptyState('<i class="ic ic-credit-card" aria-hidden="true"></i>','ยังไม่มีรายการชำระเงิน');
   renderCancellationReport(s.cancellations||{});
   renderShiftReport(s.shifts||[]);
+  if($('#reportHourly'))$('#reportHourly').innerHTML=hourChartHtml(s.hourly||[],null);
 }
 function renderShiftReport(rows){const el=$('#shiftReport');if(!el)return;
   if(!rows.length){el.innerHTML=emptyState('','ยังไม่มีกะในช่วงวันที่เลือก');return}
@@ -553,9 +599,10 @@ function renderTables() {
   const grid = $('#tableGrid');
   const tables = branchTables();
   if (!tables.length) { grid.innerHTML = emptyState('', t('empty_tables')); return; }
+  fillZoneOptions();
   grid.innerHTML = tables.map(t => `
     <div class="table-chip">
-      <div class="tc-name"><i class="ic ic-table-2" aria-hidden="true"></i>${escapeHtml(t.name)}</div>
+      <div class="tc-name"><i class="ic ic-table-2" aria-hidden="true"></i>${escapeHtml(t.name)}${t.zone ? `<span class="tc-zone">${escapeHtml(t.zone)}</span>` : ''}</div>
       <div class="tc-actions">
         <button class="tc-qr" data-qr="${t.id}"><i class="ic ic-qr-code" aria-hidden="true"></i> QR</button>
         <button data-edit-table="${t.id}" title="แก้ไข" aria-label="แก้ไข"><i class="ic ic-pencil" aria-hidden="true"></i></button>
@@ -564,34 +611,37 @@ function renderTables() {
     </div>`).join('');
 }
 $('#addTableBtn').addEventListener('click', () => {
-  $('#tableModalTitle').textContent = t('modal_add_table_title'); $('#tableId').value = ''; $('#tableName').value = ''; $('#tableError').textContent = '';
+  $('#tableModalTitle').textContent = t('modal_add_table_title'); $('#tableId').value = ''; $('#tableName').value = ''; $('#tableZone').value = floorZone || ''; $('#tableError').textContent = '';
   openModal('#tableModal');
 });
 $('#tableSave').addEventListener('click', async () => {
   $('#tableError').textContent = '';
-  const id = $('#tableId').value, name = $('#tableName').value.trim();
+  const id = $('#tableId').value, name = $('#tableName').value.trim(), zone = $('#tableZone').value.trim();
   if (!name) { $('#tableError').textContent = t('err_table_name_required'); return; }
   try {
-    if (id) await apiJson('/api/tables/' + id, 'PUT', { name });
-    else await apiJson('/api/tables', 'POST', { name, branch_id: currentBranchId });
+    if (id) await apiJson('/api/tables/' + id, 'PUT', { name, zone });
+    else await apiJson('/api/tables', 'POST', { name, zone, branch_id: currentBranchId });
     closeModals(); await loadBootstrap(); renderTables(); toast(t('toast_saved'), 'ok');
   } catch (e) { $('#tableError').textContent = e.message; }
 });
-$('#bulkAddTablesBtn').addEventListener('click', () => { $('#bulkTableError').textContent = ''; $('#bulkTableCount').value = 10; openModal('#bulkTableModal'); });
+$('#bulkAddTablesBtn').addEventListener('click', () => { $('#bulkTableError').textContent = ''; $('#bulkTableCount').value = 10; $('#bulkTablePrefix').value = ''; $('#bulkTableZone').value = ''; fillZoneOptions(); openModal('#bulkTableModal'); });
 $('#bulkTableSave').addEventListener('click', async () => {
   $('#bulkTableError').textContent = '';
   const count = parseInt($('#bulkTableCount').value, 10);
   try {
-    const r = await apiJson('/api/tables/bulk', 'POST', { branch_id: currentBranchId, count });
+    const r = await apiJson('/api/tables/bulk', 'POST', { branch_id: currentBranchId, count, prefix: $('#bulkTablePrefix').value.trim(), zone: $('#bulkTableZone').value.trim() });
     closeModals(); await loadBootstrap(); renderTables(); toast(t('toast_tables_created', { n: r.created }), 'ok');
   } catch (e) { $('#bulkTableError').textContent = e.message; }
 });
+function branchZones() { return [...new Set(branchTables().map(t => (t.zone || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); }
+function fillZoneOptions() { const dl = $('#zoneOptions'); if (dl) dl.innerHTML = branchZones().map(z => `<option value="${escapeHtml(z)}">`).join(''); }
 $('#tableGrid').addEventListener('click', (e) => {
-  const qrId = e.target.dataset.qr, editId = e.target.dataset.editTable, delId = e.target.dataset.delTable;
+  const b = e.target.closest('[data-qr],[data-edit-table],[data-del-table]'); if (!b) return;
+  const qrId = b.dataset.qr, editId = b.dataset.editTable, delId = b.dataset.delTable;
   if (qrId) showTableQr(parseInt(qrId, 10));
   else if (editId) {
     const tb = boot.tables.find(x => x.id === parseInt(editId, 10));
-    $('#tableModalTitle').textContent = t('modal_edit_table_title'); $('#tableId').value = tb.id; $('#tableName').value = tb.name; $('#tableError').textContent = '';
+    $('#tableModalTitle').textContent = t('modal_edit_table_title'); $('#tableId').value = tb.id; $('#tableName').value = tb.name; $('#tableZone').value = tb.zone || ''; $('#tableError').textContent = ''; fillZoneOptions();
     openModal('#tableModal');
   } else if (delId) {
     if (!confirm(t('confirm_delete_table'))) return;
@@ -986,6 +1036,7 @@ async function loadOrders() {
   if (status) qs.set('status', status);
   if(currentBranchId)qs.set('branch_id',currentBranchId);
   const d=historyDateBounds(); if(d.from)qs.set('date_from',d.from); if(d.to)qs.set('date_to',d.to);
+  const text=($('#historySearch')?.value||'').trim(); if(text){qs.set('q',text);qs.delete('date_from');qs.delete('date_to');}
   const r = await api('/api/orders?' + qs.toString());
   renderOrdersList(r.orders);
 }
@@ -993,13 +1044,9 @@ $('#orderStatusFilter').addEventListener('change', loadOrders);
 $('#historyDateRange')?.addEventListener('change',()=>{syncHistoryDateControls();loadOrders()});
 $('#historyDateFrom')?.addEventListener('change',loadOrders); $('#historyDateTo')?.addEventListener('change',loadOrders);
 syncHistoryDateControls();
-$('#refreshOrdersBtn').addEventListener('click',()=>{loadOrders();if(historyView==='kitchen')loadHistoryKitchen();});
+$('#refreshOrdersBtn').addEventListener('click',loadOrders);
+let historySearchTimer=null;$('#historySearch').addEventListener('input',()=>{clearTimeout(historySearchTimer);historySearchTimer=setTimeout(loadOrders,300)});
 $('#refreshPosBtn').addEventListener('click', loadBoardData);
-async function loadHistoryKitchenStations(){if(!currentBranchId)return;try{const rows=await api('/api/kitchen/stations?branch_id='+currentBranchId),sel=$('#historyKitchenStation'),cur=sel.value;sel.innerHTML='<option value="">ทุกสถานี</option>'+rows.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');sel.value=rows.some(x=>String(x.id)===cur)?cur:'';}catch(e){}}
-async function loadHistoryKitchen(){if(!currentBranchId)return;await loadHistoryKitchenStations();const qs=new URLSearchParams({branch_id:currentBranchId}),station=$('#historyKitchenStation').value;if(station)qs.set('station_id',station);try{const r=await api('/api/kitchen/orders?'+qs),rows=(r.orders||[]).filter(o=>['received','preparing','ready'].includes(o.status));$('#historyKitchenCount').textContent=rows.length;$('#historyKitchenBoard').innerHTML=rows.length?rows.map(o=>`<article class="hk-card ${o.status}"><div class="hk-head"><div><b>#${escapeHtml(o.order_no)}</b><span>${escapeHtml(o.table_name_snapshot||orderTypeLabel(o.order_type))}</span></div><time>${fmtClock(o.created_at)}</time></div><div class="hk-items">${o.items.filter(it=>it.kitchen_sent_at&&Number(it.quantity||0)>Number(it.cancelled_quantity||0)).map(it=>`<div><b>${Number(it.quantity||0)-Number(it.cancelled_quantity||0)}×</b><span>${escapeHtml(it.item_name_snapshot)}</span></div>`).join('')}</div><div class="hk-actions">${o.status!=='ready'?`<button data-hk-status="${o.id}:ready" class="hk-ready"> พร้อมเสิร์ฟ</button>`:`<button data-hk-status="${o.id}:served" class="hk-served"> เสิร์ฟแล้ว</button>`}</div></article>`).join(''):emptyState('','ไม่มีออเดอร์ที่ต้องติดตามในครัว');}catch(e){toast(e.message,'err')}}
-$('#historyKitchenStation').addEventListener('change',loadHistoryKitchen);
-$('#historyKitchenBoard').addEventListener('click',async e=>{const b=e.target.closest('[data-hk-status]');if(!b)return;const [id,status]=b.dataset.hkStatus.split(':');try{await apiJson('/api/orders/'+id+'/status','PUT',{status});toast(status==='ready'?'พร้อมเสิร์ฟแล้ว':'บันทึกว่าเสิร์ฟแล้ว','ok');loadHistoryKitchen();loadOrders();}catch(err){toast(err.message,'err')}});
-
 function fmtClock(iso) {
   try { return zaabosTime(iso); }
   catch (e) { return ''; }
@@ -1277,7 +1324,7 @@ async function splitOrder(sourceId){
 function onOrderActionDone() { loadOrders(); loadBoardData(); }
 
 function findOrderById(orderId) {
-  return activeOrders.find(x => x.id === orderId) || lastOrdersFlat.find(x => x.id === orderId);
+  return activeOrders.find(x => x.id === orderId) || lastOrdersFlat.find(x => x.id === orderId) || customerOrdersCache.find(x => x.id === orderId);
 }
 
 let cpOrderId=null,extraPaymentParts=[];
@@ -1319,7 +1366,7 @@ $('#cpCashQuick').addEventListener('click',e=>{const b=e.target.closest('[data-c
 $('#cpPrimaryAmount').addEventListener('input',renderCashQuick);
 $('#cpAddPayment').addEventListener('click',()=>{const due=cpBaseDue(),paid=Number($('#cpPrimaryAmount').value||0)+extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);extraPaymentParts.push({method:'qr',amount:Math.max(0,due-paid)});renderPaymentParts()});
 $('#cpPaymentParts').addEventListener('input',e=>{let i=e.target.dataset.partAmount;if(i!==undefined)extraPaymentParts[+i].amount=Number(e.target.value||0);i=e.target.dataset.partMethod;if(i!==undefined)extraPaymentParts[+i].method=e.target.value;updateCpPaymentSummary()});$('#cpPaymentParts').addEventListener('click',e=>{const i=e.target.dataset.removePart;if(i!==undefined){extraPaymentParts.splice(+i,1);renderPaymentParts()}});
-$('#cpSubmit').addEventListener('click',async()=>{if(cpOrderId==null)return;$('#cpError').textContent='';const id=cpOrderId,method=$('#cpMethod').value,primary=Number($('#cpPrimaryAmount').value||0);if(primary<=0){$('#cpError').textContent='กรุณาระบุยอดชำระ';return}const parts=[{method,amount:primary,cash_received:method==='cash'?(Number($('#cpCash').value||0)||primary):null},...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))],due=cpBaseDue(),paid=parts.reduce((a,x)=>a+Number(x.amount||0),0);if(Math.abs(paid-due)>.005){$('#cpError').textContent=`ยอดชำระยังไม่ครบ: ชำระ ${fmtMoney(paid)} / ${fmtMoney(due)}`;return}if(parts.some(x=>x.amount<=0)){ $('#cpError').textContent='ยอดแต่ละช่องทางต้องมากกว่า 0';return}const payload={payment_status:'paid',payment_method:method,payments:parts},promo=$('#cpPromo').value.trim(),disc=$('#cpDiscount').value.trim(),dr=$('#cpDiscountReason').value.trim(),au=$('#cpApprovalUser').value.trim(),ap=$('#cpApprovalPass').value;if(promo)payload.promotion_code=promo;if(disc)payload.discount_amount=parseFloat(disc);if(dr)payload.discount_reason=dr;if(au)payload.approval_username=au;if(ap)payload.approval_password=ap;try{const result=await apiJson('/api/orders/'+id+'/payment','PUT',{...payload,client_request_id:cpRequestKey});toast('ชำระเงินสำเร็จ · '+result.payments.map(x=>paymentMethodName(x.method)+' '+fmtMoney(x.amount)).join(' + '),'ok');closeModals();cpOrderId=null;const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId||''));lastOrdersFlat=fresh.orders||[];activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');renderTableBoard();renderOtherOrders();renderSidePanel();printReceipt(id)}catch(e){$('#cpError').textContent=e.message;if(e.code==='shift_required')showCheckoutShiftBox(true)}});
+$('#cpSubmit').addEventListener('click',async()=>{if(cpOrderId==null)return;$('#cpError').textContent='';const id=cpOrderId,method=$('#cpMethod').value,primary=Number($('#cpPrimaryAmount').value||0);if(primary<=0){$('#cpError').textContent='กรุณาระบุยอดชำระ';return}const parts=[{method,amount:primary,cash_received:method==='cash'?(Number($('#cpCash').value||0)||primary):null},...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))],due=cpBaseDue(),paid=parts.reduce((a,x)=>a+Number(x.amount||0),0);if(Math.abs(paid-due)>.005){$('#cpError').textContent=`ยอดชำระยังไม่ครบ: ชำระ ${fmtMoney(paid)} / ${fmtMoney(due)}`;return}if(parts.some(x=>x.amount<=0)){ $('#cpError').textContent='ยอดแต่ละช่องทางต้องมากกว่า 0';return}const payload={payment_status:'paid',payment_method:method,payments:parts},promo=$('#cpPromo').value.trim(),disc=$('#cpDiscount').value.trim(),dr=$('#cpDiscountReason').value.trim(),au=$('#cpApprovalUser').value.trim(),ap=$('#cpApprovalPass').value;if(promo)payload.promotion_code=promo;if(disc)payload.discount_amount=parseFloat(disc);if(dr)payload.discount_reason=dr;if(au)payload.approval_username=au;if(ap)payload.approval_password=ap;try{const result=await apiJson('/api/orders/'+id+'/payment','PUT',{...payload,client_request_id:cpRequestKey});toast('ชำระเงินสำเร็จ · '+result.payments.map(x=>paymentMethodName(x.method)+' '+fmtMoney(x.amount)).join(' + '),'ok');closeModals();cpOrderId=null;const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId||''));lastOrdersFlat=fresh.orders||[];activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');renderTableBoard();renderOtherOrders();renderSidePanel();afterBoardData();refreshPosShiftBadge();printReceipt(id)}catch(e){$('#cpError').textContent=e.message;if(e.code==='shift_required')showCheckoutShiftBox(true)}});
 // Step 1: every payment belongs to an open shift. Offer to open one right inside the checkout dialog.
 function showCheckoutShiftBox(show){const b=$('#cpShiftBox');if(b)b.hidden=!show}
 async function checkCheckoutShift(){showCheckoutShiftBox(false);if(!currentBranchId)return;try{const d=await api('/api/operations/shift?branch_id='+currentBranchId);showCheckoutShiftBox(!d.shift)}catch(e){}}
@@ -1438,7 +1485,7 @@ const STATUS_PRIORITY = { received: 0, preparing: 1, ready: 2, served: 3 };
 
 async function refreshPosShiftBadge(){
   const el=$('#posShiftBadge'); if(!el||!currentBranchId)return;
-  try{const d=await api('/api/operations/shift?branch_id='+currentBranchId);if(d.shift){el.className='pos-shift-badge open';el.textContent=`● กะเปิด · ${formatDateTime(d.shift.opened_at)}`;}else{el.className='pos-shift-badge closed';el.textContent='○ ยังไม่เปิดกะ · แตะเพื่อเปิด';}el.onclick=()=>switchTab('operations');}catch(e){el.textContent='กะ: ตรวจสอบไม่ได้';}
+  try{const d=await api('/api/operations/shift?branch_id='+currentBranchId,{silent:true});if(d.shift){el.className='pos-shift-badge open';el.textContent='กะเปิดอยู่';el.title='เปิดกะเมื่อ '+formatDateTime(d.shift.opened_at);}else{el.className='pos-shift-badge closed';el.textContent='ยังไม่เปิดกะ';el.title='แตะเพื่อเปิดกะ';}el.onclick=()=>navigate('operations');}catch(e){el.className='pos-shift-badge';el.textContent='กะ';}
 }
 
 async function loadBoardData() {
@@ -1452,6 +1499,7 @@ async function loadBoardData() {
   renderTableBoard();
   renderOtherOrders();
   renderSidePanel();
+  afterBoardData();
 }
 
 function tableActiveOrders(tableId) {
@@ -1459,9 +1507,35 @@ function tableActiveOrders(tableId) {
     .sort((a, b) => a.id - b.id);
 }
 
+let floorZone = '';
+try { floorZone = localStorage.getItem('zaabos_floor_zone') || ''; } catch (e) {}
+function renderZoneChips() {
+  const zones = branchZones(), box = $('#zoneChips');
+  if (floorZone && !zones.includes(floorZone)) floorZone = '';
+  if (!zones.length) { box.innerHTML = ''; box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const count = z => branchTables().filter(t => !z || (t.zone || '') === z).length;
+  box.innerHTML = [['', 'ทั้งหมด'], ...zones.map(z => [z, z])].map(([z, label]) =>
+    `<button type="button" class="chip ${z === floorZone ? 'active' : ''}" data-zone="${escapeHtml(z)}">${escapeHtml(label)} <small>${count(z)}</small></button>`).join('');
+}
+$('#zoneChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-zone]'); if (!b) return;
+  floorZone = b.dataset.zone; try { localStorage.setItem('zaabos_floor_zone', floorZone); } catch (err) {}
+  renderTableBoard();
+});
+function tableState(orders) {
+  if (!orders.length) return 'free';
+  if (orders.some(o => o.status === 'served')) return 'bill';
+  if (orders.some(o => o.status === 'ready')) return 'ready';
+  return 'busy';
+}
 function renderTableBoard() {
   const board = $('#tableBoard');
-  const tables = branchTables();
+  renderZoneChips();
+  const all = branchTables();
+  const tables = all.filter(t => !floorZone || (t.zone || '') === floorZone);
+  const busy = all.filter(t => tableActiveOrders(t.id).length).length;
+  $('#floorSummary').textContent = all.length ? `ว่าง ${all.length - busy} · มีลูกค้า ${busy} · ทั้งหมด ${all.length} โต๊ะ` : '';
   if (!tables.length) { board.innerHTML = emptyState('', t('empty_tables')); return; }
   board.innerHTML = tables.map(tb => {
     const orders = tableActiveOrders(tb.id);
@@ -1469,25 +1543,23 @@ function renderTableBoard() {
       const local=offlineOutboxRows.filter(x=>x.status!=='conflict'&&x.payload.order_type==='dine_in'&&Number(x.payload.table_id)===Number(tb.id));
       if(local.length)return `<button type="button" class="board-tile offline-pending" data-board-table="${tb.id}" disabled><span class="bt-badge">OFFLINE</span><div class="bt-name">${escapeHtml(tb.name)}</div><div class="bt-empty-lbl">${local.length} ออเดอร์ · รอ Sync</div></button>`;
       return `<button type="button" class="board-tile bt-free" data-board-table="${tb.id}">
-        <div class="bt-head"><span class="bt-name">${escapeHtml(tb.name)}</span><span class="bt-tag bt-tag-free">${escapeHtml(t('board_table_empty'))}</span></div>
-        <div class="bt-open"><i class="ic ic-plus" aria-hidden="true"></i> เปิดโต๊ะ</div>
+        <div class="bt-head"><span class="bt-name">${escapeHtml(tb.name)}</span>${tb.zone && !floorZone ? `<span class="bt-zone">${escapeHtml(tb.zone)}</span>` : ''}</div>
+        <div class="bt-open"><i class="ic ic-plus" aria-hidden="true"></i> ${escapeHtml(t('board_table_empty'))}</div>
       </button>`;
     }
-    const worst = orders.reduce((w, o) => (STATUS_PRIORITY[o.status] < STATUS_PRIORITY[w.status] ? o : w), orders[0]);
+    const state = tableState(orders);
     const hasNewQr = orders.some(o => o.status === 'received' && o.placed_by === 'customer');
-    const hasNew = orders.some(o => o.status === 'received');
-    const ready = orders.some(o => o.status === 'ready');
     const total = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
     const guests = orders.reduce((s, o) => s + Number(o.guest_count || 0), 0);
     const since = Math.min(...orders.map(o => new Date(o.created_at).getTime()).filter(Boolean));
     const mins = Math.max(0, Math.floor((Date.now() - since) / 60000));
     const dur = mins >= 60 ? `${Math.floor(mins / 60)} ชม. ${String(mins % 60).padStart(2, '0')}` : `${mins} นาที`;
-    const billing = worst.status === 'served';
-    return `<button type="button" class="board-tile bt-busy status-${worst.status}" data-board-table="${tb.id}">
-      <div class="bt-head"><span class="bt-name">${escapeHtml(tb.name)}</span><span class="bt-tag ${billing ? 'bt-tag-bill' : 'bt-tag-busy'}">${escapeHtml(billing ? 'เรียกเก็บเงิน' : statusLabel(worst.status))}</span></div>
+    const tag = state === 'bill' ? 'รอเก็บเงิน' : state === 'ready' ? 'อาหารพร้อม' : 'มีลูกค้า';
+    return `<button type="button" class="board-tile bt-busy bt-${state}" data-board-table="${tb.id}">
+      <div class="bt-head"><span class="bt-name">${escapeHtml(tb.name)}</span><span class="bt-tag">${escapeHtml(tag)}</span></div>
       <div class="bt-amount">${fmtMoney(total)}</div>
-      <div class="bt-sub">${guests ? guests + ' คน · ' : ''}${dur}</div>
-      <div class="bt-flags">${hasNewQr ? `<span class="bt-flag bt-flag-new"><i class="ic ic-smartphone" aria-hidden="true"></i> QR ใหม่</span>` : hasNew ? `<span class="bt-flag bt-flag-new">${escapeHtml(t('board_badge_new'))}</span>` : ''}${ready ? `<span class="bt-flag bt-flag-ready"><i class="ic ic-bell" aria-hidden="true"></i> อาหารพร้อม</span>` : ''}</div>
+      <div class="bt-sub"><span><i class="ic ic-users" aria-hidden="true"></i> ${guests || '-'}</span><span><i class="ic ic-clock" aria-hidden="true"></i> ${dur}</span>${orders.length > 1 ? `<span>${orders.length} บิล</span>` : ''}</div>
+      ${hasNewQr ? `<span class="bt-flag bt-flag-new"><i class="ic ic-smartphone" aria-hidden="true"></i> QR ใหม่</span>` : ''}
     </button>`;
   }).join('');
 }
@@ -1498,6 +1570,7 @@ $('#tableBoard').addEventListener('click', (e) => {
   const tb = boot.tables.find(x => x.id === tableId);
   const orders = tableActiveOrders(tableId);
   if (!orders.length) { openTakeOrderForTable(tableId); return; }
+  if (orders.length === 1 && orders[0].payment_status === 'unpaid') { openAddItemsToOrder(orders[0].id); return; }
   openOrderDetail(orders, tb ? tb.name : '');
 });
 
@@ -1549,43 +1622,70 @@ function openOrderDetail(orders, titleSuffix) {
   openModal('#orderDetailModal');
 }
 
-// ===================== Staff take-order =====================
+// ===================== Staff take-order (Version E workspace: menu left, bill right) =====================
 
 let takeOrderType = 'dine_in';
 let addItemsOrderId = null;
+let takeOrderQuery = '';
 
-function openTakeOrderForTable(tableId=null) {
-  addItemsOrderId = null; cart = []; takeOrderType = 'dine_in';
-  $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b.dataset.type === 'dine_in'));
-  $('#takeOrderTableRow').classList.remove('hidden'); $('#takeOrderDeliveryFields').classList.add('hidden');
+function setTakeOrderType(type) {
+  takeOrderType = type;
+  $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  $('#takeOrderTableRow').classList.toggle('hidden', type !== 'dine_in');
+  $('#takeOrderDeliveryFields').classList.toggle('hidden', type !== 'delivery');
+  $('#takeOrderScheduleRow').classList.toggle('hidden', type === 'dine_in');
+  renderBillHead();
+}
+function resetTakeOrderForm() {
+  cart = []; takeOrderQuery = '';
+  $('#takeOrderSearch').value = '';
   $('#takeOrderCustomerName').value = ''; $('#takeOrderPhone').value = ''; $('#takeOrderAddress').value = '';
   $('#takeOrderGuestCount').value = ''; $('#takeOrderScheduledFor').value=''; $('#takeOrderDeliveryFee').value='0';
+  $('#takeOrderNotes').value = ''; $('#takeOrderNotes').classList.add('hidden');
   $('#takeOrderError').textContent = '';
+  $('#takeOrderBill').classList.remove('bill-open');
   const tsel = $('#takeOrderTable');
-  tsel.innerHTML = branchTables().map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
-  renderTakeOrderCategories();
-  renderTakeOrderMenu();
-  renderCart();
-  openModal('#takeOrderModal');
-  if (tableId) $('#takeOrderTable').value = String(tableId);
+  tsel.innerHTML = branchTables().map(t => `<option value="${t.id}">${escapeHtml(t.name)}${t.zone ? ' · ' + escapeHtml(t.zone) : ''}</option>`).join('');
 }
-$('#takeOrderBtn').addEventListener('click', () => openTakeOrderForTable());
+function showTakeOrder() {
+  $('#takeOrderModal').classList.toggle('add-mode', !!addItemsOrderId);
+  renderTakeOrderCategories(); renderTakeOrderMenu(); renderCart();
+  openModal('#takeOrderModal');
+  setNavActive('takeorder');
+}
+function openTakeOrderForTable(tableId=null, type='dine_in') {
+  closeModals();
+  addItemsOrderId = null;
+  resetTakeOrderForm();
+  if (tableId) $('#takeOrderTable').value = String(tableId);
+  setTakeOrderType(type);
+  showTakeOrder();
+}
+$('#takeOrderBtn').addEventListener('click', () => openTakeOrderForTable(null, 'takeaway'));
 $('#takeOrderType').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-type]');
-  if (!btn) return;
-  takeOrderType = btn.dataset.type;
-  $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b === btn));
-  $('#takeOrderTableRow').classList.toggle('hidden', takeOrderType !== 'dine_in');
-  $('#takeOrderDeliveryFields').classList.toggle('hidden', takeOrderType !== 'delivery');
-  $('#takeOrderScheduleRow').classList.toggle('hidden', takeOrderType === 'dine_in');
+  if (!btn || addItemsOrderId) return;
+  setTakeOrderType(btn.dataset.type);
 });
+$('#takeOrderTable').addEventListener('change', renderBillHead);
+$('#takeOrderGuestCount').addEventListener('input', renderBillHead);
+$('#takeOrderSearch').addEventListener('input', e => { takeOrderQuery = e.target.value.trim().toLowerCase(); renderTakeOrderMenu(); });
+$('#billNoteBtn').addEventListener('click', () => { const n = $('#takeOrderNotes'); n.classList.toggle('hidden'); if (!n.classList.contains('hidden')) n.focus(); });
+$('#billToggle').addEventListener('click', () => $('#takeOrderBill').classList.toggle('bill-open'));
+$('#billManageBtn').addEventListener('click', () => {
+  const o = addItemsOrderId && findOrderById(addItemsOrderId); if (!o) return;
+  closeModals(); openOrderDetail([o], o.table_name_snapshot || orderTypeLabel(o.order_type));
+});
+// Keep the sidebar highlight in step with the workspace being open or closed.
+new MutationObserver(() => { if (!$('#takeOrderModal').classList.contains('show')) setNavActive(currentTab); })
+  .observe($('#takeOrderModal'), { attributes: true, attributeFilter: ['class'] });
 
 let takeOrderActiveCat = null;
 function renderTakeOrderCategories() {
   const cats = branchCategories();
   takeOrderActiveCat = null;
   const el = $('#takeOrderCatScroll');
-  el.innerHTML = `<button class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` + cats.map(c => `<button class="cat-chip" data-cat="${c.id}">${iconHtml(c.icon)} ${escapeHtml(c.name)}</button>`).join('');
+  el.innerHTML = `<button type="button" class="cat-chip active" data-cat="">${escapeHtml(t('cat_all'))}</button>` + cats.map(c => `<button type="button" class="cat-chip" data-cat="${c.id}">${iconHtml(c.icon)} ${escapeHtml(c.name)}</button>`).join('');
 }
 $('#takeOrderCatScroll').addEventListener('click', (e) => {
   const btn = e.target.closest('.cat-chip');
@@ -1594,22 +1694,28 @@ $('#takeOrderCatScroll').addEventListener('click', (e) => {
   $$('#takeOrderCatScroll .cat-chip').forEach(b => b.classList.toggle('active', b === btn));
   renderTakeOrderMenu();
 });
+function dishPlaceholder(it) {
+  const cat = branchCategories().find(c => String(c.id) === String(it.category_id));
+  return `<div class="mc-photo mc-ph">${iconHtml((cat && cat.icon) || 'utensils')}</div>`;
+}
 function renderTakeOrderMenu() {
   let items = branchItems();
   if (takeOrderActiveCat) items = items.filter(i => String(i.category_id) === String(takeOrderActiveCat));
+  if (takeOrderQuery) items = items.filter(i => { const n = menuNames(i); return (i.name + ' ' + n.main + ' ' + n.sub + ' ' + JSON.stringify(parseNameI18n(i.name_i18n))).toLowerCase().includes(takeOrderQuery); });
   const grid = $('#takeOrderMenuGrid');
-  if (!items.length) { grid.innerHTML = emptyState('', t('empty_menu')); return; }
-  grid.innerHTML = items.map(it => `
-    <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick-item="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
+  if (!items.length) { grid.innerHTML = emptyState('', takeOrderQuery ? 'ไม่พบเมนูที่ค้นหา' : t('empty_menu')); return; }
+  grid.innerHTML = items.map(it => { const n = menuNames(it); return `
+    <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick-item="${it.id}" role="button" tabindex="0">
+      ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="" loading="lazy">` : dishPlaceholder(it)}
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
-      ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
-      <span class="mc-name">${escapeHtml(menuNames(it).main)}</span>${menuNames(it).sub ? `<span class="mc-sub">${escapeHtml(menuNames(it).sub)}</span>` : ''}
-      <div class="mc-price">${fmtMoney(it.base_price)}</div>
-    </div>`).join('');
+      <div class="mc-body">
+        <span class="mc-name">${escapeHtml(n.main)}</span>${n.sub ? `<span class="mc-sub">${escapeHtml(n.sub)}</span>` : ''}
+        <div class="mc-foot"><span class="mc-price">${fmtMoney(it.base_price)}</span>${it.sold_out ? '' : `<span class="mc-add" aria-hidden="true"><i class="ic ic-plus"></i></span>`}</div>
+      </div>
+    </div>`; }).join('');
   updateTakeOrderFeedback();
 }
-// Staff must see what they already tapped without scrolling to the cart: a count on each dish
-// and the running total on the confirm button.
+// Staff must see what they already tapped without scrolling to the bill: a count on each dish.
 function updateTakeOrderFeedback() {
   const counts = {};
   cart.forEach(c => { counts[c.menu_item_id] = (counts[c.menu_item_id] || 0) + c.qty; });
@@ -1620,17 +1726,12 @@ function updateTakeOrderFeedback() {
     if (!b) { b = document.createElement('span'); b.className = 'mc-qty'; card.appendChild(b); }
     b.textContent = n; card.classList.add('in-cart');
   });
-  const btn = $('#takeOrderSubmit');
-  if (btn && !btn.disabled) {
-    const qty = cart.reduce((a, c) => a + c.qty, 0), total = cart.reduce((a, c) => a + c.unit_price * c.qty, 0);
-    btn.textContent = qty ? `${t('btn_confirm_order').replace(/^\s*/, '')} · ${qty} · ${fmtMoney(total)}`: t('btn_confirm_order');
-  }
 }
 $('#takeOrderMenuGrid').addEventListener('click', (e) => {
   const id = e.target.closest('[data-pick-item]');
   if (!id) return;
   const item = boot.items.find(x => x.id === parseInt(id.dataset.pickItem, 10));
-  if (item.sold_out) return;
+  if (!item || item.sold_out) return;
   if (!item.option_groups || !item.option_groups.length) {
     const found=cart.find(c=>c.menu_item_id===item.id && !c.optionLabels.length && !c.notes);
     if(found) found.qty += 1; else cart.push({menu_item_id:item.id,name:menuNames(item).main,unit_price:item.base_price,qty:1,selected_options:{},optionLabels:[],notes:''});
@@ -1638,7 +1739,6 @@ $('#takeOrderMenuGrid').addEventListener('click', (e) => {
   }
   openItemOptionPicker(item);
 });
-
 function openItemOptionPicker(item) {
   pendingCartItem = { item, selected: {}, qty: 1, notes: '' };
   $('#itemOptionTitle').textContent = item.name;
@@ -1683,48 +1783,92 @@ $('#itemOptionAdd').addEventListener('click', () => {
   }
   const qty = parseInt($('#itemOptionQty').textContent, 10);
   cart.push({ menu_item_id: item.id, name: item.name, unit_price: unitPrice, qty, selected_options: selected, optionLabels: labels, notes: $('#itemOptionNotes').value.trim() });
-  closeModals(); openModal('#takeOrderModal'); renderCart();
+  $('#itemOptionModal').classList.remove('show'); renderCart();
 });
 
+function billOrder() { return addItemsOrderId ? findOrderById(addItemsOrderId) : null; }
+function renderBillHead() {
+  const o = billOrder();
+  let title, sub = [];
+  if (o) {
+    title = o.table_name_snapshot || orderTypeLabel(o.order_type);
+    sub.push('#' + o.order_no);
+    if (o.guest_count) sub.push(`ลูกค้า ${o.guest_count} คน`);
+  } else if (takeOrderType === 'dine_in') {
+    const tb = boot.tables.find(x => String(x.id) === $('#takeOrderTable').value);
+    title = tb ? tb.name : t('label_table');
+    const g = parseInt($('#takeOrderGuestCount').value, 10); if (g) sub.push(`ลูกค้า ${g} คน`);
+    sub.push('ออเดอร์ใหม่');
+  } else {
+    title = orderTypeLabel(takeOrderType); sub.push('ออเดอร์ใหม่');
+  }
+  $('#billTitle').textContent = title; $('#billSub').textContent = sub.join(' · ');
+  $('#billManageBtn').classList.toggle('hidden', !o);
+}
 function renderCart() {
-  const el = $('#takeOrderCart');
-  if (!cart.length) { el.innerHTML = `<p class="hint">${escapeHtml(t('empty_cart_staff'))}</p>`; $('#takeOrderTotal').textContent = fmtMoney(0); updateTakeOrderFeedback(); return; }
-  let total = 0;
-  el.innerHTML = cart.map((c, idx) => {
-    const lineTotal = c.unit_price * c.qty; total += lineTotal;
-    return `<div class="cart-line">
-      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
-      <div style="text-align:right"><div class="cl-price">${fmtMoney(lineTotal)}</div><div class="cart-steps"><button data-cart-minus="${idx}">−</button><b>${c.qty}</b><button data-cart-plus="${idx}">+</button><button class="icon-btn danger" data-cart-remove="${idx}"><i class="ic ic-x" aria-hidden="true"></i></button></div></div>
+  const o = billOrder();
+  renderBillHead();
+  // Items already on this bill (read-only here; edits/cancel go through "จัดการบิล").
+  const existing = o ? o.items.filter(it => Number(it.quantity || 0) - Number(it.cancelled_quantity || 0) > 0) : [];
+  let existingTotal = 0, existingQty = 0;
+  $('#billExisting').innerHTML = existing.length ? `<div class="bill-group-label">สั่งแล้ว</div>` + existing.map(it => {
+    const q = Number(it.quantity || 0) - Number(it.cancelled_quantity || 0), line = q * Number(it.unit_price || 0);
+    existingTotal += line; existingQty += q;
+    const state = it.kitchen_sent_at ? `<i class="ic ic-chef-hat" aria-hidden="true" title="ส่งครัวแล้ว"></i>` : `<i class="ic ic-clock" aria-hidden="true" title="ยังไม่ส่งครัว"></i>`;
+    return `<div class="bill-line is-sent"><span class="bl-qty">${q}×</span><div class="bl-name">${escapeHtml(it.item_name_snapshot)}${it.options && it.options.length ? `<small>${it.options.map(x => escapeHtml(x.option_name_snapshot)).join(', ')}</small>` : ''}</div><span class="bl-state">${state}</span><span class="bl-price">${fmtMoney(line)}</span></div>`;
+  }).join('') : '';
+  let total = 0, qty = 0;
+  $('#takeOrderCart').innerHTML = (cart.length ? (existing.length ? `<div class="bill-group-label">เพิ่มใหม่</div>` : '') + cart.map((c, idx) => {
+    const lineTotal = c.unit_price * c.qty; total += lineTotal; qty += c.qty;
+    return `<div class="bill-line">
+      <div class="bl-steps"><button type="button" data-cart-minus="${idx}" aria-label="ลด"><i class="ic ic-minus" aria-hidden="true"></i></button><b>${c.qty}</b><button type="button" data-cart-plus="${idx}" aria-label="เพิ่ม"><i class="ic ic-plus" aria-hidden="true"></i></button></div>
+      <div class="bl-name">${escapeHtml(c.name)}${c.optionLabels.length ? `<small>${c.optionLabels.map(escapeHtml).join(', ')}</small>` : ''}${c.notes ? `<small>${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</small>` : ''}</div>
+      <span class="bl-price">${fmtMoney(lineTotal)}</span>
     </div>`;
-  }).join('');
-  $('#takeOrderTotal').textContent = fmtMoney(total);
+  }).join('') : (existing.length ? '' : `<div class="bill-empty"><i class="ic ic-utensils" aria-hidden="true"></i><span>${escapeHtml(t('empty_cart_staff'))}</span></div>`));
+  const rows = [[`รวมรายการ ${existingQty + qty}`, fmtMoney(existingTotal + total)]];
+  if (o) {
+    if (Number(o.discount_amount || 0) > 0) rows.push(['ส่วนลด', '−' + fmtMoney(o.discount_amount)]);
+    if (Number(o.delivery_fee || 0) > 0) rows.push(['ค่าส่ง', fmtMoney(o.delivery_fee)]);
+  } else if (takeOrderType === 'delivery' && Number($('#takeOrderDeliveryFee').value || 0) > 0) rows.push(['ค่าส่ง', fmtMoney(Number($('#takeOrderDeliveryFee').value || 0))]);
+  const extra = o ? Number(o.delivery_fee || 0) - Number(o.discount_amount || 0) : (takeOrderType === 'delivery' ? Number($('#takeOrderDeliveryFee').value || 0) : 0);
+  $('#billSum').innerHTML = rows.map(([a, b]) => `<div class="row"><span>${escapeHtml(a)}</span><span>${b}</span></div>`).join('') + `<div class="row muted-row"><span>ภาษี / ค่าบริการ</span><span>คิดตอนชำระเงิน</span></div>`;
+  $('#takeOrderTotal').textContent = fmtMoney(existingTotal + total + extra);
+  const submit = $('#takeOrderSubmit');
+  if (!submit.disabled) submit.innerHTML = cart.length ? (o ? `<i class="ic ic-chef-hat" aria-hidden="true"></i> เพิ่ม ${qty} รายการ` : `<i class="ic ic-save" aria-hidden="true"></i> บันทึกบิล`) : 'บันทึกบิล';
+  submit.disabled = false;
+  $('#billPayBtn').disabled = !o && !cart.length;
+  $('#billNoteBtn').classList.toggle('hidden', !!o);
   updateTakeOrderFeedback();
 }
+$('#takeOrderDeliveryFee').addEventListener('input', renderCart);
 $('#takeOrderCart').addEventListener('click', (e) => {
-  const idx = e.target.dataset.cartRemove;
-  if (idx !== undefined) { cart.splice(idx, 1); renderCart(); return; }
-  const mi=e.target.dataset.cartMinus, pl=e.target.dataset.cartPlus;
-  if(mi!==undefined){ cart[Number(mi)].qty=Math.max(1,cart[Number(mi)].qty-1); renderCart(); }
-  if(pl!==undefined){ cart[Number(pl)].qty=Math.min(99,cart[Number(pl)].qty+1); renderCart(); }
+  const b = e.target.closest('[data-cart-minus],[data-cart-plus]'); if (!b) return;
+  const mi = b.dataset.cartMinus, pl = b.dataset.cartPlus;
+  if (mi !== undefined) { const c = cart[Number(mi)]; if (c.qty <= 1) cart.splice(Number(mi), 1); else c.qty -= 1; }
+  if (pl !== undefined) cart[Number(pl)].qty = Math.min(99, cart[Number(pl)].qty + 1);
+  renderCart();
 });
 
-$('#takeOrderSubmit').addEventListener('click', async () => {
+// Saves the cart (new order or items added to the open bill). Returns the order id, or null when nothing was saved.
+let takeOrderSaving = false;
+async function submitTakeOrder() {
   $('#takeOrderError').textContent = '';
-  if (!cart.length) { $('#takeOrderError').textContent = t('err_cart_empty_min1'); return; }
-  if ($('#takeOrderSubmit').disabled) return; // already submitting — ignore extra clicks/taps
+  if (!cart.length) { $('#takeOrderError').textContent = t('err_cart_empty_min1'); return null; }
+  if (takeOrderSaving) return null; // already submitting — ignore extra clicks/taps
   const payload = {
     branch_id: currentBranchId, order_type: takeOrderType,
     customer_name: $('#takeOrderCustomerName').value.trim() || t('placeholder_customer_name'),
     cart: cart.map(c => ({ menu_item_id: c.menu_item_id, quantity: c.qty, selected_options: c.selected_options, notes: c.notes })),
   };
+  const notes = $('#takeOrderNotes').value.trim(); if (notes) payload.notes = notes;
   const guestCountRaw = $('#takeOrderGuestCount').value.trim();
   if (guestCountRaw) payload.guest_count = parseInt(guestCountRaw, 10);
   if (takeOrderType === 'dine_in') payload.table_id = parseInt($('#takeOrderTable').value, 10);
   if (takeOrderType !== 'dine_in') payload.scheduled_for = $('#takeOrderScheduledFor').value || null;
   if (takeOrderType === 'delivery') { payload.customer_phone = $('#takeOrderPhone').value.trim(); payload.customer_address = $('#takeOrderAddress').value.trim(); payload.delivery_fee = Number($('#takeOrderDeliveryFee').value || 0); }
   const btn = $('#takeOrderSubmit');
-  const originalLabel = btn.textContent;
-  btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
+  takeOrderSaving = true; btn.disabled = true; $('#billPayBtn').disabled = true; btn.textContent = t('btn_submitting');
   try {
     const endpoint = addItemsOrderId ? `/api/orders/${addItemsOrderId}/items` : '/api/orders';
     const sendKitchen = $('#takeOrderSendKitchen').checked;
@@ -1732,38 +1876,49 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
     const sendPayload = addItemsOrderId ? {items: payload.cart, send_to_kitchen: sendKitchen} : {...payload,send_to_kitchen:sendKitchen,client_request_id:requestId(),client_device_id:deviceId()};
     let r;
     if (!addItemsOrderId && (!navigator.onLine || zaabosOfflineMode)) {
-      const q=await queueOfflineOrder(sendPayload); closeModals(); toast('บันทึกออเดอร์ไว้ในเครื่องแล้ว · รอ Sync','ok'); addItemsOrderId=null; cart=[]; renderOfflineQueue(); return;
+      await queueOfflineOrder(sendPayload); closeModals(); toast('บันทึกออเดอร์ไว้ในเครื่องแล้ว · รอ Sync','ok'); addItemsOrderId=null; cart=[]; renderOfflineQueue(); return null;
     }
     try { r = await apiJson(endpoint, 'POST', sendPayload); }
     catch (netErr) {
       if (!addItemsOrderId && (!navigator.onLine || /เชื่อมต่อเซิร์ฟเวอร์|ระบบบันทึกข้อมูลขัดข้อง/.test(netErr.message))) {
-        await queueOfflineOrder(sendPayload); closeModals(); toast('Server ไม่พร้อม · เก็บออเดอร์ไว้ในเครื่องเพื่อ Sync แล้ว','ok'); addItemsOrderId=null; cart=[]; return;
+        await queueOfflineOrder(sendPayload); closeModals(); toast('Server ไม่พร้อม · เก็บออเดอร์ไว้ในเครื่องเพื่อ Sync แล้ว','ok'); addItemsOrderId=null; cart=[]; return null;
       }
       throw netErr;
     }
     const kitchenNote = r.sent_to_kitchen ? ' — ส่งเข้าครัวแล้ว' : ' — กรุณากดส่งเข้าครัว';
     closeModals(); toast((addItemsOrderId ? 'เพิ่มรายการแล้ว' : t('toast_order_saved', { no: r.order_no })) + kitchenNote, 'ok');
     const sentOrderId = addItemsOrderId || r.order_id;
-    addItemsOrderId = null; await loadOrders(); loadBoardData();
+    addItemsOrderId = null; cart = [];
+    await loadBoardData(); if (currentTab === 'history') loadOrders();
     // No Wi-Fi/USB kitchen printer on the shop PC: print the ticket from this browser as before.
     if (r.sent_to_kitchen && !r.printed_by_server && r.item_ids && r.item_ids.length) printKitchenTicket(sentOrderId, r.item_ids);
-    // items with stock tracking just got decremented server-side — refresh the
-    // cached menu (boot.items) so the Menu tab shows the real count, not what
-    // it was before this order was placed
+    // items with stock tracking just got decremented server-side — refresh the cached menu (boot.items)
     loadBootstrap().then(() => { if (activeTab() === 'menu') renderMenu(); });
-  } catch (e) { $('#takeOrderError').textContent = e.message; }
-  finally { btn.disabled = false; btn.textContent = originalLabel; updateTakeOrderFeedback(); }
+    return sentOrderId;
+  } catch (e) { $('#takeOrderError').textContent = e.message; return null; }
+  finally { takeOrderSaving = false; btn.disabled = false; $('#billPayBtn').disabled = false; if ($('#takeOrderModal').classList.contains('show')) renderCart(); }
+}
+$('#takeOrderSubmit').addEventListener('click', submitTakeOrder);
+$('#billPayBtn').addEventListener('click', async () => {
+  let id = addItemsOrderId;
+  if (cart.length) id = await submitTakeOrder();
+  else if (id) closeModals();
+  if (!id) return;
+  if (!findOrderById(id)) await loadBoardData();
+  openConfirmPaymentModal(id);
 });
-
 
 function openAddItemsToOrder(orderId) {
   const ord=findOrderById(orderId); if(!ord) return;
-  addItemsOrderId=orderId; cart=[]; takeOrderType=ord.order_type;
-  $('#takeOrderTableRow').classList.toggle('hidden', ord.order_type!=='dine_in');
-  $('#takeOrderDeliveryFields').classList.add('hidden');
+  closeModals();
+  addItemsOrderId=orderId;
+  resetTakeOrderForm();
+  takeOrderType=ord.order_type;
+  $$('#takeOrderType button').forEach(b => b.classList.toggle('active', b.dataset.type === ord.order_type));
+  $('#takeOrderTableRow').classList.add('hidden'); $('#takeOrderDeliveryFields').classList.add('hidden'); $('#takeOrderScheduleRow').classList.add('hidden');
   $('#takeOrderCustomerName').value=ord.customer_name||''; $('#takeOrderGuestCount').value=ord.guest_count||'';
-  const tsel=$('#takeOrderTable'); tsel.innerHTML=branchTables().map(t=>`<option value="${t.id}">${escapeHtml(t.name)}</option>`).join(''); if(ord.table_id) tsel.value=String(ord.table_id);
-  renderTakeOrderCategories(); renderTakeOrderMenu(); renderCart(); closeModals(); openModal('#takeOrderModal');
+  if(ord.table_id) $('#takeOrderTable').value=String(ord.table_id);
+  showTakeOrder();
 }
 async function openMoveTable(orderId) {
   const ord=findOrderById(orderId); if(!ord) return;
@@ -1788,7 +1943,8 @@ function emptyState(icon, text) { return `<div class="empty-state">${icon ? `<sp
         $('#whoAvatar').textContent=(me.display_name||me.username||'?').slice(0,1).toUpperCase();
         $('#whoName').textContent=(me.display_name||me.username)+' · OFFLINE';
         $('#whoRole').textContent=t('role_'+me.role)||me.role;
-        applyRoleVisibility(); renderBranchSelect(); switchTab('orders'); renderTableBoard(); renderOtherOrders(); renderSidePanel(); await renderOfflineQueue();
+        $('#navUserAvatar').textContent=$('#whoAvatar').textContent;$('#navUserName').textContent=$('#whoName').textContent;$('#navUserRole').textContent=$('#whoRole').textContent;
+        applyRoleVisibility(); buildMoreMenu(); renderBranchSelect(); switchTab('orders'); renderTableBoard(); renderOtherOrders(); renderSidePanel(); await renderOfflineQueue();
         toast('เปิดโหมดออฟไลน์ — รับออเดอร์ใหม่ได้ และจะ Sync อัตโนมัติเมื่อระบบกลับมา','ok');
       } else showLogin();
     } catch (_) { showLogin(); }
@@ -1979,7 +2135,7 @@ $('#npList').addEventListener('click',async e=>{
 });
 async function refreshPrintStatus(){
   const b=$('#printFailBanner');if(!b||!currentBranchId||!me||me.role==='super_admin'&&!me.tenant)return;
-  try{const r=await api('/api/printers?branch_id='+currentBranchId);b.classList.toggle('hidden',!r.failed);b.textContent=`พิมพ์ไม่สำเร็จ ${r.failed} งาน — แตะเพื่อพิมพ์ซ้ำ`;}catch(e){}
+  try{const r=await api('/api/printers?branch_id='+currentBranchId,{silent:true});b.classList.toggle('hidden',!r.failed);b.textContent=`พิมพ์ไม่สำเร็จ ${r.failed} งาน — แตะเพื่อพิมพ์ซ้ำ`;printFailures=Number(r.failed||0);const c=$('#printFailCount');c.textContent=printFailures;c.classList.toggle('hidden',!printFailures);renderNotifications();}catch(e){}
 }
 $('#printFailBanner').addEventListener('click',async()=>{
   try{
@@ -1994,8 +2150,14 @@ async function openPrintCenter(){
   if(!currentBranchId)return;
   const box=$('#printCenterList'); box.innerHTML='<div class="muted">กำลังโหลด…</div>'; openModal('#printCenterModal');
   try{
-    const jobs=await api('/api/print/jobs?status=active&branch_id='+currentBranchId);
-    box.innerHTML=jobs.length?jobs.map(j=>`<div class="list-row"><div><b>${escapeHtml(j.job_type==='receipt'?'ใบเสร็จ':'ครัว')} #${escapeHtml(j.order_no||'')}</b><div class="muted">${escapeHtml(j.status)} · ${escapeHtml(j.printer_name||'')} ${j.last_error?'· '+escapeHtml(j.last_error):''}</div></div><div class="row-actions">${j.status==='failed'||j.status==='cancelled'?'<button class="ghost-btn" data-pj-retry="'+j.id+'">พิมพ์ซ้ำ</button>':''}${j.status==='pending'||j.status==='failed'?'<button class="danger-btn" data-pj-cancel="'+j.id+'">ยกเลิก</button>':''}</div></div>`).join(''):'<div class="muted">ไม่มีงานพิมพ์ที่รอดำเนินการ</div>';
+    // Without a printer set up here, tickets print through the browser's Print window — the queue is only for direct printing.
+    const pr=await api('/api/printers?branch_id='+currentBranchId,{silent:true}).catch(()=>({printers:[]}));
+    const direct=(pr.printers||[]).length>0;
+    const all=await api('/api/print/jobs?status=active&branch_id='+currentBranchId);
+    const jobs=direct?all:all.filter(j=>j.status==='failed');
+    const label={pending:'รอพิมพ์',failed:'พิมพ์ไม่สำเร็จ',cancelled:'ยกเลิกแล้ว',printed:'พิมพ์แล้ว'};
+    const note=direct?'':'<div class="muted printer-help">ยังไม่ได้ตั้งเครื่องพิมพ์พิมพ์ตรงในเครื่องนี้ — ใบเสร็จ/ใบครัวจะพิมพ์ผ่านหน้าต่าง Print ของเบราว์เซอร์ · ตั้งค่าได้ที่ ตั้งค่า → เครื่องพิมพ์</div>';
+    box.innerHTML=note+(jobs.length?jobs.map(j=>`<div class="list-row"><div><b>${escapeHtml(j.job_type==='receipt'?'ใบเสร็จ':'ใบครัว')} #${escapeHtml(j.order_no||'')}${j.table_name_snapshot?' · '+escapeHtml(j.table_name_snapshot):''}</b><div class="muted">${escapeHtml(label[j.status]||j.status)}${j.station_name?' · '+escapeHtml(j.station_name):''} ${j.last_error?'· '+escapeHtml(j.last_error):''}</div></div><div class="row-actions">${j.status==='failed'||j.status==='cancelled'?'<button class="ghost-btn" data-pj-retry="'+j.id+'">พิมพ์ซ้ำ</button>':''}${j.status==='pending'||j.status==='failed'?'<button class="danger-btn" data-pj-cancel="'+j.id+'">ยกเลิก</button>':''}</div></div>`).join(''):'<div class="empty-state">ไม่มีงานพิมพ์ที่ค้างอยู่</div>');
   }catch(e){box.innerHTML='<div class="error-text">'+escapeHtml(e.message)+'</div>'}
 }
 $('#printCenterList')?.addEventListener('click',async e=>{
@@ -2053,21 +2215,16 @@ function syncPaySeg(){const v=$('#cpMethod').value;$$('#cpMethodSeg [data-m]').f
 $('#cpMethodSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(!b)return;$('#cpMethod').value=b.dataset.m;$('#cpMethod').dispatchEvent(new Event('change'));syncPaySeg();});
 $('#cpMethod').addEventListener('change',syncPaySeg);
 new MutationObserver(()=>{if($('#confirmPaymentModal').classList.contains('show'))syncPaySeg();}).observe($('#confirmPaymentModal'),{attributes:true,attributeFilter:['class']});
+// Screen mode: Version E is dark by default; light stays available in Settings.
 (function(){
-  const KEY='zaabos_theme',root=document.documentElement,media=window.matchMedia('(prefers-color-scheme: dark)');
-  let mode='system';
+  const KEY='zaabos_theme_e',root=document.documentElement,media=window.matchMedia('(prefers-color-scheme: dark)');
+  let mode='dark';
   try{const saved=localStorage.getItem(KEY);if(saved==='dark'||saved==='light'||saved==='system')mode=saved;}catch(e){}
-  function apply(){root.dataset.theme=mode==='system'?(media.matches?'dark':'light'):mode;root.dataset.themeMode=mode;}
-  apply();
+  function apply(){root.dataset.theme=mode==='system'?(media.matches?'dark':'light'):mode;root.dataset.themeMode=mode;const m=document.querySelector('meta[name="theme-color"]');if(m)m.content=root.dataset.theme==='dark'?'#0B0B0D':'#F6F4EF';}
+  function sync(){$$('#themeModeSeg [data-theme-mode]').forEach(b=>b.classList.toggle('active',b.dataset.themeMode===mode));}
+  apply();sync();
   if(media.addEventListener)media.addEventListener('change',()=>{if(mode==='system')apply();});
-  const menu=$('#whoMenu');if(!menu)return;
-  const wrap=document.createElement('div');wrap.id='themeModeControl';wrap.className='theme-mode-control';
-  const title=document.createElement('span');title.className='theme-mode-title';title.textContent='โหมดหน้าจอ';wrap.appendChild(title);
-  const seg=document.createElement('div');seg.className='theme-mode-seg';wrap.appendChild(seg);
-  [['light','สว่าง'],['dark','มืด'],['system','ตามระบบ']].forEach(([value,label])=>{const b=document.createElement('button');b.type='button';b.dataset.themeMode=value;b.textContent=label;seg.appendChild(b);});
-  function sync(){seg.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.themeMode===mode));}
-  seg.addEventListener('click',ev=>{const b=ev.target.closest('button[data-theme-mode]');if(!b)return;mode=b.dataset.themeMode;try{localStorage.setItem(KEY,mode)}catch(e){}apply();sync();});
-  sync();menu.insertBefore(wrap,menu.firstChild);
+  $('#themeModeSeg').addEventListener('click',ev=>{const b=ev.target.closest('[data-theme-mode]');if(!b)return;mode=b.dataset.themeMode;try{localStorage.setItem(KEY,mode)}catch(e){}apply();sync();});
 })();
 
 // ---------- Menu names in several languages (primary + secondary line) ----------
@@ -2078,3 +2235,233 @@ function readNameI18n(){const o={};for(const[k,sel]of Object.entries(NAME_I18N_F
 // {main, sub} for a menu row on this branch's POS, following Settings → menu name languages.
 function menuNames(it){const L=(boot.menu_langs||{})[String(currentBranchId)]||(boot.menu_langs||{})[currentBranchId]||{};const n=parseNameI18n(it.name_i18n);
   const main=(L.primary&&n[L.primary])||it.name;const sub=(L.secondary&&n[L.secondary]&&n[L.secondary]!==main)?n[L.secondary]:'';return{main,sub};}
+
+
+// ===================== Version E — shell: kitchen, payment queue, dashboard, customers, search, alerts =====================
+
+// ---- Kitchen: the same /kitchen screen the kitchen tablet uses, inside the POS ----
+function loadKitchenFrame() {
+  const f = $('#kitchenFrame'), url = '/kitchen?embed=1' + (currentBranchId ? '&branch=' + currentBranchId : '');
+  if (f.dataset.src !== url) { f.dataset.src = url; f.src = url; }
+}
+function unloadKitchenFrame() { const f = $('#kitchenFrame'); if (f && f.dataset.src) { f.dataset.src = ''; f.src = 'about:blank'; } }
+
+// ---- Bills waiting for payment ----
+function unpaidOrders() { return activeOrders.filter(o => o.payment_status === 'unpaid' && o.status !== 'cancelled').sort((a, b) => a.id - b.id); }
+function billItemsSummary(o, max) {
+  const rows = o.items.filter(it => Number(it.quantity || 0) - Number(it.cancelled_quantity || 0) > 0);
+  const head = rows.slice(0, max).map(it => `<li><b>${Number(it.quantity) - Number(it.cancelled_quantity || 0)}×</b> ${escapeHtml(it.item_name_snapshot)}</li>`).join('');
+  return `<ul class="bc-items">${head}${rows.length > max ? `<li class="muted">+ อีก ${rows.length - max} รายการ</li>` : ''}</ul>`;
+}
+function renderBilling() {
+  const rows = unpaidOrders(), box = $('#billingList');
+  const sum = rows.reduce((a, o) => a + Number(o.total_amount || 0) + Number(o.delivery_fee || 0) - Number(o.discount_amount || 0), 0);
+  $('#billingSummary').textContent = rows.length ? `${rows.length} บิลรอชำระ · รวม ${fmtMoney(sum)}` : '';
+  if (!rows.length) { box.innerHTML = emptyState('<i class="ic ic-circle-check" aria-hidden="true"></i>', 'ไม่มีบิลค้างชำระ'); return; }
+  box.innerHTML = rows.map(o => {
+    const where = o.table_name_snapshot || orderTypeLabel(o.order_type);
+    const due = Number(o.total_amount || 0) + Number(o.delivery_fee || 0) - Number(o.discount_amount || 0);
+    return `<article class="bill-card ${o.status === 'served' ? 'is-bill' : ''}">
+      <div class="bc-head"><div><b>${escapeHtml(where)}</b><small>#${escapeHtml(o.order_no)} · ${fmtClock(o.created_at)}${o.guest_count ? ' · ' + o.guest_count + ' คน' : ''}</small></div><span class="pill ${o.status}">${escapeHtml(o.status === 'served' ? 'รอเก็บเงิน' : statusLabel(o.status))}</span></div>
+      ${billItemsSummary(o, 4)}
+      <div class="bc-total"><span>ยอดรวม</span><b>${fmtMoney(due)}</b></div>
+      <div class="bc-actions"><button type="button" class="ghost-btn" data-bill-open="${o.id}"><i class="ic ic-receipt" aria-hidden="true"></i> ดูบิล</button><button type="button" class="save" data-bill-pay="${o.id}">ชำระเงิน <i class="ic ic-arrow-right" aria-hidden="true"></i></button></div>
+    </article>`;
+  }).join('');
+}
+function onBillQueueClick(e) {
+  const pay = e.target.closest('[data-bill-pay]'), open = e.target.closest('[data-bill-open]');
+  if (pay) openConfirmPaymentModal(parseInt(pay.dataset.billPay, 10));
+  else if (open) openAddItemsToOrder(parseInt(open.dataset.billOpen, 10));
+}
+$('#billingList').addEventListener('click', onBillQueueClick);
+$('#dashOpenBills').addEventListener('click', onBillQueueClick);
+
+// ---- after every board refresh: sidebar counters, alerts, live pages ----
+function setNavCount(id, n) { const el = $(id); if (!el) return; el.textContent = n; el.classList.toggle('hidden', !n); }
+function afterBoardData() {
+  setNavCount('#navCountBilling', unpaidOrders().length);
+  setNavCount('#navCountKitchen', activeOrders.filter(o => o.status === 'received' || o.status === 'preparing').length);
+  renderNotifications();
+  if (currentTab === 'billing') renderBilling();
+  if (currentTab === 'dashboard') renderDashOpenBills();
+  if ($('#takeOrderModal').classList.contains('show') && addItemsOrderId) renderCart();
+}
+
+// ---- Dashboard ----
+function trendHtml(now, before, fmt) {
+  now = Number(now || 0); before = Number(before || 0);
+  if (!before) return now ? '<span class="trend up"><i class="ic ic-trending-up" aria-hidden="true"></i> ใหม่วันนี้</span>' : '<span class="trend">—</span>';
+  const pct = Math.round((now - before) / before * 100);
+  return `<span class="trend ${pct >= 0 ? 'up' : 'down'}"><i class="ic ic-trending-${pct >= 0 ? 'up' : 'down'}" aria-hidden="true"></i> ${pct >= 0 ? '+' : ''}${pct}%</span><small>เมื่อวาน ${fmt ? fmt(before) : before}</small>`;
+}
+function kpiCard(icon, label, value, extra, cls) {
+  return `<div class="kpi ${cls || ''}"><div class="kpi-top"><span class="kpi-ic"><i class="ic ic-${icon}" aria-hidden="true"></i></span><span class="kpi-label">${escapeHtml(label)}</span></div><div class="kpi-value">${value}</div><div class="kpi-extra">${extra || ''}</div></div>`;
+}
+function hourChartHtml(hours, compare) {
+  const tot = h => Number(h.total || 0);
+  const used = hours.map((h, i) => (tot(h) || (compare && tot(compare[i]))) ? i : -1).filter(i => i >= 0);
+  let from = used.length ? Math.max(0, Math.min(...used) - 1) : 9, to = used.length ? Math.min(23, Math.max(...used) + 1) : 22;
+  if (to - from < 9) { to = Math.min(23, from + 9); from = Math.max(0, to - 9); }
+  const max = Math.max(1, ...hours.slice(from, to + 1).map(tot), ...(compare ? compare.slice(from, to + 1).map(tot) : [0]));
+  const bars = [];
+  for (let i = from; i <= to; i++) {
+    const v = tot(hours[i]), c = compare ? tot(compare[i]) : 0;
+    bars.push(`<div class="hc-col" title="${String(i).padStart(2, '0')}:00 · ${fmtMoney(v)} · ${hours[i].orders || 0} บิล">
+      <div class="hc-bars">${compare ? `<span class="hc-bar prev" style="height:${Math.round(c / max * 100)}%"></span>` : ''}<span class="hc-bar" style="height:${Math.max(v ? 3 : 0, Math.round(v / max * 100))}%"></span></div>
+      <span class="hc-lbl">${String(i).padStart(2, '0')}</span></div>`);
+  }
+  return `<div class="hc-wrap">${bars.join('')}</div>${compare ? '<div class="hc-legend"><span><i class="lg lg-gold"></i>วันนี้</span><span><i class="lg lg-prev"></i>เมื่อวาน</span></div>' : ''}`;
+}
+function payIcon(m) { return ({ cash: 'banknote', qr: 'qr-code', card: 'credit-card', bank_transfer: 'landmark' })[m] || 'wallet'; }
+function renderDashOpenBills() {
+  const rows = unpaidOrders().slice(0, 6), box = $('#dashOpenBills');
+  box.innerHTML = rows.length ? rows.map(o => `<button type="button" class="dash-row" data-bill-open="${o.id}"><span><b>${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b><small>#${escapeHtml(o.order_no)} · ${fmtClock(o.created_at)}</small></span><b>${fmtMoney(Number(o.total_amount || 0) + Number(o.delivery_fee || 0) - Number(o.discount_amount || 0))}</b></button>`).join('')
+    : emptyState('<i class="ic ic-circle-check" aria-hidden="true"></i>', 'ไม่มีบิลค้างชำระ');
+}
+async function loadDashboard() {
+  if (!currentBranchId) return;
+  try { $('#dashDate').textContent = new Intl.DateTimeFormat(localeFor(currentLang) + '-u-ca-gregory', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: ZAABOS_RESTAURANT_TZ }).format(new Date()); } catch (e) {}
+  const q = ([f, tt]) => api('/api/reports/summary?' + new URLSearchParams({ from: f, to: tt, branch_id: currentBranchId }), { silent: true });
+  let a, b;
+  try { [a, b] = await Promise.all([q(presetRange('today')), q(presetRange('yesterday')), loadBoardData()]); }
+  catch (e) { $('#dashKpis').innerHTML = emptyState('', e.message); return; }
+  const tables = branchTables(), busy = tables.filter(tb => tableActiveOrders(tb.id).length).length;
+  $('#dashKpis').innerHTML =
+    kpiCard('wallet', 'ยอดขายวันนี้', fmtMoney(a.total_sales), trendHtml(a.total_sales, b.total_sales, fmtMoney), 'kpi-hero') +
+    kpiCard('receipt', 'ออเดอร์ที่ชำระแล้ว', a.order_count, trendHtml(a.order_count, b.order_count)) +
+    kpiCard('armchair', 'โต๊ะที่ใช้งาน', `${busy}<small>/${tables.length}</small>`, `<small>${unpaidOrders().length} บิลยังไม่ชำระ · ${fmtMoney(a.open_order_total || 0)}</small>`) +
+    kpiCard('users', 'ลูกค้า', a.guests, trendHtml(a.guests, b.guests)) +
+    kpiCard('hand-coins', 'บิลเฉลี่ย', fmtMoney(a.average_bill || 0), trendHtml(a.average_bill, b.average_bill, fmtMoney));
+  $('#dashHourly').innerHTML = hourChartHtml(a.hourly || [], b.hourly || null);
+  const top = (a.top_items || []).slice(0, 6), maxQ = Math.max(1, ...top.map(x => Number(x.qty || 0)));
+  $('#dashTopItems').innerHTML = top.length ? top.map((it, i) => `<div class="rank-row"><span class="rank-no">${i + 1}</span><div class="rank-main"><div class="rank-name"><b>${escapeHtml(it.name)}</b><span>${Number(it.qty || 0)} จาน</span></div><div class="rank-track"><span style="width:${Math.max(4, Math.round(Number(it.qty || 0) / maxQ * 100))}%"></span></div></div></div>`).join('')
+    : emptyState('<i class="ic ic-utensils" aria-hidden="true"></i>', 'ยังไม่มีการขายวันนี้');
+  const pays = a.payment_breakdown || [], payTotal = pays.reduce((s, x) => s + Number(x.total || 0), 0);
+  $('#dashPayments').innerHTML = pays.length ? pays.map(x => `<div class="pay-row"><span class="pay-ic"><i class="ic ic-${payIcon(x.payment_method)}" aria-hidden="true"></i></span><div><b>${escapeHtml(paymentMethodName(x.payment_method))}</b><small>${x.count} รายการ · ${payTotal ? Math.round(Number(x.total) / payTotal * 100) : 0}%</small></div><b>${fmtMoney(x.total)}</b></div>`).join('')
+    : emptyState('<i class="ic ic-credit-card" aria-hidden="true"></i>', 'ยังไม่มีรายการชำระเงิน');
+  renderDashOpenBills();
+}
+$('#dashRefreshBtn').addEventListener('click', loadDashboard);
+
+// ---- Customers ----
+let customersRows = [], customerSelected = null, customerSearchTimer = null;
+async function loadCustomers() {
+  if (!currentBranchId) return;
+  const qs = new URLSearchParams({ branch_id: currentBranchId }); const text = $('#customerSearch').value.trim(); if (text) qs.set('q', text);
+  try { const r = await api('/api/customers?' + qs); customersRows = r.customers || []; $('#customersSummary').textContent = `${r.total || 0} รายชื่อ · จากชื่อหรือเบอร์โทรที่ให้ไว้ในออเดอร์`; }
+  catch (e) { $('#customersList').innerHTML = emptyState('', e.message); return; }
+  const list = $('#customersList');
+  list.innerHTML = customersRows.length ? customersRows.map(c => `<button type="button" class="cust-row ${customerSelected === c.key ? 'active' : ''}" data-cust="${escapeHtml(c.key)}">
+      <span class="avatar">${escapeHtml((c.name || c.phone || '?').slice(0, 1).toUpperCase())}</span>
+      <span class="cust-main"><b>${escapeHtml(c.name || c.phone)}</b><small>${escapeHtml(c.phone || 'ไม่มีเบอร์โทร')}</small></span>
+      <span class="cust-num"><b>${fmtMoney(c.total_spent)}</b><small>${c.visits} ครั้ง</small></span></button>`).join('')
+    : emptyState('<i class="ic ic-user-round" aria-hidden="true"></i>', text ? 'ไม่พบลูกค้าที่ค้นหา' : 'ยังไม่มีข้อมูลลูกค้า — ใส่ชื่อหรือเบอร์โทรตอนรับออเดอร์ เพื่อเก็บประวัติลูกค้า');
+  // Wide screens show the list and the history side by side — open the first customer straight away.
+  if (window.innerWidth > 760 && customersRows.length && !customersRows.some(c => c.key === customerSelected)) { const first = $('#customersList .cust-row'); if (first) first.click(); }
+}
+$('#customerSearch').addEventListener('input', () => { clearTimeout(customerSearchTimer); customerSearchTimer = setTimeout(loadCustomers, 250); });
+$('#customersList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-cust]'); if (!b) return;
+  const c = customersRows.find(x => x.key === b.dataset.cust); if (!c) return;
+  customerSelected = c.key; $$('#customersList .cust-row').forEach(x => x.classList.toggle('active', x === b));
+  const qs = new URLSearchParams({ branch_id: currentBranchId }); if (c.phone) qs.set('customer_phone', c.phone); else qs.set('customer_name', c.name);
+  const box = $('#customerDetail'); box.innerHTML = '<div class="muted">กำลังโหลด…</div>';
+  try {
+    const r = await api('/api/orders?' + qs); customerOrdersCache = r.orders || [];
+    box.innerHTML = `<div class="cust-head"><span class="avatar lg">${escapeHtml((c.name || c.phone || '?').slice(0, 1).toUpperCase())}</span><div><h2>${escapeHtml(c.name || c.phone)}</h2><div class="muted">${escapeHtml(c.phone || 'ไม่มีเบอร์โทร')}</div></div></div>
+      <div class="cust-stats"><div><small>ยอดใช้จ่ายรวม</small><b>${fmtMoney(c.total_spent)}</b></div><div><small>จำนวนครั้ง</small><b>${c.visits}</b></div><div><small>เฉลี่ยต่อครั้ง</small><b>${fmtMoney(c.visits ? c.total_spent / c.visits : 0)}</b></div><div><small>มาล่าสุด</small><b>${escapeHtml(zaabosDateTime(c.last_visit).split(' ')[0] || '')}</b></div></div>
+      <h3>ประวัติการสั่ง</h3>` + customerOrdersCache.map(o => `<button type="button" class="dash-row" data-cust-order="${o.id}"><span><b>#${escapeHtml(o.order_no)} · ${escapeHtml(o.table_name_snapshot || orderTypeLabel(o.order_type))}</b><small>${escapeHtml(zaabosDateTime(o.created_at))} · ${o.items.length} รายการ</small></span><span class="dash-row-end"><span class="pill ${o.payment_status}">${escapeHtml(o.payment_status === 'paid' ? t('payment_paid') : t('payment_unpaid'))}</span><b>${fmtMoney(Number(o.total_amount || 0) + Number(o.delivery_fee || 0) - Number(o.discount_amount || 0))}</b></span></button>`).join('');
+  } catch (err) { box.innerHTML = emptyState('', err.message); }
+});
+$('#customerDetail').addEventListener('click', e => {
+  const b = e.target.closest('[data-cust-order]'); if (!b) return;
+  const o = customerOrdersCache.find(x => x.id === parseInt(b.dataset.custOrder, 10)); if (o) openOrderDetail([o], '#' + o.order_no);
+});
+
+// ---- Settings hub ----
+initLangSwitcher('#settingsLangSelect');
+async function renderSettingsHub() {
+  try { await api('/api/local/status', { silent: true }); $('#settingsLocalRow').classList.remove('hidden'); } catch (e) { $('#settingsLocalRow').classList.add('hidden'); }
+  applyRoleVisibility();
+  if ($('#settingsLocalRow').dataset.need === 'manager' && me && !['owner', 'manager', 'super_admin'].includes(me.role)) $('#settingsLocalRow').classList.add('hidden');
+}
+
+// ---- Search in the top bar: dishes, open bills, tables, customers ----
+let searchPick = [];
+function renderGlobalSearch() {
+  const q = $('#globalSearch').value.trim().toLowerCase(), box = $('#globalSearchResults');
+  if (!q || !me) { box.classList.add('hidden'); box.innerHTML = ''; searchPick = []; return; }
+  const out = [];
+  activeOrders.filter(o => (o.order_no + ' ' + (o.table_name_snapshot || '') + ' ' + (o.customer_name || '') + ' ' + (o.customer_phone || '')).toLowerCase().includes(q)).slice(0, 5)
+    .forEach(o => out.push({ group: 'บิลที่เปิดอยู่', icon: 'receipt', title: `${o.table_name_snapshot || orderTypeLabel(o.order_type)} · #${o.order_no}`, sub: `${o.customer_name || ''} · ${fmtMoney(o.total_amount)}`, run: () => openAddItemsToOrder(o.id) }));
+  branchTables().filter(tb => tb.name.toLowerCase().includes(q)).slice(0, 4)
+    .forEach(tb => out.push({ group: 'โต๊ะ', icon: 'armchair', title: tb.name, sub: tableActiveOrders(tb.id).length ? 'มีลูกค้า' : 'ว่าง', run: () => { const os = tableActiveOrders(tb.id); if (!os.length) openTakeOrderForTable(tb.id); else if (os.length === 1) openAddItemsToOrder(os[0].id); else openOrderDetail(os, tb.name); } }));
+  branchItems().filter(it => { const n = menuNames(it); return (it.name + ' ' + n.main + ' ' + n.sub).toLowerCase().includes(q); }).slice(0, 6)
+    .forEach(it => out.push({ group: 'เมนู', icon: 'utensils', title: menuNames(it).main, sub: fmtMoney(it.base_price) + (it.sold_out ? ' · หมด' : ''), run: () => { openTakeOrderForTable(); $('#takeOrderSearch').value = q; takeOrderQuery = q; renderTakeOrderMenu(); } }));
+  out.push({ group: 'ค้นหาต่อ', icon: 'history', title: `ค้นหา "${$('#globalSearch').value.trim()}" ในประวัติออเดอร์`, sub: '', run: () => { $('#historySearch').value = $('#globalSearch').value.trim(); navigate('history'); } });
+  out.push({ group: 'ค้นหาต่อ', icon: 'user-round', title: `ค้นหา "${$('#globalSearch').value.trim()}" ในรายชื่อลูกค้า`, sub: '', run: () => { $('#customerSearch').value = $('#globalSearch').value.trim(); navigate('customers'); } });
+  searchPick = out;
+  let last = '';
+  box.innerHTML = out.map((r, i) => { const head = r.group !== last ? `<div class="sr-group">${escapeHtml(r.group)}</div>` : ''; last = r.group;
+    return `${head}<button type="button" class="sr-item ${i === 0 ? 'active' : ''}" data-search-pick="${i}"><i class="ic ic-${r.icon}" aria-hidden="true"></i><span><b>${escapeHtml(r.title)}</b>${r.sub ? `<small>${escapeHtml(r.sub)}</small>` : ''}</span></button>`; }).join('');
+  box.classList.remove('hidden');
+}
+function runSearchPick(i) { const r = searchPick[i]; if (!r) return; $('#globalSearch').value = ''; renderGlobalSearch(); $('#globalSearch').blur(); r.run(); }
+$('#globalSearch').addEventListener('input', renderGlobalSearch);
+$('#globalSearch').addEventListener('focus', renderGlobalSearch);
+$('#globalSearch').addEventListener('keydown', e => {
+  const items = $$('#globalSearchResults .sr-item'); if (!items.length) return;
+  let i = items.findIndex(x => x.classList.contains('active'));
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); i = (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items.forEach((x, k) => x.classList.toggle('active', k === i)); items[i].scrollIntoView({ block: 'nearest' }); }
+  else if (e.key === 'Enter') { e.preventDefault(); runSearchPick(Math.max(0, i)); }
+  else if (e.key === 'Escape') { $('#globalSearch').value = ''; renderGlobalSearch(); $('#globalSearch').blur(); }
+});
+$('#globalSearchResults').addEventListener('mousedown', e => e.preventDefault());
+$('#globalSearchResults').addEventListener('click', e => { const b = e.target.closest('[data-search-pick]'); if (b) runSearchPick(parseInt(b.dataset.searchPick, 10)); });
+document.addEventListener('click', e => { if (!e.target.closest('#topSearch')) $('#globalSearchResults').classList.add('hidden'); });
+document.addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && me) { e.preventDefault(); $('#globalSearch').focus(); } });
+
+// ---- Alerts (bell): new QR orders, food ready, printer problems ----
+function notificationItems() {
+  const out = [];
+  activeOrders.filter(o => o.status === 'received' && o.placed_by === 'customer').forEach(o => out.push({ cls: 'new', icon: 'smartphone', title: `ออเดอร์ QR ใหม่ · ${o.table_name_snapshot || orderTypeLabel(o.order_type)}`, sub: `#${o.order_no} · ${fmtClock(o.created_at)}`, order: o.id }));
+  activeOrders.filter(o => o.status === 'ready').forEach(o => out.push({ cls: 'ready', icon: 'bell-ring', title: `อาหารพร้อมเสิร์ฟ · ${o.table_name_snapshot || orderTypeLabel(o.order_type)}`, sub: `#${o.order_no}`, order: o.id }));
+  if (printFailures) out.push({ cls: 'bad', icon: 'printer', title: `พิมพ์ไม่สำเร็จ ${printFailures} งาน`, sub: 'แตะเพื่อดูและพิมพ์ซ้ำ', print: true });
+  return out;
+}
+function renderNotifications() {
+  const items = notificationItems(), c = $('#notifCount');
+  c.textContent = items.length; c.classList.toggle('hidden', !items.length);
+  $('#notifMenu').innerHTML = `<div class="notif-title">การแจ้งเตือน</div>` + (items.length ? items.map((n, i) => `<button type="button" class="notif-item ${n.cls}" data-notif="${i}"><i class="ic ic-${n.icon}" aria-hidden="true"></i><span><b>${escapeHtml(n.title)}</b><small>${escapeHtml(n.sub)}</small></span></button>`).join('') : `<div class="notif-empty">ไม่มีอะไรต้องทำตอนนี้</div>`);
+}
+$('#notifBtn').addEventListener('click', e => { e.stopPropagation(); renderNotifications(); $('#notifMenu').classList.toggle('hidden'); });
+$('#notifMenu').addEventListener('click', e => {
+  const b = e.target.closest('[data-notif]'); if (!b) return;
+  const n = notificationItems()[parseInt(b.dataset.notif, 10)]; $('#notifMenu').classList.add('hidden'); if (!n) return;
+  if (n.print) { openPrintCenter(); return; }
+  const o = findOrderById(n.order); if (o) openOrderDetail([o], o.table_name_snapshot || orderTypeLabel(o.order_type));
+});
+document.addEventListener('click', e => { if (!e.target.closest('.notif-wrap')) $('#notifMenu').classList.add('hidden'); });
+
+// ---- Sidebar user card opens the account menu ----
+$('#navUserBtn').addEventListener('click', e => { e.stopPropagation(); const m = $('#whoMenu'); m.classList.toggle('from-nav', true); m.classList.toggle('hidden'); });
+$('#whoBtn').addEventListener('click', () => $('#whoMenu').classList.remove('from-nav'));
+
+// ---- Esc closes the sheet on top (the order workspace included) ----
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const open = $$('.modal.show'); if (!open.length) return;
+  open[open.length - 1].classList.remove('show');
+});
+
+// ---- Clock ----
+function tickClock() {
+  const d = new Date(), loc = localeFor(currentLang) + '-u-ca-gregory';
+  try {
+    $('#topClockDate').textContent = new Intl.DateTimeFormat(loc, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: ZAABOS_RESTAURANT_TZ }).format(d);
+    $('#topClockTime').textContent = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: ZAABOS_RESTAURANT_TZ }).format(d);
+  } catch (e) {}
+}
+tickClock(); setInterval(tickClock, 15000);
+setInterval(() => { if (me) refreshPosShiftBadge(); }, 60000);

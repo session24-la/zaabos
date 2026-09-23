@@ -1,4 +1,4 @@
-<!doctype html><html lang="th" data-theme="dark" data-theme-mode="system"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ZaabOS</title>
+<!doctype html><html lang="th" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ZaabOS</title>
 <link rel="icon" href="/favicon.ico?v=8" sizes="any">
 <link rel="icon" type="image/png" sizes="64x64" href="/static/favicon-64.png?v=8">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=8">
@@ -7,15 +7,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-<link rel="stylesheet" href="/static/style.css?v=35.0"><link rel="stylesheet" href="/static/icons.css?v=1"><link rel="stylesheet" href="/static/theme.css?v=3">
-<meta name="theme-color" content="#0c0d0f"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ZaabOS"><meta name="mobile-web-app-capable" content="yes">
-</head><body><button id="printFailBanner" class="print-fail-banner hidden" type="button"></button><button id="printCenterBtn" class="print-center-fab" type="button" title="Print Center">Print Center</button>
-<div id="printCenterModal" class="modal hidden"><div class="sheet"><div class="modal-head"><h2>Print Center</h2><button class="modal-x" data-close="#printCenterModal" type="button">×</button></div><p class="muted">งานพิมพ์ที่กำลังรอหรือพิมพ์ไม่สำเร็จ</p><div id="printCenterList" class="list"></div></div></div><div id="networkBanner" class="network-banner hidden" role="status"><span class="network-dot"></span><span id="networkBannerText">ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้</span></div>
+<link rel="stylesheet" href="/static/style.css?v=40.0"><link rel="stylesheet" href="/static/icons.css?v=2"><link rel="stylesheet" href="/static/theme.css?v=10">
+<meta name="theme-color" content="#0B0B0D"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ZaabOS"><meta name="mobile-web-app-capable" content="yes">
+</head><body><button id="printFailBanner" class="print-fail-banner hidden" type="button"></button>
+<div id="printCenterModal" class="modal"><div class="sheet"><div class="sheet-head"><h2><i class="ic ic-printer" aria-hidden="true"></i> งานพิมพ์</h2><button data-close>×</button></div><p class="muted">งานพิมพ์ที่กำลังรอ หรือพิมพ์ไม่สำเร็จ — กดพิมพ์ซ้ำหรือยกเลิกได้</p><div id="printCenterList" class="list"></div></div></div><div id="networkBanner" class="network-banner hidden" role="status"><span class="network-dot"></span><span id="networkBannerText">ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้</span></div>
 
 <section id="loginView" class="login-screen hidden">
   <select id="loginLangSelect" class="lang-select lang-select-login"></select>
   <form id="loginForm" class="login-card">
+    <div class="login-logo" aria-hidden="true"><svg viewBox="0 0 64 64"><defs><linearGradient id="zgold2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6D38A"/><stop offset="1" stop-color="#C8913A"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#zgold2)"/><path d="M18 18h29v7.5L29.5 42H47v7.5H17V42l17.6-16.5H18z" fill="#15110a"/></svg></div>
     <div class="brand center">Zaab<b>OS</b></div>
+    <div class="login-tag">RESTAURANT POS</div>
     <p class="login-sub" data-i18n="admin_login_sub">ระบบจัดการร้านอาหาร — เข้าสู่ระบบเพื่อจัดการร้านของคุณ</p>
     <label><span data-i18n="login_username">ชื่อผู้ใช้</span><input id="loginUsername" autocomplete="username" required></label>
     <label><span data-i18n="login_password">รหัสผ่าน</span><input id="loginPassword" type="password" autocomplete="current-password" required></label>
@@ -24,10 +26,22 @@
   </form>
 </section>
 
-<div id="appRoot" class="hidden premium-shell">
-<header>
+<div id="appRoot" class="hidden">
+<header class="topbar">
   <div class="brand">Zaab<b>OS</b></div>
+  <div class="top-search" id="topSearch">
+    <i class="ic ic-search" aria-hidden="true"></i>
+    <input id="globalSearch" type="search" autocomplete="off" enterkeyhint="search" placeholder="ค้นหาเมนู / เลขบิล / โต๊ะ / ชื่อลูกค้า" aria-label="ค้นหา">
+    <div class="search-results hidden" id="globalSearchResults" role="listbox"></div>
+  </div>
   <div class="head-right">
+    <button type="button" class="pos-shift-badge" id="posShiftBadge">กะ</button>
+    <div class="notif-wrap">
+      <button type="button" class="top-icon" id="notifBtn" title="การแจ้งเตือน" aria-label="การแจ้งเตือน"><i class="ic ic-bell" aria-hidden="true"></i><span class="top-badge hidden" id="notifCount">0</span></button>
+      <div class="notif-menu hidden" id="notifMenu"></div>
+    </div>
+    <button type="button" class="top-icon" id="printCenterBtn" title="งานพิมพ์" aria-label="งานพิมพ์"><i class="ic ic-printer" aria-hidden="true"></i><span class="top-badge hidden" id="printFailCount">0</span></button>
+    <div class="top-clock" id="topClock"><small id="topClockDate"></small><b id="topClockTime"></b></div>
     <select id="langSelect" class="lang-select"></select>
     <select id="tenantSwitcher" class="hidden"></select>
     <div class="header-branch" id="branchScopeBar"><span class="header-branch-icon"><i class="ic ic-house" aria-hidden="true"></i></span><select id="branchSelect" aria-label="Branch"></select></div>
@@ -48,38 +62,43 @@
 
 <main>
 <nav class="tabs pos-nav" id="mainTabs" aria-label="Main navigation">
-    <button data-tab="orders" class="active nav-primary"><span class="tab-ic"><i class="ic ic-house" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_pos">POS</span></button>
-    <button data-tab="menu" class="nav-primary"><span class="tab-ic"><i class="ic ic-clipboard-list" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
-    <button data-tab="tables" class="nav-primary"><span class="tab-ic"><i class="ic ic-layout-grid" aria-hidden="true"></i></span><span class="tab-lb">โต๊ะ &amp; QR</span></button>
-    <button data-tab="history" class="nav-primary"><span class="tab-ic"><i class="ic ic-history" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
-    <button data-tab="reports" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-chart-column" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
-    <button data-tab="inventory" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-package" aria-hidden="true"></i></span><span class="tab-lb">วัตถุดิบ</span></button>
-    <button data-tab="operations" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-banknote" aria-hidden="true"></i></span><span class="tab-lb">กะ &amp; เงินสด</span></button>
-    <div class="nav-more-wrap">
-      <button id="moreNavBtn" class="nav-primary nav-more-btn" type="button" aria-expanded="false"><span class="tab-ic"><i class="ic ic-menu" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_more">เพิ่มเติม</span></button>
-      <div class="nav-more-menu hidden" id="moreNavMenu">
-        <button data-tab="reports" class="mobile-more-only"><span class="tab-ic"><i class="ic ic-chart-column" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
-        <button data-tab="operations" class="mobile-more-only"><span class="tab-ic"><i class="ic ic-banknote" aria-hidden="true"></i></span><span class="tab-lb">กะ &amp; เงินสด</span></button>
-        <button data-tab="pricing"><span class="tab-ic"><i class="ic ic-tag" aria-hidden="true"></i></span><span class="tab-lb">ราคา &amp; โปรโมชั่น</span></button>
-        <button data-tab="receiptsettings"><span class="tab-ic"><i class="ic ic-receipt" aria-hidden="true"></i></span><span class="tab-lb">ตั้งค่าร้าน &amp; ใบเสร็จ</span></button>
-          <button data-tab="inventory" class="more-item mobile-more-only"><span><i class="ic ic-package" aria-hidden="true"></i></span><span>วัตถุดิบ & สูตร</span></button>
-        <button data-tab="branches"><span class="tab-ic"><i class="ic ic-house" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_branches">สาขา</span></button>
-        <button data-tab="users"><span class="tab-ic"><i class="ic ic-users" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_users">ผู้ใช้งาน</span></button>
-        <button data-tab="tenants" id="tenantsTabBtn" class="hidden"><span class="tab-ic"><i class="ic ic-building-2" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
-      </div>
+    <div class="nav-brand"><span class="nav-logo" aria-hidden="true"><svg viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="url(#zgold)"/><defs><linearGradient id="zgold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6D38A"/><stop offset="1" stop-color="#C8913A"/></linearGradient></defs><path d="M18 18h29v7.5L29.5 42H47v7.5H17V42l17.6-16.5H18z" fill="#15110a"/></svg></span><span class="nav-brand-text"><b>Zaab<em>OS</em></b><small>RESTAURANT POS</small></span></div>
+    <div class="nav-list">
+    <button type="button" data-tab="dashboard" class="nav-primary"><span class="tab-ic"><i class="ic ic-layout-dashboard" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_dashboard">หน้าหลัก</span></button>
+    <button type="button" data-tab="takeorder" class="nav-primary nav-phone"><span class="tab-ic"><i class="ic ic-clipboard-pen" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_take_order">รับออเดอร์</span></button>
+    <button type="button" data-tab="orders" class="active nav-primary nav-phone"><span class="tab-ic"><i class="ic ic-armchair" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_tables">โต๊ะ</span><span class="nav-count hidden" id="navCountTables"></span></button>
+    <button type="button" data-tab="kitchen" class="nav-primary nav-phone"><span class="tab-ic"><i class="ic ic-chef-hat" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_kitchen">ครัว</span><span class="nav-count hidden" id="navCountKitchen"></span></button>
+    <button type="button" data-tab="billing" class="nav-primary nav-phone"><span class="tab-ic"><i class="ic ic-wallet" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_billing">ชำระเงิน</span><span class="nav-count hidden" id="navCountBilling"></span></button>
+    <button type="button" data-tab="history" class="nav-primary"><span class="tab-ic"><i class="ic ic-history" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
+    <button type="button" data-tab="operations" class="nav-primary"><span class="tab-ic"><i class="ic ic-banknote" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_shift">กะ &amp; เงินสด</span></button>
+    <button type="button" data-tab="reports" class="nav-primary"><span class="tab-ic"><i class="ic ic-chart-column" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
+    <button type="button" data-tab="customers" class="nav-primary"><span class="tab-ic"><i class="ic ic-user-round" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_customers">ลูกค้า</span></button>
+    <button type="button" data-tab="menu" class="nav-primary"><span class="tab-ic"><i class="ic ic-utensils" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
+    <button type="button" data-tab="users" class="nav-primary"><span class="tab-ic"><i class="ic ic-users" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_staff">พนักงาน</span></button>
+    <button type="button" data-tab="settings" class="nav-primary"><span class="tab-ic"><i class="ic ic-settings" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="nav_settings">ตั้งค่า</span></button>
+    <button type="button" data-tab="tenants" id="tenantsTabBtn" class="nav-primary hidden"><span class="tab-ic"><i class="ic ic-building-2" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_tenants">ร้านค้า</span></button>
     </div>
+    <div class="nav-more-wrap">
+      <button id="moreNavBtn" class="nav-primary nav-more-btn nav-phone" type="button" aria-expanded="false"><span class="tab-ic"><i class="ic ic-menu" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_more">เพิ่มเติม</span></button>
+      <div class="nav-more-menu hidden" id="moreNavMenu"></div>
+    </div>
+    <button type="button" class="nav-user" id="navUserBtn"><span class="avatar" id="navUserAvatar">?</span><span class="nav-user-text"><b id="navUserName">-</b><small id="navUserRole">-</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
   </nav>
   
 
   <!-- ===== POS tab ===== -->
   <section id="tab-orders" class="tab-panel">
-    <div class="panel">
-      <div class="panel-head">
-        <div><span class="eyebrow" data-i18n="pos_workspace">หน้าร้าน</span><h2 data-i18n="board_title">ผังโต๊ะ</h2></div>
+    <div class="panel floor-panel">
+      <div class="page-head">
+        <div><h1 data-i18n="board_title">ผังโต๊ะ</h1><div class="page-sub" id="floorSummary"></div></div>
         <div class="head-actions">
-          <button class="ghost-btn primary" id="takeOrderBtn" data-i18n="btn_take_order"><i class="ic ic-plus" aria-hidden="true"></i> รับออเดอร์ลูกค้า</button>
-          <button class="ghost-btn" id="refreshPosBtn" data-i18n="btn_refresh"><i class="ic ic-refresh-cw" aria-hidden="true"></i> รีเฟรช</button>
+          <button class="ghost-btn" id="refreshPosBtn" type="button" title="รีเฟรช"><i class="ic ic-refresh-cw" aria-hidden="true"></i></button>
+          <button class="save" id="takeOrderBtn" type="button"><i class="ic ic-plus" aria-hidden="true"></i> <span data-i18n="btn_take_order_short">กลับบ้าน / เดลิเวอรี่</span></button>
         </div>
+      </div>
+      <div class="floor-bar">
+        <div class="zone-chips" id="zoneChips"></div>
+        <div class="floor-legend"><span><i class="lg lg-free"></i>ว่าง</span><span><i class="lg lg-busy"></i>มีลูกค้า</span><span><i class="lg lg-ready"></i>อาหารพร้อม</span><span><i class="lg lg-bill"></i>รอเก็บเงิน</span></div>
       </div>
       <div id="offlineQueuePanel" class="offline-queue-panel hidden">
         <div><b>ออเดอร์รอ Sync</b><span id="offlineQueueSummary">0 รายการ</span></div>
@@ -98,6 +117,70 @@
           <h3 data-i18n="side_panel_title">ออเดอร์ที่กำลังดำเนินการ</h3>
           <div id="sidePanelList"></div>
         </aside>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Dashboard (owner/manager) ===== -->
+  <section id="tab-dashboard" class="tab-panel hidden">
+    <div class="page-head">
+      <div><h1 data-i18n="nav_dashboard">หน้าหลัก</h1><div class="page-sub" id="dashDate"></div></div>
+      <div class="head-actions"><button class="ghost-btn" id="dashRefreshBtn" type="button" title="รีเฟรช"><i class="ic ic-refresh-cw" aria-hidden="true"></i></button></div>
+    </div>
+    <div class="kpi-grid" id="dashKpis"></div>
+    <div class="dash-grid">
+      <section class="panel dash-chart-panel"><div class="panel-head"><div><h3>ยอดขายรายชั่วโมง</h3><div class="muted">วันนี้ เทียบกับเมื่อวาน</div></div></div><div class="hour-chart" id="dashHourly"></div></section>
+      <section class="panel"><div class="panel-head"><div><h3>เมนูขายดีวันนี้</h3></div></div><div id="dashTopItems"></div></section>
+      <section class="panel"><div class="panel-head"><div><h3>ช่องทางรับเงิน</h3></div></div><div id="dashPayments"></div></section>
+      <section class="panel"><div class="panel-head"><div><h3>บิลที่ยังไม่ชำระ</h3></div><button class="ghost-btn" type="button" data-goto-tab="billing">ดูทั้งหมด</button></div><div id="dashOpenBills"></div></section>
+    </div>
+  </section>
+
+  <!-- ===== Kitchen display (embedded /kitchen) ===== -->
+  <section id="tab-kitchen" class="tab-panel hidden">
+    <iframe id="kitchenFrame" class="kitchen-frame" title="จอครัว" src="about:blank"></iframe>
+  </section>
+
+  <!-- ===== Bills waiting for payment ===== -->
+  <section id="tab-billing" class="tab-panel hidden">
+    <div class="page-head">
+      <div><h1 data-i18n="nav_billing">ชำระเงิน</h1><div class="page-sub" id="billingSummary"></div></div>
+      <div class="head-actions"><button class="ghost-btn" type="button" data-goto-tab="operations"><i class="ic ic-banknote" aria-hidden="true"></i> กะ &amp; เงินสด</button></div>
+    </div>
+    <div class="bill-grid" id="billingList"></div>
+  </section>
+
+  <!-- ===== Customers (derived from orders) ===== -->
+  <section id="tab-customers" class="tab-panel hidden">
+    <div class="page-head">
+      <div><h1 data-i18n="nav_customers">ลูกค้า</h1><div class="page-sub" id="customersSummary">ลูกค้าที่ให้ชื่อหรือเบอร์โทรไว้ในออเดอร์</div></div>
+      <div class="head-actions"><div class="inline-search"><i class="ic ic-search" aria-hidden="true"></i><input id="customerSearch" type="search" placeholder="ค้นหาชื่อ / เบอร์โทร" autocomplete="off"></div></div>
+    </div>
+    <div class="customers-layout">
+      <div class="panel customer-list" id="customersList"></div>
+      <div class="panel customer-detail" id="customerDetail"><div class="empty-state">เลือกลูกค้าเพื่อดูประวัติการสั่ง</div></div>
+    </div>
+  </section>
+
+  <!-- ===== Settings hub ===== -->
+  <section id="tab-settings" class="tab-panel hidden">
+    <div class="page-head"><div><h1 data-i18n="nav_settings">ตั้งค่า</h1><div class="page-sub">ตั้งค่าร้าน เมนู โต๊ะ เครื่องพิมพ์ และการสำรองข้อมูล</div></div></div>
+    <div class="settings-hub">
+      <div class="panel settings-list" id="settingsList">
+        <button type="button" data-goto-tab="receiptsettings" data-need="manager"><i class="ic ic-store" aria-hidden="true"></i><span><b>ข้อมูลร้าน &amp; ใบเสร็จ</b><small>ชื่อร้าน ที่อยู่ ภาษาชื่อเมนู รูปแบบใบเสร็จ</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="receiptsettings" data-goto-anchor="netPrintersPanel" data-need="manager"><i class="ic ic-printer" aria-hidden="true"></i><span><b>เครื่องพิมพ์</b><small>ใบเสร็จ · ใบสั่งครัว · ค้นหาเครื่องพิมพ์</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="menu"><i class="ic ic-utensils" aria-hidden="true"></i><span><b>เมนู / หมวดหมู่</b><small>รูปอาหาร ราคา ตัวเลือก ชื่อหลายภาษา</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="tables"><i class="ic ic-layout-grid" aria-hidden="true"></i><span><b>โต๊ะ / โซน / QR</b><small>เพิ่มโต๊ะ จัดโซน พิมพ์ QR สั่งอาหาร</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="pricing" data-need="manager"><i class="ic ic-tag" aria-hidden="true"></i><span><b>ภาษี / ค่าบริการ / โปรโมชั่น</b><small>VAT · Service charge · โค้ดส่วนลด</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="inventory" data-need="manager"><i class="ic ic-package" aria-hidden="true"></i><span><b>วัตถุดิบ &amp; สูตร</b><small>สต็อก สถานีครัว ประวัติสต็อก</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="users" data-need="owner"><i class="ic ic-users" aria-hidden="true"></i><span><b>พนักงาน</b><small>บัญชีผู้ใช้ สิทธิ์การใช้งาน</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="branches" data-need="owner"><i class="ic ic-building-2" aria-hidden="true"></i><span><b>สาขา</b><small>เพิ่ม / แก้ไขสาขา</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+        <button type="button" data-goto-tab="receiptsettings" data-goto-anchor="localPanel" data-need="manager" id="settingsLocalRow" class="hidden"><i class="ic ic-monitor" aria-hidden="true"></i><span><b>โปรแกรมในเครื่อง &amp; สำรองข้อมูล</b><small>อัปเดต · เปิดอัตโนมัติ · สำรอง/กู้ข้อมูล · ตรวจสุขภาพระบบ</small></span><i class="ic ic-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <div class="panel settings-display">
+        <h3>การแสดงผล</h3>
+        <div class="setting-row"><span><b>โหมดหน้าจอ</b><small>มืด (พรีเมียม) หรือสว่าง</small></span><div class="seg" id="themeModeSeg"><button type="button" data-theme-mode="dark"><i class="ic ic-moon" aria-hidden="true"></i> มืด</button><button type="button" data-theme-mode="light"><i class="ic ic-sun" aria-hidden="true"></i> สว่าง</button><button type="button" data-theme-mode="system">ตามเครื่อง</button></div></div>
+        <div class="setting-row"><span><b>ภาษา</b><small>ภาษาของหน้าจอเครื่องนี้</small></span><select id="settingsLangSelect" class="lang-select"></select></div>
       </div>
     </div>
   </section>
@@ -125,12 +208,11 @@
             <option value="completed" data-i18n="status_completed">เสร็จสิ้น</option>
             <option value="cancelled" data-i18n="status_cancelled">ยกเลิก</option>
           </select>
-          <button class="ghost-btn" id="refreshOrdersBtn" data-i18n="btn_refresh"><i class="ic ic-refresh-cw" aria-hidden="true"></i> รีเฟรช</button>
+          <div class="inline-search"><i class="ic ic-search" aria-hidden="true"></i><input id="historySearch" type="search" placeholder="เลขบิล / โต๊ะ / ลูกค้า / เบอร์" autocomplete="off"></div>
+          <button class="ghost-btn" id="refreshOrdersBtn" title="รีเฟรช"><i class="ic ic-refresh-cw" aria-hidden="true"></i></button>
         </div>
       </div>
-      <div class="history-workspace-switch" id="historyWorkspaceSwitch"><button type="button" class="active" data-history-view="orders"><i class="ic ic-receipt" aria-hidden="true"></i> ออเดอร์</button><button type="button" data-history-view="kitchen"><i class="ic ic-chef-hat" aria-hidden="true"></i> ครัว <span id="historyKitchenCount" class="mini-count">0</span></button></div>
       <div id="ordersList"></div>
-      <div id="historyKitchenWorkspace" class="history-kitchen-workspace hidden"><div class="history-kitchen-toolbar"><div><b>จอครัวในหน้าประวัติ</b><span>กดติดตามได้ตามต้องการ · ไม่กดก็ไม่กระทบการจ่ายเงิน สต็อก หรือรายงาน</span></div><select id="historyKitchenStation"><option value="">ทุกสถานี</option></select></div><div id="historyKitchenBoard" class="history-kitchen-board"></div></div>
     </div>
   </section>
 
@@ -191,6 +273,7 @@
         </div>
       </details>
       <div class="report-cards report-summary-cards" id="reportCards"></div>
+      <section class="report-section report-hourly"><div class="section-kicker">ช่วงเวลาขาย</div><h3>ยอดขายรายชั่วโมง</h3><div class="hour-chart" id="reportHourly"></div></section>
       <div class="report-two-col">
         <section class="report-section">
           <div class="section-kicker">ยอดขายตามสินค้า</div>
@@ -426,6 +509,7 @@
 <div class="modal" id="tableModal"><div class="sheet small"><div class="sheet-head"><h2 id="tableModalTitle" data-i18n="modal_add_table_title">เพิ่มโต๊ะ</h2><button data-close>×</button></div>
   <input type="hidden" id="tableId">
   <label><span data-i18n="label_table_name">ชื่อโต๊ะ</span><input id="tableName" placeholder="เช่น โต๊ะ 1" data-i18n-ph="placeholder_table_name"></label>
+  <label><span>โซน (ไม่บังคับ)</span><input id="tableZone" list="zoneOptions" maxlength="40" placeholder="เช่น โซน A / ในร้าน / ระเบียง"></label>
   <div class="login-error" id="tableError"></div>
   <button class="save" id="tableSave" data-i18n="btn_save">บันทึก</button>
 </div></div>
@@ -433,6 +517,11 @@
 <div class="modal" id="bulkTableModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_bulk_tables_title">สร้างหลายโต๊ะพร้อมกัน</h2><button data-close>×</button></div>
   <p class="hint" data-i18n="bulk_tables_hint">ระบบจะสร้างโต๊ะให้อัตโนมัติ พร้อม QR โค้ดเฉพาะของแต่ละโต๊ะ</p>
   <label><span data-i18n="label_table_count">จำนวนโต๊ะที่ต้องการสร้าง</span><input id="bulkTableCount" type="number" min="1" max="200" value="10"></label>
+  <div class="two-col">
+    <label><span>ตัวอักษรนำหน้า (ไม่บังคับ)</span><input id="bulkTablePrefix" maxlength="20" placeholder="เช่น A → A1, A2 …"></label>
+    <label><span>โซน (ไม่บังคับ)</span><input id="bulkTableZone" list="zoneOptions" maxlength="40" placeholder="เช่น โซน A"></label>
+  </div>
+  <datalist id="zoneOptions"></datalist>
   <div class="login-error" id="bulkTableError"></div>
   <button class="save" id="bulkTableSave" data-i18n="btn_create_tables">สร้างโต๊ะ</button>
 </div></div>
@@ -525,36 +614,51 @@
   <button class="save" id="tenantSave" data-i18n="btn_create_shop">สร้างร้านค้า</button>
 </div></div>
 
-<!-- Staff take-order modal -->
-<div class="modal" id="takeOrderModal"><div class="sheet wide"><div class="sheet-head"><h2 data-i18n="modal_take_order_title">รับออเดอร์ลูกค้า</h2><button data-close>×</button></div>
-<div class="to-layout"><div class="to-main"><div class="to-details">
-  <div class="type" id="takeOrderType">
-    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in"><i class="ic ic-utensils" aria-hidden="true"></i> ทานที่ร้าน</button>
-    <button data-type="takeaway" data-i18n="order_type_takeaway"><i class="ic ic-shopping-bag" aria-hidden="true"></i> กลับบ้าน</button>
-    <button data-type="delivery" data-i18n="order_type_delivery"><i class="ic ic-bike" aria-hidden="true"></i> เดลิเวอรี่</button>
+<!-- Staff take-order workspace (Version E: menu left, bill right) -->
+<div class="modal workspace" id="takeOrderModal"><div class="sheet wide">
+<div class="to-layout"><div class="to-main">
+  <div class="to-topline">
+    <button type="button" class="to-back" data-close aria-label="ปิด"><i class="ic ic-arrow-left" aria-hidden="true"></i></button>
+    <div class="type" id="takeOrderType">
+      <button type="button" data-type="dine_in" class="active" data-i18n="order_type_dine_in"><i class="ic ic-utensils" aria-hidden="true"></i> ทานที่ร้าน</button>
+      <button type="button" data-type="takeaway" data-i18n="order_type_takeaway"><i class="ic ic-shopping-bag" aria-hidden="true"></i> กลับบ้าน</button>
+      <button type="button" data-type="delivery" data-i18n="order_type_delivery"><i class="ic ic-bike" aria-hidden="true"></i> เดลิเวอรี่</button>
+    </div>
+    <div class="inline-search to-search"><i class="ic ic-search" aria-hidden="true"></i><input id="takeOrderSearch" type="search" placeholder="ค้นหาเมนู" autocomplete="off"></div>
   </div>
-  <div id="takeOrderTableRow">
-    <label><span data-i18n="label_table">โต๊ะ</span><select id="takeOrderTable"></select></label>
+  <div class="to-details">
+    <div id="takeOrderTableRow"><label><span data-i18n="label_table">โต๊ะ</span><select id="takeOrderTable"></select></label></div>
+    <label><span data-i18n="label_guest_count">จำนวนลูกค้า (คน)</span><input id="takeOrderGuestCount" type="number" min="1" max="200" inputmode="numeric" placeholder="เช่น 4" data-i18n-ph="placeholder_guest_count"></label>
+    <label><span data-i18n="label_customer_name">ชื่อลูกค้า</span><input id="takeOrderCustomerName" placeholder="ลูกค้า" data-i18n-ph="placeholder_customer_name"></label>
+    <div id="takeOrderScheduleRow" class="hidden"><label><span>เวลารับ/จัดส่งล่วงหน้า (ถ้ามี)</span><input id="takeOrderScheduledFor" type="datetime-local"></label></div>
+    <div id="takeOrderDeliveryFields" class="hidden">
+      <label><span data-i18n="label_phone">เบอร์โทร</span><input id="takeOrderPhone" inputmode="numeric"></label>
+      <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress" rows="1"></textarea></label>
+      <label><span>ค่าจัดส่ง</span><input id="takeOrderDeliveryFee" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
+    </div>
   </div>
-  <label><span data-i18n="label_customer_name">ชื่อลูกค้า</span><input id="takeOrderCustomerName" placeholder="ลูกค้า" data-i18n-ph="placeholder_customer_name"></label>
-  <label><span data-i18n="label_guest_count">จำนวนลูกค้า (คน)</span><input id="takeOrderGuestCount" type="number" min="1" max="200" inputmode="numeric" placeholder="เช่น 4" data-i18n-ph="placeholder_guest_count"></label>
-  <div id="takeOrderScheduleRow" class="hidden"><label><span>เวลารับ/จัดส่งล่วงหน้า (ถ้ามี)</span><input id="takeOrderScheduledFor" type="datetime-local"></label></div>
-  <div id="takeOrderDeliveryFields" class="hidden">
-    <label><span data-i18n="label_phone">เบอร์โทร</span><input id="takeOrderPhone" inputmode="numeric"></label>
-    <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress"></textarea></label>
-    <label><span>ค่าจัดส่ง</span><input id="takeOrderDeliveryFee" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
-  </div>
-  </div>
-  <h3 data-i18n="label_choose_menu">เลือกเมนู</h3>
   <div class="cat-scroll" id="takeOrderCatScroll"></div>
   <div class="menu-grid" id="takeOrderMenuGrid"></div>
-  </div><aside class="to-cart">
-  <h3 data-i18n="label_cart">ตะกร้า</h3>
-  <div id="takeOrderCart"></div>
-  <div class="cart-total-row"><span data-i18n="label_total">รวมทั้งหมด</span><span id="takeOrderTotal">0</span></div>
+</div><aside class="to-cart" id="takeOrderBill">
+  <div class="bill-head" id="billHead">
+    <div class="bill-head-main"><div class="bill-title" id="billTitle">ออเดอร์ใหม่</div><div class="bill-sub" id="billSub"></div></div>
+    <button type="button" class="ghost-btn bill-manage hidden" id="billManageBtn"><i class="ic ic-receipt" aria-hidden="true"></i> จัดการบิล</button>
+    <button type="button" class="bill-toggle" id="billToggle" aria-label="ดูบิล"><i class="ic ic-chevron-down" aria-hidden="true"></i></button>
+  </div>
+  <div class="bill-lines">
+    <div id="billExisting"></div>
+    <div id="takeOrderCart"></div>
+    <button type="button" class="bill-note-btn" id="billNoteBtn"><i class="ic ic-plus" aria-hidden="true"></i> เพิ่มหมายเหตุ</button>
+    <textarea id="takeOrderNotes" class="hidden" rows="2" maxlength="500" placeholder="หมายเหตุถึงครัว เช่น ไม่เผ็ด / เสิร์ฟพร้อมกัน"></textarea>
+  </div>
+  <div class="bill-sum" id="billSum"></div>
+  <div class="cart-total-row"><span data-i18n="label_total_short">ยอดรวม</span><span id="takeOrderTotal">0</span></div>
+  <label class="send-kitchen-toggle"><input id="takeOrderSendKitchen" type="checkbox" checked><span><i class="ic ic-chef-hat" aria-hidden="true"></i> ส่งเข้าครัวทันที</span></label>
   <div class="login-error" id="takeOrderError"></div>
-  <label class="send-kitchen-toggle"><input id="takeOrderSendKitchen" type="checkbox" checked><span><i class="ic ic-chef-hat" aria-hidden="true"></i> ส่งเข้าครัวทันทีเมื่อยืนยัน</span></label>
-  <button class="save" id="takeOrderSubmit" data-i18n="btn_confirm_order"><i class="ic ic-circle-check" aria-hidden="true"></i> ยืนยันออเดอร์</button>
+  <div class="bill-actions">
+    <button type="button" class="ghost-btn gold-outline" id="takeOrderSubmit">บันทึกบิล</button>
+    <button type="button" class="save" id="billPayBtn">ชำระเงิน <i class="ic ic-arrow-right" aria-hidden="true"></i></button>
+  </div>
   </aside></div>
 </div></div>
 
@@ -579,8 +683,7 @@
 </div></div>
 
 <div class="modal" id="confirmPaymentModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="modal_confirm_payment_title">ยืนยันการชำระเงิน</h2><button data-close>×</button></div>
-  <div id="cpBreakdown" class="cp-breakdown"></div>
-  <div class="row" style="border-top:1px dashed var(--border);padding-top:10px"><b data-i18n="label_total_short">ยอดรวม</b><b id="cpTotal">0</b></div>
+  <div class="pay-hero"><span class="pay-hero-label" data-i18n="label_total_short">ยอดรวม</span><b id="cpTotal">0</b><div id="cpBreakdown" class="cp-breakdown"></div></div>
   <details class="payment-advanced" id="cpAdvanced"><summary><span><i class="ic ic-tag" aria-hidden="true"></i> โปรโมชั่น / ส่วนลด</span><small>ไม่ใช้สามารถข้ามได้</small></summary><div class="payment-advanced-body">
     <label><span>Promotion Code (ถ้ามี)</span><input id="cpPromo" maxlength="40" placeholder="เช่น LUNCH10"></label>
     <div class="form-grid"><label><span>ส่วนลดพิเศษ (ถ้ามี)</span><input id="cpDiscount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label><label><span>เหตุผลส่วนลด</span><input id="cpDiscountReason" maxlength="300" placeholder="ระบุเมื่อให้ส่วนลดพิเศษ"></label></div>
@@ -589,7 +692,7 @@
       <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
     </div>
   </div></details>
-  <div class="pay-seg" id="cpMethodSeg"><button type="button" data-m="cash"><i class="ic ic-banknote" aria-hidden="true"></i>เงินสด</button><button type="button" data-m="qr"><i class="ic ic-qr-code" aria-hidden="true"></i>QR</button><button type="button" data-m="card"><i class="ic ic-credit-card" aria-hidden="true"></i>บัตร</button><button type="button" data-m="bank_transfer"><i class="ic ic-landmark" aria-hidden="true"></i>โอน</button></div>
+  <div class="pay-seg" id="cpMethodSeg"><button type="button" data-m="cash"><i class="ic ic-banknote" aria-hidden="true"></i><span>เงินสด</span></button><button type="button" data-m="qr"><i class="ic ic-qr-code" aria-hidden="true"></i><span>QR Code</span></button><button type="button" data-m="bank_transfer"><i class="ic ic-landmark" aria-hidden="true"></i><span>โอนเงิน</span></button><button type="button" data-m="card"><i class="ic ic-credit-card" aria-hidden="true"></i><span>บัตรเครดิต</span></button></div>
   <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">เงินสด</option><option value="qr">QR</option><option value="card">บัตร</option><option value="bank_transfer">โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
   <label id="cpCashLabel"><span>รับเงินสดมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label><div id="cpCashQuick" class="cash-quick"></div>
   <div class="payment-live-summary"><div><span>ชำระรวม</span><b id="cpPaidTotal">0</b></div><div><span>คงเหลือ</span><b id="cpRemaining">0</b></div><div><span>เงินทอน</span><b id="cpChange">0</b></div></div>
@@ -629,6 +732,6 @@
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>const DEFAULT_LANG = 'th';</script>
-<script src="/static/i18n.js?v=30.2"></script>
-<script src="/static/app.js?v=34.0"></script><script>(function(){const banner=document.getElementById('networkBanner'),txt=document.getElementById('networkBannerText');function net(){const online=navigator.onLine;banner.classList.toggle('hidden',online);document.documentElement.classList.toggle('is-offline',!online);if(!online)txt.textContent='ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้';}addEventListener('online',net);addEventListener('offline',net);net();if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{}));})();</script>
+<script src="/static/i18n.js?v=40.0"></script>
+<script src="/static/app.js?v=40.0"></script><script src="/static/qr-local.js?v=1"></script><script>(function(){const banner=document.getElementById('networkBanner'),txt=document.getElementById('networkBannerText');function net(){const online=navigator.onLine;banner.classList.toggle('hidden',online);document.documentElement.classList.toggle('is-offline',!online);if(!online)txt.textContent='ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้';}addEventListener('online',net);addEventListener('offline',net);net();if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{}));})();</script>
 </body></html>
