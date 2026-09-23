@@ -516,6 +516,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)
 
 @media (max-width:900px){
   .board-row{flex-direction:column}
+  /* column layout + align-items:flex-start shrank the table board to one 165px column on tablets */
+  .board-row>.board-panel{width:100%;align-self:stretch}
   .side-panel{flex:none;width:100%;position:static;max-height:none}
 }
 
@@ -928,3 +930,28 @@ main{max-width:1180px;padding-top:14px}
 .np-found{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;margin-bottom:8px;border:1px dashed var(--border,#ccc);border-radius:12px}
 .np-found small{display:block;opacity:.7}.np-manual{margin-top:12px}.np-manual summary{cursor:pointer;opacity:.8}
 .np-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#22c55e}
+
+/* Step 5: take-order feedback */
+.menu-card{position:relative}
+.menu-card.in-cart{border-color:var(--primary)!important;box-shadow:0 0 0 1px var(--primary) inset}
+.menu-card .mc-qty{position:absolute;top:8px;right:8px;min-width:26px;height:26px;padding:0 7px;border-radius:13px;background:var(--primary);color:#fff;font-weight:900;font-size:14px;display:flex;align-items:center;justify-content:center}
+.send-kitchen-toggle{display:flex;align-items:center;gap:10px;margin:10px 0 4px;font-weight:700;font-size:14px;cursor:pointer}.send-kitchen-toggle input{width:20px;height:20px;accent-color:var(--primary)}
+.cash-quick{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 10px}.cash-quick button{min-height:44px;padding:8px 14px;font-weight:800;font-size:15px}
+.cp-breakdown .row{display:flex;justify-content:space-between;font-size:14px;opacity:.85;padding:2px 0}
+/* Step 5: kitchen screen readable from across the kitchen */
+.kitchen-ticket .kt-head{align-items:center}
+.kitchen-ticket .kt-where{font-size:26px;font-weight:900;line-height:1.1}
+.kitchen-ticket .kt-wait{font-size:15px;font-weight:800;padding:4px 10px;border-radius:999px;background:var(--surface-2,#2a2a2a)}
+.kitchen-ticket.kt-wait-slow .kt-wait{background:#b45309;color:#fff}
+.kitchen-ticket.kt-wait-late .kt-wait{background:#b91c1c;color:#fff}
+.kitchen-ticket.kt-wait-late{box-shadow:0 0 0 2px #b91c1c inset}
+.kitchen-ticket ul li{font-size:19px;line-height:1.35}
+.kitchen-ticket ul li b{font-size:21px}
+.kitchen-ticket .kt-notes{font-size:17px;font-weight:800;color:#fbbf24}
+.kitchen-ticket .kt-opts{font-size:15px}
+.kitchen-ticket .kt-actions button{min-height:52px;font-size:17px}
+/* Step 5: cancelling an item is rare and needs a reason — keep it quiet next to the quantity */
+.oc-edit-controls .mini-cancel{background:transparent!important;color:var(--text-muted,#999)!important;border:1px solid var(--border)!important;font-size:12px!important;font-weight:600!important;padding:6px 10px!important;min-height:34px;box-shadow:none!important}
+.oc-edit-controls .mini-cancel:hover{color:var(--neg,#ef4444)!important;border-color:var(--neg,#ef4444)!important}
+/* Step 5: taking payment is the main job on an open bill — make it the biggest target */
+.oc-actions .btn-confirm-pay,.btn-confirm-pay{min-height:52px!important;padding:12px 22px!important;font-size:16px!important;font-weight:900!important;order:-1}

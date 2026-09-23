@@ -33,6 +33,7 @@ jobs:
       - name: SQLite and browser regressions
         run: |
           python -m pytest tests/test_runtime_regressions.py tests/test_money_reconciliation.py tests/test_local_mode.py tests/test_printing.py tests/test_local_ops.py -q
+          python -m pytest tests/soak_shop_day.py -q
           python round30_customer_history_test.py
           python round31_table_open_bill_test.py
           node tests/customer_history_runtime.test.cjs

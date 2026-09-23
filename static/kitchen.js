@@ -151,9 +151,14 @@ function renderBoard(orders) {
       ${it.notes ? `<div class="kt-notes">📝 ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}</li>`;
     }).join('');
     const actions = (STATUS_ACTIONS[o.status] || []).map(a => `<button class="${a.cls}" data-set="${o.id}:${a.to}">${escapeHtml(t(a.labelKey))}</button>`).join('');
-    return `<div class="kitchen-ticket ${o.status}">
-      <div class="kt-head"><span class="kt-no">#${escapeHtml(o.order_no)}</span><span class="kt-time">${zaabosTime(o.created_at)}</span></div>
-      <div class="kt-table">${escapeHtml(orderTypeLabel(o.order_type))}${o.table_name_snapshot ? ' · ' + escapeHtml(o.table_name_snapshot) : ''} · ${escapeHtml(o.customer_name)}</div>
+    // Kitchen reads from a distance: the table is the headline, and the wait time turns orange/red.
+    const firstSent = o.items.filter(it => it.kitchen_sent_at).map(it => new Date(it.kitchen_sent_at).getTime()).sort((a, b) => a - b)[0] || new Date(o.created_at).getTime();
+    const mins = Math.max(0, Math.floor((Date.now() - firstSent) / 60000));
+    const waitCls = mins >= 20 ? 'kt-wait-late' : mins >= 10 ? 'kt-wait-slow' : '';
+    const where = o.table_name_snapshot || orderTypeLabel(o.order_type);
+    return `<div class="kitchen-ticket ${o.status} ${waitCls}">
+      <div class="kt-head"><span class="kt-where">${escapeHtml(where)}</span><span class="kt-wait" data-since="${firstSent}">${mins} นาที</span></div>
+      <div class="kt-table">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.customer_name && o.customer_name !== 'ลูกค้า' ? ' · ' + escapeHtml(o.customer_name) : ''}</div>
       <ul>${itemsHtml}</ul>
       ${o.notes ? `<div class="kt-notes">📝 ${escapeHtml(o.notes)}</div>` : ''}
       <div class="kt-actions">${actions}</div>
@@ -171,3 +176,13 @@ $('#refreshBtn').addEventListener('click', loadBoard);
 (async function initApp() {
   try { me = await api('/api/me'); await afterLogin(); } catch (e) { showLogin(); }
 })();
+
+// Keep the wait counters and colours live between refreshes.
+setInterval(() => {
+  document.querySelectorAll('.kt-wait[data-since]').forEach(el => {
+    const mins = Math.max(0, Math.floor((Date.now() - Number(el.dataset.since)) / 60000));
+    el.textContent = mins + ' นาที';
+    const card = el.closest('.kitchen-ticket');
+    if (card) { card.classList.toggle('kt-wait-slow', mins >= 10 && mins < 20); card.classList.toggle('kt-wait-late', mins >= 20); }
+  });
+}, 30000);

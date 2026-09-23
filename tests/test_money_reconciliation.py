@@ -647,3 +647,22 @@ def test_report_today_is_lao_date_before_7am():
     out = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == [['2026-09-23', '2026-09-23'], ['2026-09-22', '2026-09-22'], ['2026-09-01', '2026-09-23']]
+
+
+def test_checkout_quote_equals_what_payment_charges(shop):
+    """The checkout screen shows /quote; paying exactly that amount must succeed — delivery fee,
+    service, tax and promo code included (the screen used to ignore them, so payment failed)."""
+    ok(call(shop, 'owner', 'PUT', '/api/pricing/settings', {'branch_id': shop['branch'], 'tax_rate': 7, 'service_charge_rate': 10}))
+    ok(call(shop, 'owner', 'POST', '/api/promotions', {'code': 'Q5', 'name': 'Q5', 'discount_type': 'fixed', 'discount_value': 5000}))
+    open_shift(shop, cash=0)
+    oid = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'delivery', 'customer_phone': '02055551234',
+                                                          'customer_address': 'x', 'delivery_fee': 12000,
+                                                          'cart': [{'menu_item_id': shop['noodle'], 'quantity': 2}]}))['order_id']
+    q = ok(call(shop, 'staff', 'POST', f'/api/orders/{oid}/quote', {'promotion_code': 'q5'}))
+    # 50,000 - 5,000 = 45,000 ; +10% = 4,500 ; +7% of 49,500 = 3,465 ; + delivery 12,000 = 64,965
+    assert D(q['due']) == D(64965) and D(q['delivery']) == D(12000) and q['label'] == 'Q5'
+    code, _ = call(shop, 'staff', 'POST', f'/api/orders/{oid}/quote', {'promotion_code': 'NOPE'})
+    assert code == 400
+    body = ok(pay(shop, oid, promotion_code='q5', payments=[{'method': 'cash', 'amount': q['due'], 'cash_received': 70000}]))
+    assert D(body['amount']) == D(q['due']) and D(body['change']) == D(70000 - 64965)
+    assert_ledger(shop)

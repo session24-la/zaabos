@@ -303,3 +303,25 @@ def test_network_scan_finds_a_listening_printer(local_print, monkeypatch):
     monkeypatch.setattr(printing.socket, 'create_connection', fake)
     assert printing.scan_network('10.9.8.7', port=9100) == ['10.9.8.50']
     assert printing.scan_network('127.0.0.1') == []
+
+
+def test_confirm_order_sends_to_kitchen_in_one_step(shop, local_print):
+    """Staff confirm = order saved AND kitchen ticket queued in the same transaction; adding a
+    round later does the same. Without the flag nothing reaches the kitchen (old behaviour)."""
+    _only_this_shop(shop)
+    add_printer(shop, local_print.port, role='kitchen')
+    body = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'dine_in', 'table_id': shop['tables'][0],
+                                                          'cart': [{'menu_item_id': shop['noodle'], 'quantity': 2}], 'send_to_kitchen': True}))
+    assert body['sent_to_kitchen'] and body['printed_by_server'] and len(body['item_ids']) == 1
+    more = ok(call(shop, 'staff', 'POST', f"/api/orders/{body['order_id']}/items", {'items': [{'menu_item_id': shop['beer'], 'quantity': 1}], 'send_to_kitchen': True}))
+    assert more['sent_to_kitchen']
+    quiet = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'takeaway',
+                                                           'cart': [{'menu_item_id': shop['beer'], 'quantity': 1}]}))
+    assert not quiet['sent_to_kitchen']
+    jobs = _jobs(shop)
+    assert [json.loads(j['item_ids']) for j in jobs] == [body['item_ids'], more['item_ids']]
+    with core.app.app_context():
+        sent = core.db().execute('SELECT COUNT(*) n FROM order_items WHERE order_id=? AND kitchen_sent_at IS NOT NULL', (body['order_id'],)).fetchone()['n']
+    assert sent == 2
+    printing.process_once(core)
+    assert _wait(lambda: len(local_print.received) == 2)

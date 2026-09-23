@@ -1016,7 +1016,7 @@ function orderCardHtml(o) {
     const editable = kitchenEligible && o.payment_status === 'unpaid' && o.status !== 'completed';
     const cb = editable && activeQty > 0 && !it.kitchen_sent_at
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
-    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" data-cancel-item="${o.id}:${it.id}:${activeQty}">ยกเลิกรายการ</button></span>` : '';
+    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" title="ยกเลิกรายการ" aria-label="ยกเลิกรายการ" data-cancel-item="${o.id}:${it.id}:${activeQty}">✕ ยกเลิก</button></span>` : '';
     return `<li class="oc-item-row">
       <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
       ${sentBadge}
@@ -1281,15 +1281,42 @@ function findOrderById(orderId) {
 }
 
 let cpOrderId=null,extraPaymentParts=[];
-function cpBaseDue(){const o=findOrderById(cpOrderId);if(!o)return 0;return Math.max(0,Number(o.total_amount||0)-Math.max(0,Number($('#cpDiscount').value||0)));}
+// The server's bill formula (items - discount + service + tax + delivery); the old local guess
+// ignored service/tax/delivery/promo, so those bills could never be paid.
+let cpQuote=null,cpQuoteSeq=0;
+function cpBaseDue(){if(cpQuote)return Number(cpQuote.due||0);const o=findOrderById(cpOrderId);if(!o)return 0;return Math.max(0,Number(o.total_amount||0)-Math.max(0,Number($('#cpDiscount').value||0)))+Number(o.delivery_fee||0);}
+async function refreshCpQuote(resetAmounts){
+  if(cpOrderId==null)return;const seq=++cpQuoteSeq;
+  try{
+    const q=await apiJson('/api/orders/'+cpOrderId+'/quote','POST',{promotion_code:$('#cpPromo').value.trim(),discount_amount:$('#cpDiscount').value.trim()||0});
+    if(seq!==cpQuoteSeq)return;cpQuote=q;$('#cpError').textContent='';
+  }catch(e){if(seq!==cpQuoteSeq)return;cpQuote=null;$('#cpError').textContent=e.message;}
+  const q=cpQuote,lines=[];
+  if(q){if(q.discount>0)lines.push(['ส่วนลด'+(q.label?' · '+q.label:''),'−'+fmtMoney(q.discount)]);if(q.service>0)lines.push([`ค่าบริการ ${q.service_rate}%`,fmtMoney(q.service)]);if(q.tax>0)lines.push([`ภาษี ${q.tax_rate}%`,fmtMoney(q.tax)]);if(q.delivery>0)lines.push(['ค่าส่ง',fmtMoney(q.delivery)]);}
+  $('#cpBreakdown').innerHTML=lines.map(([a,b])=>`<div class="row"><span>${escapeHtml(a)}</span><span>${b}</span></div>`).join('');
+  $('#cpTotal').textContent=fmtMoney(cpBaseDue());
+  if(resetAmounts!==false){const extras=extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);$('#cpPrimaryAmount').value=String(Math.max(0,cpBaseDue()-extras));$('#cpCash').value=$('#cpPrimaryAmount').value;}
+  renderCashQuick();updateCpPaymentSummary();
+}
+// One tap for the notes the customer hands over (kip/baht), instead of typing the amount.
+function renderCashQuick(){
+  const box=$('#cpCashQuick');if(!box)return;const due=Math.max(0,Number($('#cpPrimaryAmount').value||0));
+  const notes=[1000,5000,10000,20000,50000,100000],opts=[due];
+  for(const step of [5000,10000,50000,100000]){const v=Math.ceil(due/step)*step;if(v>due&&!opts.includes(v))opts.push(v);}
+  for(const n of notes){if(n>due&&!opts.includes(n))opts.push(n);}
+  box.innerHTML=opts.sort((a,b)=>a-b).slice(0,5).map((v,i)=>`<button type="button" class="ghost-btn" data-cash-quick="${v}">${i===0?'พอดี ':''}${fmtMoney(v)}</button>`).join('');
+}
 function paymentMethodName(m){return({cash:'เงินสด',qr:'QR',card:'บัตร',bank_transfer:'โอนธนาคาร',other:'อื่น ๆ'})[m]||m}
 function updateCpPaymentSummary(){const due=cpBaseDue(),method=$('#cpMethod').value;$('#cpCashLabel').classList.toggle('hidden',method!=='cash');const primary=Math.max(0,Number($('#cpPrimaryAmount').value||0)),extras=extraPaymentParts.reduce((a,x)=>a+Math.max(0,Number(x.amount||0)),0),paid=primary+extras,remaining=Math.max(0,due-paid),cash=method==='cash'?Math.max(0,Number($('#cpCash').value||0)):0;$('#cpPaidTotal').textContent=fmtMoney(paid);$('#cpRemaining').textContent=fmtMoney(remaining);$('#cpRemaining').classList.toggle('payment-ok',Math.abs(paid-due)<.005);$('#cpChange').textContent=fmtMoney(method==='cash'?Math.max(0,cash-primary):0);}
 function renderPaymentParts(){const el=$('#cpPaymentParts');if(!el)return;el.innerHTML=extraPaymentParts.map((p,i)=>`<div class="payment-part-row"><select data-part-method="${i}"><option value="cash">💵 เงินสด</option><option value="qr">📱 QR</option><option value="card">💳 บัตร</option><option value="bank_transfer">🏦 โอน</option><option value="other">อื่น ๆ</option></select><input data-part-amount="${i}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="ยอดช่องทางนี้" value="${p.amount||''}"><button class="icon-btn danger" data-remove-part="${i}">×</button></div>`).join('');extraPaymentParts.forEach((p,i)=>{const m=el.querySelector(`[data-part-method="${i}"]`);if(m)m.value=p.method});updateCpPaymentSummary();}
 let cpRequestKey=null;
 function newCheckoutKey(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():('pay-'+Date.now()+'-'+Math.random().toString(36).slice(2))}
-function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;cpRequestKey=newCheckoutKey();checkCheckoutShift();extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpAdvanced').open=false;$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';renderPaymentParts();openModal('#confirmPaymentModal');}
+function openConfirmPaymentModal(orderId){const o=findOrderById(orderId);if(!o)return;cpOrderId=orderId;cpRequestKey=newCheckoutKey();checkCheckoutShift();extraPaymentParts=[];$('#cpTotal').textContent=fmtMoney(o.total_amount);$('#cpPromo').value='';$('#cpDiscount').value='';$('#cpDiscountReason').value='';$('#cpApprovalUser').value='';$('#cpApprovalPass').value='';$('#cpAdvanced').open=false;$('#cpMethod').value=o.payment_method&&o.payment_method!=='split'?o.payment_method:'cash';$('#cpPrimaryAmount').value=String(Number(o.total_amount||0));$('#cpCash').value=String(Number(o.total_amount||0));$('#cpError').textContent='';cpQuote=null;$('#cpBreakdown').innerHTML='';renderPaymentParts();openModal('#confirmPaymentModal');refreshCpQuote(true);}
 $('#cpMethod').addEventListener('change',()=>{if($('#cpMethod').value==='cash'&&!$('#cpCash').value)$('#cpCash').value=$('#cpPrimaryAmount').value;updateCpPaymentSummary()});$('#cpPrimaryAmount').addEventListener('input',updateCpPaymentSummary);$('#cpCash').addEventListener('input',updateCpPaymentSummary);
-$('#cpDiscount').addEventListener('input',()=>{const due=cpBaseDue(),extras=extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);$('#cpPrimaryAmount').value=String(Math.max(0,due-extras));updateCpPaymentSummary()});
+let cpQuoteTimer=null;const cpQuoteSoon=()=>{clearTimeout(cpQuoteTimer);cpQuoteTimer=setTimeout(()=>refreshCpQuote(true),350)};
+$('#cpDiscount').addEventListener('input',cpQuoteSoon);$('#cpPromo').addEventListener('input',cpQuoteSoon);
+$('#cpCashQuick').addEventListener('click',e=>{const b=e.target.closest('[data-cash-quick]');if(!b)return;$('#cpMethod').value='cash';$('#cpCash').value=b.dataset.cashQuick;updateCpPaymentSummary();});
+$('#cpPrimaryAmount').addEventListener('input',renderCashQuick);
 $('#cpAddPayment').addEventListener('click',()=>{const due=cpBaseDue(),paid=Number($('#cpPrimaryAmount').value||0)+extraPaymentParts.reduce((a,x)=>a+Number(x.amount||0),0);extraPaymentParts.push({method:'qr',amount:Math.max(0,due-paid)});renderPaymentParts()});
 $('#cpPaymentParts').addEventListener('input',e=>{let i=e.target.dataset.partAmount;if(i!==undefined)extraPaymentParts[+i].amount=Number(e.target.value||0);i=e.target.dataset.partMethod;if(i!==undefined)extraPaymentParts[+i].method=e.target.value;updateCpPaymentSummary()});$('#cpPaymentParts').addEventListener('click',e=>{const i=e.target.dataset.removePart;if(i!==undefined){extraPaymentParts.splice(+i,1);renderPaymentParts()}});
 $('#cpSubmit').addEventListener('click',async()=>{if(cpOrderId==null)return;$('#cpError').textContent='';const id=cpOrderId,method=$('#cpMethod').value,primary=Number($('#cpPrimaryAmount').value||0);if(primary<=0){$('#cpError').textContent='กรุณาระบุยอดชำระ';return}const parts=[{method,amount:primary,cash_received:method==='cash'?(Number($('#cpCash').value||0)||primary):null},...extraPaymentParts.map(x=>({method:x.method,amount:Number(x.amount||0)}))],due=cpBaseDue(),paid=parts.reduce((a,x)=>a+Number(x.amount||0),0);if(Math.abs(paid-due)>.005){$('#cpError').textContent=`ยอดชำระยังไม่ครบ: ชำระ ${fmtMoney(paid)} / ${fmtMoney(due)}`;return}if(parts.some(x=>x.amount<=0)){ $('#cpError').textContent='ยอดแต่ละช่องทางต้องมากกว่า 0';return}const payload={payment_status:'paid',payment_method:method,payments:parts},promo=$('#cpPromo').value.trim(),disc=$('#cpDiscount').value.trim(),dr=$('#cpDiscountReason').value.trim(),au=$('#cpApprovalUser').value.trim(),ap=$('#cpApprovalPass').value;if(promo)payload.promotion_code=promo;if(disc)payload.discount_amount=parseFloat(disc);if(dr)payload.discount_reason=dr;if(au)payload.approval_username=au;if(ap)payload.approval_password=ap;try{const result=await apiJson('/api/orders/'+id+'/payment','PUT',{...payload,client_request_id:cpRequestKey});toast('ชำระเงินสำเร็จ · '+result.payments.map(x=>paymentMethodName(x.method)+' '+fmtMoney(x.amount)).join(' + '),'ok');closeModals();cpOrderId=null;const fresh=await api('/api/orders?branch_id='+encodeURIComponent(currentBranchId||''));lastOrdersFlat=fresh.orders||[];activeOrders=lastOrdersFlat.filter(o=>o.status!=='completed'&&o.status!=='cancelled');renderTableBoard();renderOtherOrders();renderSidePanel();printReceipt(id)}catch(e){$('#cpError').textContent=e.message;if(e.code==='shift_required')showCheckoutShiftBox(true)}});
@@ -1577,6 +1604,25 @@ function renderTakeOrderMenu() {
       <span class="mc-name">${escapeHtml(it.name)}</span>
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
     </div>`).join('');
+  updateTakeOrderFeedback();
+}
+// Staff must see what they already tapped without scrolling to the cart: a count on each dish
+// and the running total on the confirm button.
+function updateTakeOrderFeedback() {
+  const counts = {};
+  cart.forEach(c => { counts[c.menu_item_id] = (counts[c.menu_item_id] || 0) + c.qty; });
+  $$('#takeOrderMenuGrid [data-pick-item]').forEach(card => {
+    const n = counts[card.dataset.pickItem] || 0;
+    let b = card.querySelector('.mc-qty');
+    if (!n) { if (b) b.remove(); card.classList.remove('in-cart'); return; }
+    if (!b) { b = document.createElement('span'); b.className = 'mc-qty'; card.appendChild(b); }
+    b.textContent = n; card.classList.add('in-cart');
+  });
+  const btn = $('#takeOrderSubmit');
+  if (btn && !btn.disabled) {
+    const qty = cart.reduce((a, c) => a + c.qty, 0), total = cart.reduce((a, c) => a + c.unit_price * c.qty, 0);
+    btn.textContent = qty ? `✅ ${t('btn_confirm_order').replace(/^✅\s*/, '')} · ${qty} · ${fmtMoney(total)}` : t('btn_confirm_order');
+  }
 }
 $('#takeOrderMenuGrid').addEventListener('click', (e) => {
   const id = e.target.closest('[data-pick-item]');
@@ -1640,7 +1686,7 @@ $('#itemOptionAdd').addEventListener('click', () => {
 
 function renderCart() {
   const el = $('#takeOrderCart');
-  if (!cart.length) { el.innerHTML = `<p class="hint">${escapeHtml(t('empty_cart_staff'))}</p>`; $('#takeOrderTotal').textContent = fmtMoney(0); return; }
+  if (!cart.length) { el.innerHTML = `<p class="hint">${escapeHtml(t('empty_cart_staff'))}</p>`; $('#takeOrderTotal').textContent = fmtMoney(0); updateTakeOrderFeedback(); return; }
   let total = 0;
   el.innerHTML = cart.map((c, idx) => {
     const lineTotal = c.unit_price * c.qty; total += lineTotal;
@@ -1650,6 +1696,7 @@ function renderCart() {
     </div>`;
   }).join('');
   $('#takeOrderTotal').textContent = fmtMoney(total);
+  updateTakeOrderFeedback();
 }
 $('#takeOrderCart').addEventListener('click', (e) => {
   const idx = e.target.dataset.cartRemove;
@@ -1678,7 +1725,9 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
   btn.disabled = true; btn.textContent = t('btn_submitting') || originalLabel;
   try {
     const endpoint = addItemsOrderId ? `/api/orders/${addItemsOrderId}/items` : '/api/orders';
-    const sendPayload = addItemsOrderId ? {items: payload.cart} : {...payload,client_request_id:requestId(),client_device_id:deviceId()};
+    const sendKitchen = $('#takeOrderSendKitchen').checked;
+    try { localStorage.setItem('zaabos_send_kitchen', sendKitchen ? '1' : '0'); } catch (e) {}
+    const sendPayload = addItemsOrderId ? {items: payload.cart, send_to_kitchen: sendKitchen} : {...payload,send_to_kitchen:sendKitchen,client_request_id:requestId(),client_device_id:deviceId()};
     let r;
     if (!addItemsOrderId && (!navigator.onLine || zaabosOfflineMode)) {
       const q=await queueOfflineOrder(sendPayload); closeModals(); toast('บันทึกออเดอร์ไว้ในเครื่องแล้ว · รอ Sync','ok'); addItemsOrderId=null; cart=[]; renderOfflineQueue(); return;
@@ -1690,14 +1739,18 @@ $('#takeOrderSubmit').addEventListener('click', async () => {
       }
       throw netErr;
     }
-    closeModals(); toast(addItemsOrderId ? 'เพิ่มรายการแล้ว — กรุณากดส่งเข้าครัว' : (t('toast_order_saved', { no: r.order_no }) + ' — กรุณากดส่งเข้าครัว'), 'ok');
-    addItemsOrderId = null; loadOrders(); loadBoardData();
+    const kitchenNote = r.sent_to_kitchen ? ' — ส่งเข้าครัวแล้ว 👨‍🍳' : ' — กรุณากดส่งเข้าครัว';
+    closeModals(); toast((addItemsOrderId ? 'เพิ่มรายการแล้ว' : t('toast_order_saved', { no: r.order_no })) + kitchenNote, 'ok');
+    const sentOrderId = addItemsOrderId || r.order_id;
+    addItemsOrderId = null; await loadOrders(); loadBoardData();
+    // No Wi-Fi/USB kitchen printer on the shop PC: print the ticket from this browser as before.
+    if (r.sent_to_kitchen && !r.printed_by_server && r.item_ids && r.item_ids.length) printKitchenTicket(sentOrderId, r.item_ids);
     // items with stock tracking just got decremented server-side — refresh the
     // cached menu (boot.items) so the Menu tab shows the real count, not what
     // it was before this order was placed
     loadBootstrap().then(() => { if (activeTab() === 'menu') renderMenu(); });
   } catch (e) { $('#takeOrderError').textContent = e.message; }
-  finally { btn.disabled = false; btn.textContent = originalLabel; }
+  finally { btn.disabled = false; btn.textContent = originalLabel; updateTakeOrderFeedback(); }
 });
 
 
@@ -1966,3 +2019,10 @@ $('#lpImportBtn').addEventListener('click',async()=>{const b=$('#lpImportBtn');
   try{const r=await apiJson('/api/local/import-cloud','POST',{branch_id:currentBranchId,username:$('#lpCloudUser').value.trim(),password:$('#lpCloudPass').value});
     $('#lpCloudPass').value='';alert(`ดึงข้อมูลจากสาขา "${r.branch}" แล้ว: ${r.categories} หมวด · ${r.items} เมนู · ${r.tables} โต๊ะ · ${r.stations} สถานีครัว\nพิมพ์ QR โต๊ะใหม่ก่อนใช้งาน`);location.reload();
   }catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='ดึงข้อมูลมาใส่เครื่องนี้'}});
+
+try { const v = localStorage.getItem('zaabos_send_kitchen'); if (v !== null && $('#takeOrderSendKitchen')) $('#takeOrderSendKitchen').checked = v === '1'; } catch (e) {}
+
+$('#lpHealthBtn').addEventListener('click',async()=>{const b=$('#lpHealthBtn');b.disabled=true;try{const r=await api('/api/local/health');const icon={ok:'🟢',warn:'🟡',bad:'🔴'};
+  const bad=r.checks.filter(c=>c.level!=='ok').length;
+  $('#lpHealth').innerHTML=`<div class="np-row"><b>${bad?`ต้องดู ${bad} เรื่อง`:'ทุกอย่างปกติ ✓ ปิดร้านได้'}</b></div>`+r.checks.map(c=>`<div class="np-row"><div><b>${icon[c.level]} ${escapeHtml(c.title)}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</div></div>`).join('');
+}catch(e){toast(e.message,'err')}finally{b.disabled=false}});

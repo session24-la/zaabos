@@ -155,3 +155,29 @@ def test_shop_pc_imports_menu_from_cloud_and_reports_status(tmp_path):
         assert backup['file'].startswith('zaabos_local_')
     finally:
         stop(cloud); stop(shop_proc)
+
+
+def test_daily_health_check_reports_green_on_a_clean_day(tmp_path):
+    data, port = tmp_path / 'ZaabOS', free_port()
+    proc = start(data, port)
+    try:
+        pw = (data / 'first-login.txt').read_text(encoding='utf-8').split('password: ', 1)[1].split()[0]
+        b = login(port, pw)
+        boot = b.ok('GET', '/api/bootstrap')
+        branch = boot['branches'][0]['id']
+        b.ok('POST', '/api/operations/shift/open', {'branch_id': branch, 'opening_cash': 0})
+        oid = b.ok('POST', '/api/orders', {'branch_id': branch, 'order_type': 'dine_in', 'table_id': boot['tables'][0]['id'],
+                                           'cart': [{'menu_item_id': boot['items'][0]['id'], 'quantity': 1}]})['order_id']
+        b.ok('PUT', f'/api/orders/{oid}/payment', {'payment_status': 'paid', 'payment_method': 'cash'})
+        checks = {c['key']: c for c in b.ok('GET', '/api/local/health')['checks']}
+        for key in ('money', 'drawer', 'open_bills', 'shifts', 'printing', 'database', 'backup'):
+            assert checks[key]['level'] == 'ok', checks[key]
+        # break the money on purpose: the check must turn red
+        from contextlib import closing
+        with closing(sqlite3.connect(data / 'zaabos.db', timeout=15)) as c:
+            c.execute('UPDATE payments SET amount=amount-1 WHERE order_id=?', (oid,))
+            c.commit()
+        checks = {c['key']: c for c in b.ok('GET', '/api/local/health')['checks']}
+        assert checks['money']['level'] == 'bad'
+    finally:
+        stop(proc)
