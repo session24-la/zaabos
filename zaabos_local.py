@@ -156,6 +156,8 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
                          rumps.MenuItem('ปิด ZaabOS', callback=self.quit_app)]
             if os.getenv('ZAABOS_ADDRESS_WARNING'):
                 notify('ที่อยู่เครื่องเปลี่ยน', os.environ['ZAABOS_ADDRESS_WARNING'])
+            if os.getenv('ZAABOS_UPDATE_MESSAGE'):
+                notify('อัปเดตโปรแกรม', os.environ['ZAABOS_UPDATE_MESSAGE'])
             local_ops.check_update_async(self.found_update)
 
         def found_update(self, info):
@@ -248,7 +250,7 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
                                ok='อัปเดต', cancel='ภายหลัง'):
                 return
             try:
-                local_ops.install_update(info, core)
+                local_ops.install_update(info, core, data_dir)
             except Exception as exc:
                 rumps.alert('อัปเดตไม่สำเร็จ', str(exc))
                 return
@@ -270,6 +272,7 @@ def main(argv=None):
     ap.add_argument('--port', type=int, default=int(os.getenv('ZAABOS_PORT') or DEFAULT_PORT))
     ap.add_argument('--no-browser', action='store_true')
     ap.add_argument('--data-dir', default=None)
+    ap.add_argument(local_ops.LAUNCHD_FLAG, dest='from_launchd', action='store_true', help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     local_url = f'http://127.0.0.1:{args.port}'
@@ -281,7 +284,28 @@ def main(argv=None):
         return 0
 
     data_dir = Path(args.data_dir).expanduser() if args.data_dir else default_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    cfg = local_ops.load_config(data_dir)
+    # Only the real install (default data folder, normal launch) registers itself to start at login;
+    # a copy run with --data-dir/--no-browser (tests, trying a download) must not replace it.
+    real_install = getattr(sys, 'frozen', False) and not args.data_dir and not args.no_browser
+    if real_install and not cfg.get('autostart_initialized'):
+        # First run of the installed app: start with the computer by default (owner can turn it off).
+        try:
+            local_ops.set_autostart(True)
+        except Exception as exc:
+            print(f'[ZaabOS] auto-start not set: {exc}', flush=True)
+        cfg['autostart_initialized'] = True
+        local_ops.save_config(data_dir, cfg)
+    if real_install and not args.from_launchd and local_ops.launchd_handoff():
+        print('[ZaabOS] started under launchd (restarts itself if it crashes)', flush=True)
+        return 0
+
     note = prepare_environment(data_dir, args.port)
+    update_msg = local_ops.update_outcome(data_dir)
+    if update_msg:
+        os.environ['ZAABOS_UPDATE_MESSAGE'] = update_msg
+        print('[ZaabOS] ' + update_msg, flush=True)
 
     import app as core   # noqa: E402  (environment must be ready first)
     import wsgi          # noqa: E402,F401  registers QR history + one-open-bill hooks
@@ -292,15 +316,6 @@ def main(argv=None):
     import local_api     # noqa: E402  shop-PC settings/update/restore/import API for the web UI
     local_api.register(core, data_dir, args.port)
     local_ops.keep_awake()
-    cfg = local_ops.load_config(data_dir)
-    if getattr(sys, 'frozen', False) and not cfg.get('autostart_initialized'):
-        # First run of the installed app: start with the computer by default (owner can turn it off).
-        try:
-            local_ops.set_autostart(True)
-        except Exception as exc:
-            print(f'[ZaabOS] auto-start not set: {exc}', flush=True)
-        cfg['autostart_initialized'] = True
-        local_ops.save_config(data_dir, cfg)
     print_stop = printing.start_worker(core)
 
     print('=' * 60)

@@ -140,7 +140,7 @@ def register(core, data_dir, port):
         return jsonify(version=local_ops.APP_VERSION, update=state['update'], autostart=local_ops.autostart_enabled(),
                        public_url=os.getenv('ZAABOS_PUBLIC_URL'), address_mode=local_ops.load_config(data_dir).get('address_mode') or 'ip',
                        hostname=local_ops.local_hostname(), address_warning=os.getenv('ZAABOS_ADDRESS_WARNING') or '',
-                       mirror_dir=str(mirror) if mirror else '', data_dir=str(data_dir),
+                       mirror_dir=str(mirror) if mirror else '', data_dir=str(data_dir), update_message=os.getenv('ZAABOS_UPDATE_MESSAGE') or '',
                        backups=[{k: v for k, v in b.items() if k != 'path'} for b in backups()])
 
     @app.post('/api/local/check-update')
@@ -159,7 +159,7 @@ def register(core, data_dir, port):
         if not info:
             return jsonify(error='ใช้เวอร์ชันล่าสุดแล้ว'), 409
         try:
-            local_ops.install_update(info, core)
+            local_ops.install_update(info, core, data_dir)
         except Exception as exc:
             return jsonify(error=f'อัปเดตไม่สำเร็จ: {exc}'), 500
         _exit_soon()
