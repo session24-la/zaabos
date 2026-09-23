@@ -47,6 +47,16 @@ def cloud_fetcher(base_url, username, password, timeout=20):
     return lambda path: call('GET', path)
 
 
+_EMOJI_ICONS = {'🍜': 'soup', '🍛': 'soup', '🥗': 'salad', '🥤': 'cup-soda', '🍽️': 'utensils', '🍽': 'utensils', '☕': 'coffee',
+                '🍺': 'beer', '🍰': 'cake', '🍦': 'ice-cream-cone', '🍕': 'pizza', '🐟': 'fish', '🍗': 'drumstick', '🥩': 'beef'}
+
+
+def _icon_name(value):
+    """Cloud rows may still carry an emoji; store the Lucide name the shop PC uses."""
+    v = (value or '').strip()
+    return _EMOJI_ICONS.get(v, v) or 'utensils'
+
+
 def import_from_cloud(core, conn, tenant_id, branch_id, fetch, cloud_branch_id=None, user_id=None):
     """Copy menu (categories, items, options), tables, kitchen stations, tax/service and receipt
     settings from the cloud into this shop PC. Local menu/tables of the branch are archived, not
@@ -82,7 +92,7 @@ def import_from_cloud(core, conn, tenant_id, branch_id, fetch, cloud_branch_id=N
     cat_map = {}
     for c in [c for c in boot.get('categories') or [] if c.get('branch_id') == sb]:
         cat_map[c['id']] = conn.execute('INSERT INTO menu_categories(tenant_id,branch_id,name,icon,sort_order,active,created_at) VALUES(?,?,?,?,?,1,?)',
-                                        (tenant_id, branch_id, c['name'], c.get('icon') or '🍜', c.get('sort_order') or 0, now)).lastrowid
+                                        (tenant_id, branch_id, c['name'], _icon_name(c.get('icon')), c.get('sort_order') or 0, now)).lastrowid
     items = 0
     for it in [i for i in boot.get('items') or [] if i.get('branch_id') == sb]:
         iid = conn.execute('''INSERT INTO menu_items(tenant_id,branch_id,category_id,name,description,base_price,image_url,sold_out,sort_order,active,

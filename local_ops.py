@@ -18,7 +18,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = '2.2.2'
+APP_VERSION = '2.3.0'
 RELEASES_API = os.getenv('ZAABOS_UPDATE_FEED') or 'https://api.github.com/repos/session24-la/zaabos/releases?per_page=20'
 RELEASE_TAG_PREFIX = 'local-v'
 LAUNCH_AGENT_LABEL = 'com.zaabos.local'
@@ -107,6 +107,29 @@ LAUNCHD_FLAG = '--from-launchd'
 def launch_agent_plist(args):
     return {'Label': LAUNCH_AGENT_LABEL, 'ProgramArguments': list(args), 'RunAtLoad': True,
             'KeepAlive': {'SuccessfulExit': False}, 'LimitLoadToSessionType': 'Aqua', 'ProcessType': 'Interactive'}
+
+
+def supervise(cmd, env=None, max_quick_crashes=5, window=60, backoff=2.0, sleep=None):
+    """Windows crash-restart (macOS uses launchd): run the POS as a child process and start it
+    again whenever it dies abnormally. A normal quit (exit code 0) ends supervision. Too many
+    crashes in a short time slow down instead of spinning. Returns the child's last exit code."""
+    import time as _time
+    sleep = sleep or _time.sleep
+    crashes = []
+    while True:
+        started = _time.time()
+        code = subprocess.call(cmd, env=env)
+        if code == 0:
+            return 0
+        now_t = _time.time()
+        crashes = [t for t in crashes if now_t - t < window] + [now_t]
+        _log(f'POS stopped unexpectedly (exit {code}) — restarting')
+        if len(crashes) >= max_quick_crashes:
+            _log('many crashes in a row — waiting 30 s before the next restart')
+            sleep(30)
+            crashes = []
+        else:
+            sleep(backoff if now_t - started < 5 else 0.5)
 
 
 def launchd_handoff():
@@ -299,9 +322,15 @@ def relaunch_after_exit():
                          start_new_session=True)
     elif sys.platform.startswith('win'):
         exe = str(app_executable())
-        ps = f'Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep 1; Start-Process "{exe}"'
+        ps = f'Wait-Process -Id {_wait_pids(pid)} -ErrorAction SilentlyContinue; Start-Sleep 1; Start-Process "{exe}"'
         subprocess.Popen(['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command', ps],
                          creationflags=0x00000008)  # DETACHED_PROCESS
+
+
+def _wait_pids(pid):
+    """Windows: the supervisor holds ZaabOS.exe open too; wait for both before replacing files."""
+    sup = os.getenv('ZAABOS_SUPERVISOR_PID')
+    return f'{pid},{int(sup)}' if sup and sup.isdigit() else str(pid)
 
 
 # --------------------------------------------------------------- update ---
@@ -400,7 +429,7 @@ def install_update(info, core=None, data_dir=None):
         if not (new_dir / 'ZaabOS.exe').exists():
             raise RuntimeError('ไฟล์อัปเดตไม่สมบูรณ์')
         cur = app_executable().parent
-        ps = (f'Wait-Process -Id {pid} -ErrorAction SilentlyContinue; Start-Sleep 1; '
+        ps = (f'Wait-Process -Id {_wait_pids(pid)} -ErrorAction SilentlyContinue; Start-Sleep 1; '
               f'robocopy "{new_dir}" "{cur}" /MIR /NFL /NDL /NJH /NJS | Out-Null; Start-Process "{cur / "ZaabOS.exe"}"')
         subprocess.Popen(['powershell', '-NoProfile', '-WindowStyle', 'Hidden', '-Command', ps], creationflags=0x00000008)
     return True

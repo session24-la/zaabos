@@ -32,10 +32,10 @@ def inject_browser_helpers(response):
         html = html[:m.end()] + qr_tag + html[m.end():]
 
     # Customer QR ordering: table/session order history + "order more" flow.
-    order_tag = '<script src="/static/order.js"></script>'
-    history_tag = '<script src="/static/customer-history.js?v=1.2"></script>'
-    if order_tag in html and history_tag not in html:
-        html = html.replace(order_tag, order_tag + history_tag, 1)
+    history_tag = '<script src="/static/customer-history.js?v=1.3"></script>'
+    m = re.search(r'<script src="/static/order\.js(?:\?v=[^"]*)?"></script>', html)
+    if m and history_tag not in html:
+        html = html[:m.end()] + history_tag + html[m.end():]
 
     response.set_data(html)
     return response

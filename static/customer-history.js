@@ -10,10 +10,10 @@
   const memorySessions=new Map();
 
   const COPY={
-    th:{view:'🧾 ดูรายการที่สั่งแล้ว',title:'รายการที่สั่งแล้ว',hint:'โต๊ะนี้จะแสดงรายการที่สั่งร่วมกันจากทุกเครื่องในบิลปัจจุบัน โดยไม่ต้องกรอกเลขออเดอร์หรือเบอร์โทร',empty:'ยังไม่มีรายการที่สั่งในบิลนี้',refresh:'↻ อัปเดตสถานะ',more:'🍽️ สั่งเพิ่ม',total:'รวมทั้งหมด',error:'อัปเดตรายการไม่ได้ กรุณาลองอีกครั้ง'},
-    lo:{view:'🧾 ເບິ່ງລາຍການທີ່ສັ່ງແລ້ວ',title:'ລາຍການທີ່ສັ່ງແລ້ວ',hint:'QR ໂຕະນີ້ຈະສະແດງລາຍການຮ່ວມກັນຈາກທຸກເຄື່ອງໃນບິນປັດຈຸບັນ ບໍ່ຕ້ອງປ້ອນເລກອໍເດີ ຫຼື ເບີໂທ',empty:'ຍັງບໍ່ມີລາຍການໃນບິນນີ້',refresh:'↻ ອັບເດດສະຖານະ',more:'🍽️ ສັ່ງເພີ່ມ',total:'ລວມທັງໝົດ',error:'ອັບເດດລາຍການບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'},
-    zh:{view:'🧾 查看已点订单',title:'已点订单',hint:'桌台二维码会显示当前账单中所有设备共同点的菜，无需输入订单号或手机号',empty:'当前账单还没有订单',refresh:'↻ 更新状态',more:'🍽️ 继续点餐',total:'合计',error:'无法更新订单，请重试'},
-    en:{view:'🧾 View my orders',title:'Current table bill',hint:'A table QR shows the shared current bill from every device at this table — no order number or phone required',empty:'Nothing has been ordered on this bill yet',refresh:'↻ Refresh status',more:'🍽️ Order more',total:'Total',error:'Could not refresh orders. Please try again.'}
+    th:{view:'ดูรายการที่สั่งแล้ว',title:'รายการที่สั่งแล้ว',hint:'โต๊ะนี้จะแสดงรายการที่สั่งร่วมกันจากทุกเครื่องในบิลปัจจุบัน โดยไม่ต้องกรอกเลขออเดอร์หรือเบอร์โทร',empty:'ยังไม่มีรายการที่สั่งในบิลนี้',refresh:'อัปเดตสถานะ',more:'สั่งเพิ่ม',total:'รวมทั้งหมด',error:'อัปเดตรายการไม่ได้ กรุณาลองอีกครั้ง'},
+    lo:{view:'ເບິ່ງລາຍການທີ່ສັ່ງແລ້ວ',title:'ລາຍການທີ່ສັ່ງແລ້ວ',hint:'QR ໂຕະນີ້ຈະສະແດງລາຍການຮ່ວມກັນຈາກທຸກເຄື່ອງໃນບິນປັດຈຸບັນ ບໍ່ຕ້ອງປ້ອນເລກອໍເດີ ຫຼື ເບີໂທ',empty:'ຍັງບໍ່ມີລາຍການໃນບິນນີ້',refresh:'ອັບເດດສະຖານະ',more:'ສັ່ງເພີ່ມ',total:'ລວມທັງໝົດ',error:'ອັບເດດລາຍການບໍ່ໄດ້ ກະລຸນາລອງໃໝ່'},
+    zh:{view:'查看已点订单',title:'已点订单',hint:'桌台二维码会显示当前账单中所有设备共同点的菜，无需输入订单号或手机号',empty:'当前账单还没有订单',refresh:'更新状态',more:'继续点餐',total:'合计',error:'无法更新订单，请重试'},
+    en:{view:'View my orders',title:'Current table bill',hint:'A table QR shows the shared current bill from every device at this table — no order number or phone required',empty:'Nothing has been ordered on this bill yet',refresh:'Refresh status',more:'Order more',total:'Total',error:'Could not refresh orders. Please try again.'}
   };
 
   function lang(){
@@ -120,7 +120,7 @@
   }
   function renderHistory(){
     const list=document.getElementById('customerHistoryList');if(!list)return;
-    if(!historyRows.length){list.innerHTML=`<div class="empty-state"><span class="es-ic">🧾</span>${esc(c('empty'))}</div>`;return;}
+    if(!historyRows.length){list.innerHTML=`<div class="empty-state"><span class="es-ic"><i class="ic ic-receipt" aria-hidden="true"></i></span>${esc(c('empty'))}</div>`;return;}
     list.innerHTML=historyRows.map(order=>{
       const items=(order.items||[]).map(it=>`<li><b>${Number(it.quantity)||0}×</b> ${esc(it.item_name_snapshot)}${it.options&&it.options.length?` <span class="hint">(${it.options.map(o=>esc(o.option_name_snapshot)).join(', ')})</span>`:''}</li>`).join('');
       const table=order.table_name_snapshot?` · ${esc(order.table_name_snapshot)}`:'';

@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/icons.css?v=1">
 <meta name="theme-color" content="#ea580c">
 </head><body>
 
@@ -16,13 +16,13 @@
 <div id="loadingView" style="padding:60px 20px;text-align:center;color:var(--text-muted)" data-i18n="loading_menu">กำลังโหลดเมนู...</div>
 
 <div id="errorView" class="hidden" style="padding:60px 20px;text-align:center">
-  <div style="font-size:40px">😕</div>
+  <div style="font-size:40px"><i class="ic ic-frown" aria-hidden="true"></i></div>
   <p id="errorMsg" style="color:var(--text-muted);margin-top:10px"></p>
 </div>
 
 <div id="menuView" class="hidden">
   <div class="order-hero">
-    <div class="oh-icon" id="ohIcon">🍽️</div>
+    <div class="oh-icon" id="ohIcon"><i class="ic ic-utensils" aria-hidden="true"></i></div>
     <div class="oh-name" id="ohName">ร้านอาหาร</div>
     <div class="oh-table hidden" id="ohTable"></div>
   </div>
@@ -32,7 +32,7 @@
     </div>
     <div id="itemsView" class="hidden">
       <div class="items-view-head">
-        <button type="button" class="ivh-back" id="backToCatsBtn" data-i18n="btn_back_to_categories">← กลับหมวดหมู่</button>
+        <button type="button" class="ivh-back" id="backToCatsBtn" data-i18n="btn_back_to_categories"><i class="ic ic-arrow-left" aria-hidden="true"></i> กลับหมวดหมู่</button>
         <div class="ivh-title" id="itemsViewTitle"></div>
       </div>
       <div class="cat-scroll" id="catScroll"></div>
@@ -63,9 +63,9 @@
 
   <h3 data-i18n="label_order_type_title">ประเภทการสั่ง</h3>
   <div class="type" id="orderTypePicker">
-    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in">🍽️ ทานที่ร้าน</button>
-    <button data-type="takeaway" data-i18n="order_type_takeaway">🥡 กลับบ้าน</button>
-    <button data-type="delivery" data-i18n="order_type_delivery">🛵 เดลิเวอรี่</button>
+    <button data-type="dine_in" class="active" data-i18n="order_type_dine_in"><i class="ic ic-utensils" aria-hidden="true"></i> ทานที่ร้าน</button>
+    <button data-type="takeaway" data-i18n="order_type_takeaway"><i class="ic ic-shopping-bag" aria-hidden="true"></i> กลับบ้าน</button>
+    <button data-type="delivery" data-i18n="order_type_delivery"><i class="ic ic-bike" aria-hidden="true"></i> เดลิเวอรี่</button>
   </div>
 
   <div id="tableResolvedRow" class="hidden">
@@ -92,23 +92,23 @@
   <label><span data-i18n="label_notes_to_shop">หมายเหตุถึงร้าน (ถ้ามี)</span><input id="orderNotes" placeholder="เช่น ขอช้อนเพิ่ม" data-i18n-ph="placeholder_notes_shop_example"></label>
 
   <div class="login-error" id="checkoutError"></div>
-  <button class="save" id="checkoutSubmit" data-i18n="btn_confirm_order_customer">✅ ยืนยันสั่งอาหาร</button>
+  <button class="save" id="checkoutSubmit" data-i18n="btn_confirm_order_customer"><i class="ic ic-circle-check" aria-hidden="true"></i> ยืนยันสั่งอาหาร</button>
 </div></div>
 
 <!-- Success screen -->
-<div class="modal" id="successModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="success_title">สั่งอาหารสำเร็จ! 🎉</h2><button data-close>×</button></div>
+<div class="modal" id="successModal"><div class="sheet small"><div class="sheet-head"><h2 data-i18n="success_title">สั่งอาหารสำเร็จ! <i class="ic ic-party-popper" aria-hidden="true"></i></h2><button data-close>×</button></div>
   <div style="text-align:center;padding:10px 0">
-    <div style="font-size:44px">✅</div>
+    <div style="font-size:44px"><i class="ic ic-circle-check" aria-hidden="true"></i></div>
     <p style="font-weight:800;font-size:18px;margin-top:8px"><span data-i18n="success_order_no_prefix">เลขที่ออเดอร์</span> <span id="successOrderNo"></span></p>
     <p class="hint" data-i18n="success_hint">ทางร้านได้รับออเดอร์ของคุณแล้ว กรุณารอสักครู่</p>
-    <a class="save" id="successTrackLink" style="text-decoration:none;display:block;text-align:center;margin-top:16px" data-i18n="btn_track_order">📍 ติดตามสถานะออเดอร์</a>
-    <button class="save secondary" id="successNewOrderBtn" style="margin-top:8px" data-i18n="btn_order_more">🍽️ สั่งเพิ่ม</button>
+    <a class="save" id="successTrackLink" style="text-decoration:none;display:block;text-align:center;margin-top:16px" data-i18n="btn_track_order"><i class="ic ic-map-pin" aria-hidden="true"></i> ติดตามสถานะออเดอร์</a>
+    <button class="save secondary" id="successNewOrderBtn" style="margin-top:8px" data-i18n="btn_order_more"><i class="ic ic-utensils" aria-hidden="true"></i> สั่งเพิ่ม</button>
   </div>
 </div></div>
 
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>const DEFAULT_LANG = 'lo';</script>
-<script src="/static/i18n.js"></script>
-<script src="/static/order.js"></script>
+<script src="/static/i18n.js?v=30.0"></script>
+<script src="/static/order.js?v=30.0"></script>
 </body></html>

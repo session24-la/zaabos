@@ -134,7 +134,7 @@ const KITCHEN_HIGHLIGHT_MS = 3 * 60 * 1000; // how long a "sent to kitchen" flag
 function renderBoard(orders) {
   lastOrders = orders;
   const board = $('#board');
-  if (!orders.length) { board.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="es-ic">👨‍🍳</span>${escapeHtml(t('empty_kitchen_queue'))}</div>`; return; }
+  if (!orders.length) { board.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="es-ic"><i class="ic ic-chef-hat" aria-hidden="true"></i></span>${escapeHtml(t('empty_kitchen_queue'))}</div>`; return; }
   board.innerHTML = orders.map(o => {
     const itemsHtml = o.items.filter(it => it.kitchen_sent_at).map(it => {
       let liClass = '', sentBadge = '';
@@ -143,12 +143,12 @@ function renderBoard(orders) {
       const age = Date.now() - new Date(it.kitchen_sent_at).getTime();
       const clock = zaabosTime(it.kitchen_sent_at);
       liClass = age >= 0 && age < KITCHEN_HIGHLIGHT_MS ? ' kt-item-highlight' : ' kt-item-sent';
-      sentBadge = `<span class="kt-sent-badge">🔔 ${clock}</span>`;
-      const cancelNote = cancelled > 0 ? `<div class="kt-cancelled">❌ ${escapeHtml(t('kt_cancelled_qty') || 'Cancelled')} ${cancelled}${it.cancellation_reason ? ' · ' + escapeHtml(it.cancellation_reason) : ''}</div>` : '';
+      sentBadge = `<span class="kt-sent-badge"><i class="ic ic-bell" aria-hidden="true"></i> ${clock}</span>`;
+      const cancelNote = cancelled > 0 ? `<div class="kt-cancelled"><i class="ic ic-circle-x" aria-hidden="true"></i> ${escapeHtml(t('kt_cancelled_qty') || 'Cancelled')} ${cancelled}${it.cancellation_reason ? ' · ' + escapeHtml(it.cancellation_reason) : ''}</div>` : '';
       const active = activeQty > 0 ? `<b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}` : `<s>${escapeHtml(it.item_name_snapshot)}</s>`;
       return `<li class="${liClass}${activeQty === 0 ? ' kt-item-cancelled' : ''}">${active} ${sentBadge}
       ${it.options.length ? `<div class="kt-opts">${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')}</div>` : ''}
-      ${it.notes ? `<div class="kt-notes">📝 ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}</li>`;
+      ${it.notes ? `<div class="kt-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}</li>`;
     }).join('');
     const actions = (STATUS_ACTIONS[o.status] || []).map(a => `<button class="${a.cls}" data-set="${o.id}:${a.to}">${escapeHtml(t(a.labelKey))}</button>`).join('');
     // Kitchen reads from a distance: the table is the headline, and the wait time turns orange/red.
@@ -160,7 +160,7 @@ function renderBoard(orders) {
       <div class="kt-head"><span class="kt-where">${escapeHtml(where)}</span><span class="kt-wait" data-since="${firstSent}">${mins} นาที</span></div>
       <div class="kt-table">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.customer_name && o.customer_name !== 'ลูกค้า' ? ' · ' + escapeHtml(o.customer_name) : ''}</div>
       <ul>${itemsHtml}</ul>
-      ${o.notes ? `<div class="kt-notes">📝 ${escapeHtml(o.notes)}</div>` : ''}
+      ${o.notes ? `<div class="kt-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(o.notes)}</div>` : ''}
       <div class="kt-actions">${actions}</div>
     </div>`;
   }).join('');

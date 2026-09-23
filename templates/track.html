@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/icons.css?v=1">
 <meta name="theme-color" content="#ea580c">
 </head><body>
 
@@ -21,13 +21,13 @@
     <label><span data-i18n="label_order_no">เลขที่ออเดอร์</span><input id="orderNoInput" placeholder="เช่น Z-20260920-0001" data-i18n-ph="placeholder_order_no_example"></label>
     <label><span data-i18n="label_phone_used">เบอร์โทรที่ใช้ตอนสั่ง</span><input id="phoneInput" inputmode="numeric"></label>
     <div class="login-error" id="lookupError"></div>
-    <button class="save" id="lookupBtn" data-i18n="btn_check_status">🔍 ตรวจสอบสถานะ</button>
+    <button class="save" id="lookupBtn" data-i18n="btn_check_status"><i class="ic ic-search" aria-hidden="true"></i> ตรวจสอบสถานะ</button>
   </div>
 
   <div id="resultPanel" class="hidden"></div>
 </main>
 
 <script>const DEFAULT_LANG = 'th';</script>
-<script src="/static/i18n.js"></script>
-<script src="/static/track.js"></script>
+<script src="/static/i18n.js?v=30.0"></script>
+<script src="/static/track.js?v=30.0"></script>
 </body></html>

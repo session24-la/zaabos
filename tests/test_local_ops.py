@@ -217,3 +217,22 @@ def test_update_outcome_reports_success_or_silent_failure(tmp_path, monkeypatch)
     local_ops.save_config(tmp_path, {'pending_update': '2.3.0'})
     assert 'ไม่สำเร็จ' in local_ops.update_outcome(tmp_path)
     assert local_ops.update_outcome(tmp_path) == '', 'reported once'
+
+
+def test_windows_supervisor_restarts_after_crash_and_stops_on_normal_quit(tmp_path):
+    """The POS child crashes twice (exit 3), then quits normally: restarted twice, then done."""
+    counter = tmp_path / 'runs'
+    script = ("import sys,pathlib;p=pathlib.Path(sys.argv[1]);n=int(p.read_text()) if p.exists() else 0;"
+              "p.write_text(str(n+1));sys.exit(3 if n<2 else 0)")
+    naps = []
+    code = local_ops.supervise([sys.executable, '-c', script, str(counter)], sleep=naps.append)
+    assert code == 0 and counter.read_text() == '3' and len(naps) == 2
+
+
+def test_windows_supervisor_slows_down_on_a_crash_loop(tmp_path):
+    counter = tmp_path / 'runs'
+    script = ("import sys,pathlib;p=pathlib.Path(sys.argv[1]);n=int(p.read_text()) if p.exists() else 0;"
+              "p.write_text(str(n+1));sys.exit(1 if n<6 else 0)")
+    naps = []
+    local_ops.supervise([sys.executable, '-c', script, str(counter)], sleep=naps.append, max_quick_crashes=5)
+    assert 30 in naps, 'five quick crashes must trigger the long pause'

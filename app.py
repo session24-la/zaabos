@@ -307,7 +307,7 @@ def ensure_default_tenant(conn):
     # finding the row already there on retry.
     if not conn.execute('SELECT id FROM tenants ORDER BY id LIMIT 1').fetchone():
         try:
-            conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', ('ร้านของฉัน', '🍽️', now()))
+            conn.execute('INSERT INTO tenants(name,icon,created_at) VALUES(?,?,?)', ('ร้านของฉัน', 'utensils', now()))
             conn.commit()
         except INTEGRITY_ERRORS:
             conn.rollback()
@@ -318,14 +318,14 @@ def ensure_default_tenant(conn):
     first=conn.execute('SELECT id,name FROM tenants ORDER BY id LIMIT 1').fetchone()
     if first and not conn.execute('SELECT 1 FROM branches WHERE tenant_id=? LIMIT 1',(first['id'],)).fetchone() \
        and conn.execute('SELECT COUNT(*) AS c FROM tenants').fetchone()['c']==1:
-        bcur=conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',(first['id'],'สาขาหลัก','🏠',now()))
+        bcur=conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',(first['id'],'สาขาหลัก','store',now()))
         _seed_sample_shop(conn,first['id'],bcur.lastrowid)
         conn.commit()
 
 SAMPLE_MENU=(
-    ('อาหารจานหลัก','🍛',(('ผัดไทย',35000),('ข้าวผัดหมู',30000),('ลาบหมู',40000),('ไก่ย่าง',45000))),
-    ('ส้มตำ & ของทานเล่น','🥗',(('ตำหมากหุ่ง',25000),('ข้าวเหนียว',5000),('เฝอ',35000))),
-    ('เครื่องดื่ม','🥤',(('น้ำเปล่า',5000),('เบียร์ลาว',15000),('โค้ก',10000))),
+    ('อาหารจานหลัก','soup',(('ผัดไทย',35000),('ข้าวผัดหมู',30000),('ลาบหมู',40000),('ไก่ย่าง',45000))),
+    ('ส้มตำ & ของทานเล่น','salad',(('ตำหมากหุ่ง',25000),('ข้าวเหนียว',5000),('เฝอ',35000))),
+    ('เครื่องดื่ม','cup-soda',(('น้ำเปล่า',5000),('เบียร์ลาว',15000),('โค้ก',10000))),
 )
 
 def _seed_sample_shop(conn, tenant_id, branch_id):
@@ -744,6 +744,14 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE printers ADD COLUMN connection TEXT NOT NULL DEFAULT 'network'")   # 'network' Wi-Fi/LAN | 'system' USB queue
     conn.commit()
     record_migration(conn, 29, 'network_printers')
+    # Icons are Lucide names now (licensed icon set); convert the emoji defaults older installs stored.
+    emoji_icons = {'🍜': 'soup', '🍛': 'soup', '🥗': 'salad', '🥤': 'cup-soda', '🍽️': 'utensils', '🍽': 'utensils', '🏠': 'store',
+                   '☕': 'coffee', '🍺': 'beer', '🍰': 'cake', '🍦': 'ice-cream-cone', '🍕': 'pizza', '🐟': 'fish', '🍗': 'drumstick', '🥩': 'beef'}
+    for table in ('menu_categories', 'branches', 'tenants'):
+        for emo, name in emoji_icons.items():
+            conn.execute(f'UPDATE {table} SET icon=? WHERE icon=?', (name, emo))
+    conn.commit()
+    record_migration(conn, 30, 'lucide_icon_names')
 
 
 
@@ -1196,7 +1204,7 @@ def add_tenant():
     trial_end=(datetime.now(timezone.utc)+timedelta(days=trial_days)).isoformat(timespec='seconds') if trial_days else None
     status='trialing' if trial_days else 'active'
     cur=conn.execute('INSERT INTO tenants(name,icon,plan_code,subscription_status,trial_ends_at,max_branches,max_users,created_at) VALUES(?,?,?,?,?,?,?,?)',
-        (name,'🍽️',plan_code,status,trial_end,plan['max_branches'],plan['max_users'],now()))
+        (name,'utensils',plan_code,status,trial_end,plan['max_branches'],plan['max_users'],now()))
     tenant_id=cur.lastrowid
     try:
         conn.execute('INSERT INTO users(tenant_id,username,password_hash,display_name,role,must_change_password,created_at) VALUES(?,?,?,?,?,?,?)',
@@ -1205,7 +1213,7 @@ def add_tenant():
         conn.rollback()
         return jsonify(error='ชื่อผู้ใช้นี้มีคนใช้แล้ว'), 400
     # every new tenant starts with one branch so it isn't an empty shell
-    conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)', (tenant_id, name, '🏠', now()))
+    conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)', (tenant_id, name, 'store', now()))
     log_action('add_tenant', detail=name, tenant_id=tenant_id)
     conn.commit()
     return jsonify(ok=True, id=tenant_id)
@@ -1307,7 +1315,7 @@ def add_branch():
     used=conn.execute('SELECT COUNT(*) c FROM branches WHERE tenant_id=? AND active=1',(g.tenant_id,)).fetchone()['c']
     if tenant and used>=int(tenant['max_branches'] or 1):return jsonify(error=f"แพ็กเกจนี้รองรับสูงสุด {tenant['max_branches']} สาขา กรุณาอัปเกรดแพ็กเกจ"),409
     cur = conn.execute('INSERT INTO branches(tenant_id,name,icon,created_at) VALUES(?,?,?,?)',
-        (g.tenant_id, name, d.get('icon') or '🏠', now()))
+        (g.tenant_id, name, d.get('icon') or 'store', now()))
     log_action('add_branch', detail=name)
     conn.commit()
     return jsonify(ok=True, id=cur.lastrowid)
@@ -1460,7 +1468,7 @@ def add_menu_category():
     branch = conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=? AND active=1', (branch_id, g.tenant_id)).fetchone()
     if not branch: return jsonify(error='สาขาไม่ถูกต้องหรือไม่ได้อยู่ในร้านนี้'), 400
     cur = conn.execute('INSERT INTO menu_categories(tenant_id,branch_id,name,icon,sort_order,created_at) VALUES(?,?,?,?,?,?)',
-        (g.tenant_id, branch_id, name, d.get('icon') or '🍜', d.get('sort_order') or 0, now()))
+        (g.tenant_id, branch_id, name, d.get('icon') or 'utensils', d.get('sort_order') or 0, now()))
     log_action('add_menu_category', detail=name)
     conn.commit()
     return jsonify(ok=True, id=cur.lastrowid)

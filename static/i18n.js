@@ -16,10 +16,10 @@
 */
 
 const LANGS = [
-  { code: 'lo', label: '🇱🇦 ລາວ', locale: 'lo-LA' },
-  { code: 'th', label: '🇹🇭 ไทย', locale: 'th-TH' },
-  { code: 'zh', label: '🇨🇳 中文', locale: 'zh-CN' },
-  { code: 'en', label: '🇬🇧 English', locale: 'en-US' },
+  { code: 'lo', label: 'ລາວ', locale: 'lo-LA' },
+  { code: 'th', label: 'ไทย', locale: 'th-TH' },
+  { code: 'zh', label: '中文', locale: 'zh-CN' },
+  { code: 'en', label: 'English', locale: 'en-US' },
 ];
 const LANG_STORAGE_KEY = 'zaabos_lang';
 
@@ -46,9 +46,9 @@ const I18N = {
   err_login_failed: { th: 'เข้าสู่ระบบไม่สำเร็จ', lo: 'ເຂົ້າສູ່ລະບົບບໍ່ສຳເລັດ', zh: '登录失败', en: 'Login failed' },
 
   // order type (shared: admin take-order, customer order page, kitchen board)
-  order_type_dine_in: { th: '🍽️ ทานที่ร้าน', lo: '🍽️ ກິນຢູ່ຮ້ານ', zh: '🍽️ 堂食', en: '🍽️ Dine in' },
-  order_type_takeaway: { th: '🥡 กลับบ้าน', lo: '🥡 ເອົາກັບບ້ານ', zh: '🥡 打包', en: '🥡 Takeaway' },
-  order_type_delivery: { th: '🛵 เดลิเวอรี่', lo: '🛵 ສົ່ງເຖິງບ້ານ', zh: '🛵 外送', en: '🛵 Delivery' },
+  order_type_dine_in: { th: 'ทานที่ร้าน', lo: 'ກິນຢູ່ຮ້ານ', zh: '堂食', en: 'Dine in' },
+  order_type_takeaway: { th: 'กลับบ้าน', lo: 'ເອົາກັບບ້ານ', zh: '打包', en: 'Takeaway' },
+  order_type_delivery: { th: 'เดลิเวอรี่', lo: 'ສົ່ງເຖິງບ້ານ', zh: '外送', en: 'Delivery' },
 
   // order status (shared: admin order list, track page, kitchen board)
   status_all: { th: 'ทุกสถานะ', lo: 'ທຸກສະຖານະ', zh: '所有状态', en: 'All statuses' },
@@ -63,14 +63,14 @@ const I18N = {
 
   // ---------- admin/staff SPA (index.html + app.js) ----------
   admin_login_sub: { th: 'ระบบจัดการร้านอาหาร — เข้าสู่ระบบเพื่อจัดการร้านของคุณ', lo: 'ລະບົບຈັດການຮ້ານອາຫານ — ເຂົ້າສູ່ລະບົບເພື່ອຈັດການຮ້ານຂອງທ່ານ', zh: '餐厅管理系统 — 登录以管理您的店铺', en: 'Restaurant management system — log in to manage your shop' },
-  menu_change_password: { th: '🔒 เปลี่ยนรหัสผ่าน', lo: '🔒 ປ່ຽນລະຫັດຜ່ານ', zh: '🔒 修改密码', en: '🔒 Change password' },
-  menu_change_username: { th: '👤 เปลี่ยนชื่อผู้ใช้', lo: '👤 ປ່ຽນຊື່ຜູ້ໃຊ້', zh: '👤 修改用户名', en: '👤 Change username' },
-  menu_logout: { th: '🚪 ออกจากระบบ', lo: '🚪 ອອກຈາກລະບົບ', zh: '🚪 退出登录', en: '🚪 Log out' },
+  menu_change_password: { th: 'เปลี่ยนรหัสผ่าน', lo: 'ປ່ຽນລະຫັດຜ່ານ', zh: '修改密码', en: 'Change password' },
+  menu_change_username: { th: 'เปลี่ยนชื่อผู้ใช้', lo: 'ປ່ຽນຊື່ຜູ້ໃຊ້', zh: '修改用户名', en: 'Change username' },
+  menu_logout: { th: 'ออกจากระบบ', lo: 'ອອກຈາກລະບົບ', zh: '退出登录', en: 'Log out' },
   scope_branch_label: { th: 'สาขา', lo: 'ສາຂາ', zh: '分店', en: 'Branch' },
-  btn_qr_all_tables: { th: '📱 QR โต๊ะทั้งหมด', lo: '📱 QR ໂຕະທັງໝົດ', zh: '📱 全部桌台二维码', en: '📱 All table QRs' },
+  btn_qr_all_tables: { th: 'QR โต๊ะทั้งหมด', lo: 'QR ໂຕະທັງໝົດ', zh: '全部桌台二维码', en: 'All table QRs' },
   tenant_switcher_all: { th: 'ทุกร้าน', lo: 'ທຸກຮ້ານ', zh: '所有商户', en: 'All shops' },
-  btn_mark_paid: { th: '💰 บันทึกว่าชำระแล้ว', lo: '💰 ບັນທຶກວ່າຈ່າຍແລ້ວ', zh: '💰 标记为已付款', en: '💰 Mark as paid' },
-  btn_unmark_paid: { th: '↩️ ยกเลิกการชำระ', lo: '↩️ ຍົກເລີກການຈ່າຍ', zh: '↩️ 取消付款标记', en: '↩️ Undo payment' },
+  btn_mark_paid: { th: 'บันทึกว่าชำระแล้ว', lo: 'ບັນທຶກວ່າຈ່າຍແລ້ວ', zh: '标记为已付款', en: 'Mark as paid' },
+  btn_unmark_paid: { th: 'ยกเลิกการชำระ', lo: 'ຍົກເລີກການຈ່າຍ', zh: '取消付款标记', en: 'Undo payment' },
   hint_no_options: { th: 'ไม่มีตัวเลือกเพิ่มเติมสำหรับเมนูนี้', lo: 'ບໍ່ມີຕົວເລືອກເພີ່ມເຕີມສຳລັບເມນູນີ້', zh: '此菜品没有附加选项', en: 'No extra options for this item' },
 
   role_super_admin: { th: 'ผู้ดูแลระบบ', lo: 'ຜູ້ດູແລລະບົບ', zh: '系统管理员', en: 'Super admin' },
@@ -93,40 +93,40 @@ const I18N = {
   tab_tenants: { th: 'ร้านค้า', lo: 'ຮ້ານຄ້າ', zh: '商户', en: 'Shops' },
 
   orders_queue_title: { th: 'คิวออเดอร์', lo: 'ຄິວອໍເດີ', zh: '订单队列', en: 'Order queue' },
-  btn_take_order: { th: '➕ รับออเดอร์ลูกค้า', lo: '➕ ຮັບອໍເດີລູກຄ້າ', zh: '➕ 帮客人下单', en: '➕ Take customer order' },
+  btn_take_order: { th: 'รับออเดอร์ลูกค้า', lo: 'ຮັບອໍເດີລູກຄ້າ', zh: '帮客人下单', en: 'Take customer order' },
   btn_submitting: { th: 'กำลังบันทึก...', lo: 'ກຳລັງບັນທຶກ...', zh: '保存中...', en: 'Saving...' },
-  btn_refresh: { th: '🔄 รีเฟรช', lo: '🔄 ໂຫຼດໃໝ່', zh: '🔄 刷新', en: '🔄 Refresh' },
+  btn_refresh: { th: 'รีเฟรช', lo: 'ໂຫຼດໃໝ່', zh: '刷新', en: 'Refresh' },
   empty_orders: { th: 'ยังไม่มีออเดอร์', lo: 'ຍັງບໍ່ມີອໍເດີ', zh: '暂无订单', en: 'No orders yet' },
 
   tables_title: { th: 'โต๊ะในสาขานี้', lo: 'ໂຕະໃນສາຂານີ້', zh: '本分店的桌台', en: 'Tables in this branch' },
-  btn_bulk_add_tables: { th: '🔢 สร้างหลายโต๊ะ', lo: '🔢 ສ້າງຫຼາຍໂຕະ', zh: '🔢 批量创建桌台', en: '🔢 Bulk-create tables' },
-  btn_add_table: { th: '➕ เพิ่มโต๊ะ', lo: '➕ ເພີ່ມໂຕະ', zh: '➕ 添加桌台', en: '➕ Add table' },
+  btn_bulk_add_tables: { th: 'สร้างหลายโต๊ะ', lo: 'ສ້າງຫຼາຍໂຕະ', zh: '批量创建桌台', en: 'Bulk-create tables' },
+  btn_add_table: { th: 'เพิ่มโต๊ะ', lo: 'ເພີ່ມໂຕະ', zh: '添加桌台', en: 'Add table' },
   empty_tables: { th: 'ยังไม่มีโต๊ะในสาขานี้', lo: 'ຍັງບໍ່ມີໂຕະໃນສາຂານີ້', zh: '本分店暂无桌台', en: 'No tables in this branch yet' },
 
   categories_title: { th: 'หมวดหมู่เมนู', lo: 'ໝວດໝູ່ເມນູ', zh: '菜单分类', en: 'Menu categories' },
-  btn_add_category: { th: '➕ เพิ่มหมวดหมู่', lo: '➕ ເພີ່ມໝວດໝູ່', zh: '➕ 添加分类', en: '➕ Add category' },
+  btn_add_category: { th: 'เพิ่มหมวดหมู่', lo: 'ເພີ່ມໝວດໝູ່', zh: '添加分类', en: 'Add category' },
   empty_categories: { th: 'ยังไม่มีหมวดหมู่เมนู', lo: 'ຍັງບໍ່ມີໝວດໝູ່ເມນູ', zh: '暂无菜单分类', en: 'No menu categories yet' },
   menu_items_title: { th: 'รายการเมนู', lo: 'ລາຍການເມນູ', zh: '菜品列表', en: 'Menu items' },
-  btn_add_menu_item: { th: '➕ เพิ่มเมนู', lo: '➕ ເພີ່ມເມນູ', zh: '➕ 添加菜品', en: '➕ Add menu item' },
+  btn_add_menu_item: { th: 'เพิ่มเมนู', lo: 'ເພີ່ມເມນູ', zh: '添加菜品', en: 'Add menu item' },
   empty_menu_items: { th: 'ยังไม่มีเมนูในสาขานี้', lo: 'ຍັງບໍ່ມີເມນູໃນສາຂານີ້', zh: '本分店暂无菜品', en: 'No menu items in this branch yet' },
-  btn_edit: { th: '✏️ แก้ไข', lo: '✏️ ແກ້ໄຂ', zh: '✏️ 编辑', en: '✏️ Edit' },
-  btn_mark_sold_out: { th: '🚫 แจ้งของหมด', lo: '🚫 ແຈ້ງໝົດ', zh: '🚫 标记售罄', en: '🚫 Mark sold out' },
-  btn_mark_available: { th: '✅ กลับมามีของ', lo: '✅ ກັບມາມີແລ້ວ', zh: '✅ 恢复供应', en: '✅ Back in stock' },
+  btn_edit: { th: 'แก้ไข', lo: 'ແກ້ໄຂ', zh: '编辑', en: 'Edit' },
+  btn_mark_sold_out: { th: 'แจ้งของหมด', lo: 'ແຈ້ງໝົດ', zh: '标记售罄', en: 'Mark sold out' },
+  btn_mark_available: { th: 'กลับมามีของ', lo: 'ກັບມາມີແລ້ວ', zh: '恢复供应', en: 'Back in stock' },
   badge_sold_out: { th: 'หมด', lo: 'ໝົດ', zh: '售罄', en: 'Sold out' },
   label_options_prefix: { th: 'ตัวเลือก', lo: 'ຕົວເລືອກ', zh: '选项', en: 'Options' },
 
   branches_title: { th: 'สาขาทั้งหมด', lo: 'ສາຂາທັງໝົດ', zh: '所有分店', en: 'All branches' },
-  btn_add_branch: { th: '➕ เพิ่มสาขา', lo: '➕ ເພີ່ມສາຂາ', zh: '➕ 添加分店', en: '➕ Add branch' },
+  btn_add_branch: { th: 'เพิ่มสาขา', lo: 'ເພີ່ມສາຂາ', zh: '添加分店', en: 'Add branch' },
   empty_branches: { th: 'ยังไม่มีสาขา', lo: 'ຍັງບໍ່ມີສາຂາ', zh: '暂无分店', en: 'No branches yet' },
   label_branch_code_prefix: { th: 'รหัสสาขา', lo: 'ລະຫັດສາຂາ', zh: '分店编号', en: 'Branch ID' },
 
   users_title: { th: 'ผู้ใช้งานในร้าน', lo: 'ຜູ້ໃຊ້ໃນຮ້ານ', zh: '店内用户', en: 'Users in this shop' },
-  btn_add_user: { th: '➕ เพิ่มผู้ใช้งาน', lo: '➕ ເພີ່ມຜູ້ໃຊ້', zh: '➕ 添加用户', en: '➕ Add user' },
+  btn_add_user: { th: 'เพิ่มผู้ใช้งาน', lo: 'ເພີ່ມຜູ້ໃຊ້', zh: '添加用户', en: 'Add user' },
   empty_users: { th: 'ยังไม่มีผู้ใช้งาน', lo: 'ຍັງບໍ່ມີຜູ້ໃຊ້', zh: '暂无用户', en: 'No users yet' },
   label_inactive_suffix: { th: '(ปิดใช้งาน)', lo: '(ປິດໃຊ້ງານ)', zh: '（已停用）', en: '(inactive)' },
 
   tenants_title: { th: 'ร้านค้าทั้งหมด (ผู้ดูแลระบบ)', lo: 'ຮ້ານຄ້າທັງໝົດ (ຜູ້ດູແລລະບົບ)', zh: '所有商户（系统管理员）', en: 'All shops (super admin)' },
-  btn_add_tenant: { th: '➕ เพิ่มร้านค้าใหม่', lo: '➕ ເພີ່ມຮ້ານໃໝ່', zh: '➕ 新增商户', en: '➕ Add new shop' },
+  btn_add_tenant: { th: 'เพิ่มร้านค้าใหม่', lo: 'ເພີ່ມຮ້ານໃໝ່', zh: '新增商户', en: 'Add new shop' },
   empty_tenants: { th: 'ยังไม่มีร้านค้า', lo: 'ຍັງບໍ່ມີຮ້ານ', zh: '暂无商户', en: 'No shops yet' },
   tenant_active: { th: 'ใช้งานอยู่', lo: 'ກຳລັງໃຊ້ງານ', zh: '使用中', en: 'Active' },
   tenant_suspended: { th: 'ถูกระงับ', lo: 'ຖືກລະງັບ', zh: '已停用', en: 'Suspended' },
@@ -159,8 +159,8 @@ const I18N = {
 
   qr_modal_title_all: { th: 'QR โต๊ะทั้งหมด', lo: 'QR ໂຕະທັງໝົດ', zh: '全部桌台二维码', en: 'All table QRs' },
   qr_table_prefix: { th: 'QR โต๊ะ', lo: 'QR ໂຕະ', zh: '桌台二维码', en: 'Table QR' },
-  btn_copy_link: { th: '📋 คัดลอกลิงก์', lo: '📋 ຄັດລອກລິ້ງ', zh: '📋 复制链接', en: '📋 Copy link' },
-  btn_open_order_page: { th: '🔗 เปิดหน้าสั่งอาหาร', lo: '🔗 ເປີດໜ້າສັ່ງອາຫານ', zh: '🔗 打开点餐页面', en: '🔗 Open ordering page' },
+  btn_copy_link: { th: 'คัดลอกลิงก์', lo: 'ຄັດລອກລິ້ງ', zh: '复制链接', en: 'Copy link' },
+  btn_open_order_page: { th: 'เปิดหน้าสั่งอาหาร', lo: 'ເປີດໜ້າສັ່ງອາຫານ', zh: '打开点餐页面', en: 'Open ordering page' },
   toast_link_copied: { th: 'คัดลอกลิงก์แล้ว', lo: 'ຄັດລອກລິ້ງແລ້ວ', zh: '链接已复制', en: 'Link copied' },
 
   modal_add_category_title: { th: 'เพิ่มหมวดหมู่', lo: 'ເພີ່ມໝວດໝູ່', zh: '添加分类', en: 'Add category' },
@@ -180,17 +180,17 @@ const I18N = {
   label_sold_out_temp: { th: 'หมดชั่วคราว (ของหมด)', lo: 'ໝົດຊົ່ວຄາວ (ຂອງໝົດ)', zh: '暂时缺货（售罄）', en: 'Temporarily sold out' },
   label_option_groups_title: { th: 'ตัวเลือกเพิ่มเติม (เช่น ขนาด, ความเผ็ด)', lo: 'ຕົວເລືອກເພີ່ມເຕີມ (ເຊັ່ນ: ຂະໜາດ, ລະດັບເຜັດ)', zh: '附加选项（如份量、辣度）', en: 'Extra options (e.g. size, spice level)' },
   label_item_image: { th: 'รูปภาพเมนู', lo: 'ຮູບເມນູ', zh: '菜品图片', en: 'Item photo' },
-  btn_choose_image: { th: '📷 เลือกรูปภาพ', lo: '📷 ເລືອກຮູບ', zh: '📷 选择图片', en: '📷 Choose photo' },
-  btn_change_image: { th: '📷 เปลี่ยนรูปภาพ', lo: '📷 ປ່ຽນຮູບ', zh: '📷 更换图片', en: '📷 Change photo' },
-  btn_remove_image: { th: '🗑️ ลบรูปภาพ', lo: '🗑️ ລຶບຮູບ', zh: '🗑️ 删除图片', en: '🗑️ Remove photo' },
+  btn_choose_image: { th: 'เลือกรูปภาพ', lo: 'ເລືອກຮູບ', zh: '选择图片', en: 'Choose photo' },
+  btn_change_image: { th: 'เปลี่ยนรูปภาพ', lo: 'ປ່ຽນຮູບ', zh: '更换图片', en: 'Change photo' },
+  btn_remove_image: { th: 'ลบรูปภาพ', lo: 'ລຶບຮູບ', zh: '删除图片', en: 'Remove photo' },
   err_image_too_large: { th: 'ไฟล์รูปภาพมีขนาดใหญ่เกินไป', lo: 'ໄຟລ໌ຮູບໃຫຍ່ເກີນໄປ', zh: '图片文件过大', en: 'Image file is too large' },
   err_image_invalid_type: { th: 'กรุณาเลือกไฟล์รูปภาพ (JPG, PNG)', lo: 'ກະລຸນາເລືອກໄຟລ໌ຮູບພາບ (JPG, PNG)', zh: '请选择图片文件（JPG、PNG）', en: 'Please choose an image file (JPG, PNG)' },
-  btn_add_option_group: { th: '➕ เพิ่มกลุ่มตัวเลือก', lo: '➕ ເພີ່ມກຸ່ມຕົວເລືອກ', zh: '➕ 添加选项组', en: '➕ Add option group' },
+  btn_add_option_group: { th: 'เพิ่มกลุ่มตัวเลือก', lo: 'ເພີ່ມກຸ່ມຕົວເລືອກ', zh: '添加选项组', en: 'Add option group' },
   placeholder_group_name: { th: 'ชื่อกลุ่ม เช่น ขนาด', lo: 'ຊື່ກຸ່ມ ເຊັ່ນ: ຂະໜາດ', zh: '组名，例如：份量', en: 'Group name, e.g. Size' },
   label_required_choice: { th: 'บังคับเลือก', lo: 'ບັງຄັບເລືອກ', zh: '必选', en: 'Required' },
   placeholder_option_name: { th: 'ชื่อตัวเลือก', lo: 'ຊື່ຕົວເລືອກ', zh: '选项名称', en: 'Option name' },
   placeholder_option_price: { th: '+ราคา', lo: '+ລາຄາ', zh: '+价格', en: '+price' },
-  btn_add_option: { th: '➕ เพิ่มตัวเลือก', lo: '➕ ເພີ່ມຕົວເລືອກ', zh: '➕ 添加选项', en: '➕ Add option' },
+  btn_add_option: { th: 'เพิ่มตัวเลือก', lo: 'ເພີ່ມຕົວເລືອກ', zh: '添加选项', en: 'Add option' },
 
   modal_add_user_title: { th: 'เพิ่มผู้ใช้งาน', lo: 'ເພີ່ມຜູ້ໃຊ້', zh: '添加用户', en: 'Add user' },
   modal_edit_user_title: { th: 'แก้ไขผู้ใช้งาน', lo: 'ແກ້ໄຂຜູ້ໃຊ້', zh: '编辑用户', en: 'Edit user' },
@@ -209,7 +209,7 @@ const I18N = {
   modal_take_order_title: { th: 'รับออเดอร์ลูกค้า', lo: 'ຮັບອໍເດີລູກຄ້າ', zh: '为顾客下单', en: 'Take customer order' },
   label_choose_menu: { th: 'เลือกเมนู', lo: 'ເລືອກເມນູ', zh: '选择菜品', en: 'Choose items' },
   label_cart: { th: 'ตะกร้า', lo: 'ກະຕ່າ', zh: '购物车', en: 'Cart' },
-  btn_confirm_order: { th: '✅ ยืนยันออเดอร์', lo: '✅ ຢືນຢັນອໍເດີ', zh: '✅ 确认下单', en: '✅ Confirm order' },
+  btn_confirm_order: { th: 'ยืนยันออเดอร์', lo: 'ຢືນຢັນອໍເດີ', zh: '确认下单', en: 'Confirm order' },
   empty_cart_staff: { th: 'ยังไม่มีรายการในตะกร้า', lo: 'ຍັງບໍ່ມີລາຍການໃນກະຕ່າ', zh: '购物车暂无商品', en: 'Cart is empty' },
   empty_menu: { th: 'ไม่มีเมนู', lo: 'ບໍ່ມີເມນູ', zh: '暂无菜品', en: 'No items' },
   placeholder_customer_name: { th: 'ลูกค้า', lo: 'ລູກຄ້າ', zh: '顾客', en: 'Customer' },
@@ -260,12 +260,12 @@ const I18N = {
   label_phone_optional: { th: 'เบอร์โทร (ถ้ามี — เผื่อร้านต้องการติดต่อ)', lo: 'ເບີໂທ (ຖ້າມີ — ເຜື່ອຮ້ານຕ້ອງການຕິດຕໍ່)', zh: '电话号码（选填，方便商家联系）', en: 'Phone (optional — in case the shop needs to reach you)' },
   label_notes_to_shop: { th: 'หมายเหตุถึงร้าน (ถ้ามี)', lo: 'ໝາຍເຫດເຖິງຮ້ານ (ຖ້າມີ)', zh: '给商家的备注（选填）', en: 'Note to the shop (optional)' },
   placeholder_notes_shop_example: { th: 'เช่น ขอช้อนเพิ่ม', lo: 'ເຊັ່ນ: ຂໍບ່ວງເພີ່ມ', zh: '例如：多要一副餐具', en: 'e.g. Extra spoon please' },
-  btn_confirm_order_customer: { th: '✅ ยืนยันสั่งอาหาร', lo: '✅ ຢືນຢັນສັ່ງອາຫານ', zh: '✅ 确认下单', en: '✅ Confirm order' },
-  success_title: { th: 'สั่งอาหารสำเร็จ! 🎉', lo: 'ສັ່ງອາຫານສຳເລັດ! 🎉', zh: '下单成功！🎉', en: 'Order placed! 🎉' },
+  btn_confirm_order_customer: { th: 'ยืนยันสั่งอาหาร', lo: 'ຢືນຢັນສັ່ງອາຫານ', zh: '确认下单', en: 'Confirm order' },
+  success_title: { th: 'สั่งอาหารสำเร็จ!', lo: 'ສັ່ງອາຫານສຳເລັດ!', zh: '下单成功！', en: 'Order placed!' },
   success_order_no_prefix: { th: 'เลขที่ออเดอร์', lo: 'ເລກທີ່ອໍເດີ', zh: '订单号', en: 'Order number' },
   success_hint: { th: 'ทางร้านได้รับออเดอร์ของคุณแล้ว กรุณารอสักครู่', lo: 'ທາງຮ້ານໄດ້ຮັບອໍເດີຂອງທ່ານແລ້ວ ກະລຸນາລໍຖ້າບຶດໜຶ່ງ', zh: '商家已收到您的订单，请稍候', en: 'The shop has received your order — please wait a moment' },
-  btn_track_order: { th: '📍 ติดตามสถานะออเดอร์', lo: '📍 ຕິດຕາມສະຖານະອໍເດີ', zh: '📍 追踪订单状态', en: '📍 Track order status' },
-  btn_order_more: { th: '🍽️ สั่งเพิ่ม', lo: '🍽️ ສັ່ງເພີ່ມ', zh: '🍽️ 继续点餐', en: '🍽️ Order more' },
+  btn_track_order: { th: 'ติดตามสถานะออเดอร์', lo: 'ຕິດຕາມສະຖານະອໍເດີ', zh: '追踪订单状态', en: 'Track order status' },
+  btn_order_more: { th: 'สั่งเพิ่ม', lo: 'ສັ່ງເພີ່ມ', zh: '继续点餐', en: 'Order more' },
   empty_menu_category: { th: 'ยังไม่มีเมนูในหมวดนี้', lo: 'ຍັງບໍ່ມີເມນູໃນໝວດນີ້', zh: '该分类暂无菜品', en: 'No items in this category yet' },
   label_notes_optional: { th: 'หมายเหตุ (ถ้ามี)', lo: 'ໝາຍເຫດ (ຖ້າມີ)', zh: '备注（选填）', en: 'Notes (optional)' },
   placeholder_notes_customer: { th: 'เช่น ไม่ใส่ผัก ไม่เผ็ด', lo: 'ເຊັ່ນ: ບໍ່ໃສ່ຜັກ ບໍ່ເຜັດ', zh: '例如：不要蔬菜，不要辣', en: 'e.g. No vegetables, not spicy' },
@@ -283,21 +283,21 @@ const I18N = {
   label_order_no: { th: 'เลขที่ออเดอร์', lo: 'ເລກທີ່ອໍເດີ', zh: '订单号', en: 'Order number' },
   placeholder_order_no_example: { th: 'เช่น Z-20260920-0001', lo: 'ເຊັ່ນ: Z-20260920-0001', zh: '例如：Z-20260920-0001', en: 'e.g. Z-20260920-0001' },
   label_phone_used: { th: 'เบอร์โทรที่ใช้ตอนสั่ง', lo: 'ເບີໂທທີ່ໃຊ້ຕອນສັ່ງ', zh: '下单时使用的电话号码', en: 'Phone number used when ordering' },
-  btn_check_status: { th: '🔍 ตรวจสอบสถานะ', lo: '🔍 ກວດສອບສະຖານະ', zh: '🔍 查询状态', en: '🔍 Check status' },
+  btn_check_status: { th: 'ตรวจสอบสถานะ', lo: 'ກວດສອບສະຖານະ', zh: '查询状态', en: 'Check status' },
   err_fill_order_phone: { th: 'กรุณากรอกเลขที่ออเดอร์และเบอร์โทร', lo: 'ກະລຸນາປ້ອນເລກທີ່ອໍເດີແລະເບີໂທ', zh: '请填写订单号和电话号码', en: 'Please enter the order number and phone number' },
   err_order_not_found: { th: 'ไม่พบออเดอร์ กรุณาตรวจสอบเลขที่ออเดอร์และเบอร์โทรอีกครั้ง', lo: 'ບໍ່ພົບອໍເດີ ກະລຸນາກວດສອບເລກທີ່ອໍເດີແລະເບີໂທອີກຄັ້ງ', zh: '未找到订单，请重新检查订单号和电话号码', en: 'Order not found — please check the order number and phone number again' },
   label_payment_status: { th: 'สถานะการชำระเงิน', lo: 'ສະຖານະການຈ່າຍເງິນ', zh: '付款状态', en: 'Payment status' },
 
   // ---------- kitchen board (kitchen.html + kitchen.js) ----------
-  kitchen_header_title: { th: '👨‍🍳 หน้าจอครัว', lo: '👨‍🍳 ໜ້າຈໍຄົວ', zh: '👨‍🍳 厨房显示屏', en: '👨‍🍳 Kitchen display' },
+  kitchen_header_title: { th: 'หน้าจอครัว', lo: 'ໜ້າຈໍຄົວ', zh: '厨房显示屏', en: 'Kitchen display' },
   kitchen_login_sub: { th: 'เข้าสู่ระบบพนักงานเพื่อดูคิวออเดอร์ครัว', lo: 'ເຂົ້າສູ່ລະບົບພະນັກງານເພື່ອເບິ່ງຄິວອໍເດີຄົວ', zh: '员工登录以查看厨房订单队列', en: 'Staff login to view the kitchen order queue' },
   select_all_branches: { th: 'ทุกสาขา', lo: 'ທຸກສາຂາ', zh: '所有分店', en: 'All branches' },
   empty_kitchen_queue: { th: 'ยังไม่มีออเดอร์ในคิว', lo: 'ຍັງບໍ່ມີອໍເດີໃນຄິວ', zh: '队列中暂无订单', en: 'No orders in the queue yet' },
-  kt_btn_start: { th: '👨‍🍳 เริ่มทำ', lo: '👨‍🍳 ເລີ່ມເຮັດ', zh: '👨‍🍳 开始制作', en: '👨‍🍳 Start cooking' },
-  kt_btn_ready: { th: '✅ พร้อมเสิร์ฟ', lo: '✅ ພ້ອມເສີບ', zh: '✅ 可以上菜', en: '✅ Ready to serve' },
+  kt_btn_start: { th: 'เริ่มทำ', lo: 'ເລີ່ມເຮັດ', zh: '开始制作', en: 'Start cooking' },
+  kt_btn_ready: { th: 'พร้อมเสิร์ฟ', lo: 'ພ້ອມເສີບ', zh: '可以上菜', en: 'Ready to serve' },
   kt_cancelled_qty: { th: 'ยกเลิก', lo: 'ຍົກເລີກ', zh: '已取消', en: 'Cancelled' },
-  kt_btn_served: { th: '🍽️ เสิร์ฟแล้ว', lo: '🍽️ ເສີບແລ້ວ', zh: '🍽️ 已上菜', en: '🍽️ Served' },
-  kt_btn_cancel: { th: '✕ ยกเลิก', lo: '✕ ຍົກເລີກ', zh: '✕ 取消', en: '✕ Cancel' },
+  kt_btn_served: { th: 'เสิร์ฟแล้ว', lo: 'ເສີບແລ້ວ', zh: '已上菜', en: 'Served' },
+  kt_btn_cancel: { th: 'ยกเลิก', lo: 'ຍົກເລີກ', zh: '取消', en: 'Cancel' },
 
   // ---------- orders board (index.html + app.js) — live table status + side panel ----------
   board_title: { th: 'ผังโต๊ะ', lo: 'ຜັງໂຕະ', zh: '桌位状态', en: 'Table board' },
@@ -308,8 +308,8 @@ const I18N = {
   side_panel_empty: { th: 'ยังไม่มีออเดอร์ที่กำลังดำเนินการ', lo: 'ຍັງບໍ່ມີອໍເດີທີ່ກຳລັງດຳເນີນການ', zh: '暂无进行中的订单', en: 'No active orders right now' },
   other_orders_title: { th: 'กลับบ้าน / เดลิเวอรี่', lo: 'ເອົາກັບບ້ານ / ສົ່ງເຖິງທີ່', zh: '外带 / 外送', en: 'Takeaway / delivery' },
   order_detail_title: { th: 'รายละเอียดออเดอร์', lo: 'ລາຍລະອຽດອໍເດີ', zh: '订单详情', en: 'Order details' },
-  btn_confirm_payment_done: { th: '✅ ยืนยันชำระเงิน', lo: '✅ ຢືນຢັນຈ່າຍເງິນ', zh: '✅ 确认付款', en: '✅ Confirm payment' },
-  btn_print_receipt: { th: '🖨️ พิมพ์ใบเสร็จ', lo: '🖨️ ພິມໃບບິນ', zh: '🖨️ 打印收据', en: '🖨️ Print receipt' },
+  btn_confirm_payment_done: { th: 'ยืนยันชำระเงิน', lo: 'ຢືນຢັນຈ່າຍເງິນ', zh: '确认付款', en: 'Confirm payment' },
+  btn_print_receipt: { th: 'พิมพ์ใบเสร็จ', lo: 'ພິມໃບບິນ', zh: '打印收据', en: 'Print receipt' },
   toast_payment_confirmed: { th: 'ยืนยันชำระเงินแล้ว', lo: 'ຢືນຢັນຈ່າຍເງິນແລ້ວ', zh: '已确认付款', en: 'Payment confirmed' },
   receipt_title: { th: 'ใบเสร็จรับเงิน', lo: 'ໃບບິນຮັບເງິນ', zh: '收据', en: 'Receipt' },
   receipt_thank_you: { th: 'ขอบคุณที่ใช้บริการ', lo: 'ຂອບໃຈທີ່ໃຊ້ບໍລິການ', zh: '感谢您的光临', en: 'Thank you for your order' },
@@ -324,18 +324,18 @@ const I18N = {
   label_item_count: { th: 'จำนวนรายการ', lo: 'ຈຳນວນລາຍການ', zh: '商品数量', en: 'Item count' },
   label_subtotal: { th: 'ยอดก่อนภาษี', lo: 'ຍອດກ່ອນອາກອນ', zh: '小计', en: 'Subtotal' },
   label_order_taker: { th: 'ผู้รับออเดอร์', lo: 'ຜູ້ຮັບອໍເດີ', zh: '接单人', en: 'Order taken by' },
-  kitchen_ticket_header: { th: '🔔 ใบสั่งห้องครัว', lo: '🔔 ໃບສັ່ງຫ້ອງຄົວ', zh: '🔔 厨房订单', en: '🔔 KITCHEN ORDER TICKET' },
+  kitchen_ticket_header: { th: 'ใบสั่งห้องครัว', lo: 'ໃບສັ່ງຫ້ອງຄົວ', zh: '厨房订单', en: 'KITCHEN ORDER TICKET' },
 
   // ---------- customer menu (order.html + order.js) — category drill-down ----------
   cat_view_all_tile: { th: 'ดูเมนูทั้งหมด', lo: 'ເບິ່ງເມນູທັງໝົດ', zh: '查看全部菜单', en: 'View full menu' },
   cat_items_count: { th: '{n} รายการ', lo: '{n} ລາຍການ', zh: '{n} 项', en: '{n} items' },
-  btn_back_to_categories: { th: '← กลับหมวดหมู่', lo: '← ກັບຄືນໝວດ', zh: '← 返回分类', en: '← Back to categories' },
+  btn_back_to_categories: { th: 'กลับหมวดหมู่', lo: 'ກັບຄືນໝວດ', zh: '返回分类', en: 'Back to categories' },
 
   // ---------- send-to-kitchen (Orders tab item selection, independent of payment/receipt) ----------
   btn_send_to_kitchen: { th: 'ส่งไปครัว', lo: 'ສົ່ງໄປຄົວ', zh: '送去厨房', en: 'Send to kitchen' },
   label_select_all: { th: 'เลือกทั้งหมด', lo: 'ເລືອກທັງໝົດ', zh: '全选', en: 'Select all' },
   label_kitchen_sent_at: { th: 'ส่งครัวแล้วเมื่อ', lo: 'ສົ່ງຄົວແລ້ວເມື່ອ', zh: '已送厨房于', en: 'Sent to kitchen at' },
-  toast_sent_to_kitchen: { th: '🔔 ส่งรายการไปครัวแล้ว', lo: '🔔 ສົ່ງລາຍການໄປຄົວແລ້ວ', zh: '🔔 已送去厨房', en: '🔔 Sent to kitchen' },
+  toast_sent_to_kitchen: { th: 'ส่งรายการไปครัวแล้ว', lo: 'ສົ່ງລາຍການໄປຄົວແລ້ວ', zh: '已送去厨房', en: 'Sent to kitchen' },
 
   // ---------- reports tab (sales summary + income/expense) ----------
   tab_reports: { th: 'รายงาน', lo: 'ລາຍງານ', zh: '报表', en: 'Reports' },
@@ -356,7 +356,7 @@ const I18N = {
   label_top_items_title: { th: 'สินค้าขายดี', lo: 'ສິນຄ້າຂາຍດີ', zh: '热销商品', en: 'Best-selling items' },
   label_no_data: { th: 'ยังไม่มีข้อมูลในช่วงนี้', lo: 'ຍັງບໍ່ມີຂໍ້ມູນໃນຊ່ວງນີ້', zh: '此期间暂无数据', en: 'No data for this period yet' },
   section_expenses_title: { th: 'รายจ่าย', lo: 'ລາຍຈ່າຍ', zh: '支出', en: 'Expenses' },
-  btn_add_expense: { th: '➕ เพิ่มรายจ่าย', lo: '➕ ເພີ່ມລາຍຈ່າຍ', zh: '➕ 添加支出', en: '➕ Add expense' },
+  btn_add_expense: { th: 'เพิ่มรายจ่าย', lo: 'ເພີ່ມລາຍຈ່າຍ', zh: '添加支出', en: 'Add expense' },
   label_expense_category: { th: 'หมวดรายจ่าย', lo: 'ໝວດລາຍຈ່າຍ', zh: '支出类别', en: 'Expense category' },
   label_expense_amount: { th: 'จำนวนเงิน', lo: 'ຈຳນວນເງິນ', zh: '金额', en: 'Amount' },
   label_expense_date: { th: 'วันที่', lo: 'ວັນທີ', zh: '日期', en: 'Date' },
@@ -370,7 +370,7 @@ const I18N = {
   label_low_stock_threshold: { th: 'แจ้งเตือนเมื่อเหลือน้อยกว่า', lo: 'ແຈ້ງເຕືອນເມື່ອເຫຼືອໜ້ອຍກວ່າ', zh: '低库存提醒阈值', en: 'Warn when below' },
   badge_low_stock: { th: 'ใกล้หมด', lo: 'ໃກ້ໝົດ', zh: '库存不足', en: 'Low stock' },
   badge_out_of_stock: { th: 'สต็อกหมด', lo: 'ສະຕັອກໝົດ', zh: '缺货', en: 'Out of stock' },
-  btn_adjust_stock: { th: '📦 ปรับสต็อก', lo: '📦 ປັບສະຕັອກ', zh: '📦 调整库存', en: '📦 Adjust stock' },
+  btn_adjust_stock: { th: 'ปรับสต็อก', lo: 'ປັບສະຕັອກ', zh: '调整库存', en: 'Adjust stock' },
   label_stock_adjust_amount: { th: 'ปรับจำนวน (+เพิ่ม / -ลด)', lo: 'ປັບຈຳນວນ (+ເພີ່ມ / -ຫຼຸດ)', zh: '调整数量（+增加 / -减少）', en: 'Adjust by (+add / -remove)' },
   err_cost_price_invalid: { th: 'ต้นทุนไม่ถูกต้อง', lo: 'ຕົ້ນທຶນບໍ່ຖືກຕ້ອງ', zh: '成本价无效', en: 'Invalid cost price' },
   err_stock_invalid: { th: 'จำนวนสต็อกไม่ถูกต้อง', lo: 'ຈຳນວນສະຕັອກບໍ່ຖືກຕ້ອງ', zh: '库存数量无效', en: 'Invalid stock quantity' },
@@ -405,9 +405,20 @@ function t(key, vars) {
   return str;
 }
 
+// Icons: Lucide (ISC licence, bundled in /static/icons). Shop-chosen icons (branch/category/shop)
+// are stored as Lucide names; older rows may still hold an emoji, which is shown as text.
+const ICON_NAME_RE = /^[a-z0-9-]{2,40}$/;
+function iconHtml(value, fallback) {
+  const v = (value == null ? '' : String(value)).trim();
+  if (ICON_NAME_RE.test(v)) return `<i class="ic ic-${v}" aria-hidden="true"></i>`;
+  if (v) return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return fallback ? `<i class="ic ic-${fallback}" aria-hidden="true"></i>` : '';
+}
+function iconText(value) { const v = (value == null ? '' : String(value)).trim(); return ICON_NAME_RE.test(v) ? '' : v; }
+const I18N_ICONS = {"btn_add_branch": "plus", "btn_add_category": "plus", "btn_add_expense": "plus", "btn_add_menu_item": "plus", "btn_add_option": "plus", "btn_add_option_group": "plus", "btn_add_table": "plus", "btn_add_tenant": "plus", "btn_add_user": "plus", "btn_adjust_stock": "package", "btn_back_to_categories": "arrow-left", "btn_bulk_add_tables": "hash", "btn_change_image": "camera", "btn_check_status": "search", "btn_choose_image": "camera", "btn_confirm_order": "circle-check", "btn_confirm_order_customer": "circle-check", "btn_confirm_payment_done": "circle-check", "btn_copy_link": "clipboard-list", "btn_edit": "pencil", "btn_mark_available": "circle-check", "btn_mark_paid": "wallet", "btn_mark_sold_out": "ban", "btn_open_order_page": "link", "btn_order_more": "utensils", "btn_print_receipt": "printer", "btn_qr_all_tables": "smartphone", "btn_refresh": "refresh-cw", "btn_remove_image": "trash-2", "btn_take_order": "plus", "btn_track_order": "map-pin", "btn_unmark_paid": "undo-2", "kitchen_header_title": "chef-hat", "kitchen_ticket_header": "bell", "kt_btn_cancel": "x", "kt_btn_ready": "circle-check", "kt_btn_served": "utensils", "kt_btn_start": "chef-hat", "menu_change_password": "lock", "menu_change_username": "user", "menu_logout": "log-out", "order_type_delivery": "bike", "order_type_dine_in": "utensils", "order_type_takeaway": "shopping-bag", "toast_sent_to_kitchen": "bell"};
 function applyI18n(root) {
   const scope = root || document;
-  scope.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+  scope.querySelectorAll('[data-i18n]').forEach(el => { const k = el.getAttribute('data-i18n'); el.textContent = t(k); if (I18N_ICONS[k] && !el.dataset.icon) el.dataset.icon = I18N_ICONS[k]; });
   scope.querySelectorAll('[data-i18n-ph]').forEach(el => { el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph'))); });
   scope.querySelectorAll('[data-i18n-title]').forEach(el => { el.setAttribute('title', t(el.getAttribute('data-i18n-title'))); });
   document.documentElement.setAttribute('lang', currentLang);
