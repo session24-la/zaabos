@@ -1875,23 +1875,48 @@ if(offlineQueueList)offlineQueueList.addEventListener('click',async e=>{
 });
 
 
-// ---------- Step 3: Wi-Fi printers (RP331 etc.) printed by the shop PC ----------
+// ---------- Step 3: shop printers (USB or Wi-Fi) printed by the shop PC ----------
+let npPrinters=[], npUsb=[], npNet=[];
+const npWhere=p=>p.connection==='system'?'USB':(p.host+':'+p.port);
+function npRenderAssign(){
+  const opts=sel=>`<option value="">— หน้าต่าง Print ของเบราว์เซอร์ —</option>`+npPrinters.filter(p=>!p.station_id).map(p=>`<option value="${p.id}">${escapeHtml(p.name)} · ${escapeHtml(npWhere(p))}</option>`).join('');
+  for(const [id,job] of [['#npAssignReceipt','receipt'],['#npAssignKitchen','kitchen']]){
+    const cur=npPrinters.find(p=>!p.station_id&&(p.role===job||p.role==='both'));
+    $(id).innerHTML=opts();$(id).value=cur?String(cur.id):'';
+  }
+}
+function npRenderFound(){
+  const have=new Set(npPrinters.map(p=>p.connection==='system'?'usb:'+p.host:'net:'+p.host));
+  const rows=[...npUsb.map(u=>({key:'usb:'+u.queue,icon:'🔌',title:u.label,sub:'USB ต่อกับเครื่องนี้',add:{connection:'system',host:u.queue,name:u.label}})),
+              ...npNet.map(n=>({key:'net:'+n.host,icon:'📶',title:'เครื่องพิมพ์ Wi‑Fi',sub:n.host,add:{connection:'network',host:n.host,port:9100,name:'Wi‑Fi '+n.host}}))]
+    .filter(r=>!have.has(r.key));
+  $('#npFound').innerHTML=rows.map((r,i)=>`<div class="np-found"><div><b>${r.icon} ${escapeHtml(r.title)}</b><small>${escapeHtml(r.sub)}</small></div><button class="save settings-save-compact" data-np-found="${i}" type="button">ใช้เครื่องนี้</button></div>`).join('');
+  $('#npFound')._rows=rows;
+}
 async function loadNetPrinters(){
   if(!currentBranchId)return;
   try{
-    const [r,stations,sys]=await Promise.all([api('/api/printers?branch_id='+currentBranchId),api('/api/kitchen/stations?branch_id='+currentBranchId).catch(()=>[]),api('/api/printers/system').catch(()=>({queues:[]}))]);
-    $('#npQueue').innerHTML=sys.queues.length?sys.queues.map(q=>`<option value="${escapeHtml(q)}">${escapeHtml(q.replace(/^_/,''))}</option>`).join(''):'<option value="">ไม่พบเครื่องพิมพ์ USB — เพิ่มใน System Settings ก่อน</option>';
-    $('#npMode').textContent=r.local?'พิมพ์ตรงถึงเครื่องพิมพ์ในร้านผ่าน Wi‑Fi โดยไม่ขึ้นหน้าต่าง Print':'ตอนนี้เปิดจากคลาวด์ — การพิมพ์ผ่าน Wi‑Fi ทำงานเมื่อเปิดโปรแกรม ZaabOS บนเครื่องในร้าน';
-    const st=$('#npStation');st.innerHTML='<option value="">ทุกสถานี (เครื่องหลัก)</option>'+(stations||[]).map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('');
-    $('#npList').innerHTML=r.printers.length?r.printers.map(p=>`<div class="np-row"><div><b>${p.role==='kitchen'?'👨‍🍳':'🧾'} ${escapeHtml(p.name)}</b><small>${p.connection==='system'?'USB · '+escapeHtml(p.host.replace(/^_/,'')):escapeHtml(p.host)+':'+p.port} · ${p.paper_width} mm${p.station_name?' · '+escapeHtml(p.station_name):''}</small></div><div class="np-actions"><button class="ghost-btn" data-np-test="${p.id}">พิมพ์ทดสอบ</button><button class="icon-btn danger" data-np-del="${p.id}">×</button></div></div>`).join(''):emptyState('🖨️','ยังไม่มีเครื่องพิมพ์ Wi‑Fi — ระบบจะใช้หน้าต่าง Print ของเบราว์เซอร์');
+    const [r,d]=await Promise.all([api('/api/printers?branch_id='+currentBranchId),api('/api/printers/discover').catch(()=>({usb:[],network:[],local:false}))]);
+    npPrinters=r.printers||[];npUsb=d.usb||[];
+    $('#npMode').textContent=r.local?'พิมพ์ตรงถึงเครื่องพิมพ์ในร้าน (USB หรือ Wi‑Fi) โดยไม่ขึ้นหน้าต่าง Print':'ตอนนี้เปิดจากคลาวด์ — พิมพ์ตรงได้เมื่อเปิดโปรแกรม ZaabOS บนเครื่องในร้าน';
+    $('#npScanBtn').classList.toggle('hidden',!r.local);
+    npRenderAssign();npRenderFound();
+    $('#npList').innerHTML=npPrinters.length?npPrinters.map(p=>{const jobs=[(p.role==='receipt'||p.role==='both')&&'ใบเสร็จ',(p.role==='kitchen'||p.role==='both')&&'ครัว'].filter(Boolean).join(' + ')||'ยังไม่ได้ใช้';return `<div class="np-row"><div><b>${p.connection==='system'?'🔌':'📶'} ${escapeHtml(p.name)}</b><small>${escapeHtml(npWhere(p))} · ${p.paper_width} mm · ${jobs}${p.station_name?' · '+escapeHtml(p.station_name):''}</small></div><div class="np-actions"><button class="ghost-btn" data-np-test="${p.id}">พิมพ์ทดสอบ</button><button class="icon-btn danger" data-np-del="${p.id}" title="ลบ">×</button></div></div>`}).join(''):emptyState('🖨️','ยังไม่มีเครื่องพิมพ์ — เลือกจากรายการด้านล่างได้เลย');
   }catch(e){toast(e.message,'err')}
 }
-$('#npRole').addEventListener('change',()=>$('#npStationWrap').classList.toggle('hidden',$('#npRole').value!=='kitchen'));
-$('#npConn').addEventListener('change',()=>{const usb=$('#npConn').value==='system';$('#npQueueWrap').classList.toggle('hidden',!usb);$('#npHostWrap').classList.toggle('hidden',usb);$('#npPortWrap').classList.toggle('hidden',usb);});
-$('#npAddBtn').addEventListener('click',async()=>{try{await apiJson('/api/printers','POST',{branch_id:currentBranchId,name:$('#npName').value.trim(),role:$('#npRole').value,connection:$('#npConn').value,host:$('#npConn').value==='system'?$('#npQueue').value:$('#npHost').value.trim(),port:Number($('#npPort').value||9100),paper_width:$('#npPaper').value,station_id:$('#npRole').value==='kitchen'?($('#npStation').value||null):null});$('#npName').value='';$('#npHost').value='';toast('เพิ่มเครื่องพิมพ์แล้ว — กด "พิมพ์ทดสอบ" เพื่อเช็ก','ok');loadNetPrinters()}catch(e){toast(e.message,'err')}});
+async function npAdd(payload){
+  const r=await apiJson('/api/printers','POST',{branch_id:currentBranchId,role:'none',paper_width:'80',...payload});
+  // First printer in the shop: use it for both receipts and kitchen right away.
+  for(const job of ['receipt','kitchen']){if(!npPrinters.some(p=>!p.station_id&&(p.role===job||p.role==='both')))await apiJson('/api/printers/assign','PUT',{branch_id:currentBranchId,job,printer_id:r.id});}
+  toast('บันทึกเครื่องพิมพ์แล้ว — กด "พิมพ์ทดสอบ" เพื่อเช็ก','ok');await loadNetPrinters();
+}
+document.querySelectorAll('[data-np-assign]').forEach(sel=>sel.addEventListener('change',async()=>{try{await apiJson('/api/printers/assign','PUT',{branch_id:currentBranchId,job:sel.dataset.npAssign,printer_id:sel.value?Number(sel.value):null});toast('บันทึกแล้ว','ok');loadNetPrinters()}catch(e){toast(e.message,'err')}}));
+$('#npFound').addEventListener('click',async e=>{const b=e.target.closest('[data-np-found]');if(!b)return;b.disabled=true;try{await npAdd($('#npFound')._rows[Number(b.dataset.npFound)].add)}catch(err){toast(err.message,'err');b.disabled=false}});
+$('#npScanBtn').addEventListener('click',async()=>{const b=$('#npScanBtn');b.disabled=true;b.textContent='กำลังค้นหา… (ประมาณ 3 วินาที)';try{const d=await api('/api/printers/discover?network=1');npUsb=d.usb||[];npNet=d.network||[];npRenderFound();if(!npNet.length)toast('ไม่พบเครื่องพิมพ์ Wi‑Fi — เครื่องพิมพ์ต้องต่อ Wi‑Fi เดียวกับ Mac ก่อน','err')}catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='🔍 ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน'}});
+$('#npAddIpBtn').addEventListener('click',async()=>{const host=$('#npHost').value.trim();try{await npAdd({connection:'network',host,port:Number($('#npPort').value||9100),name:'Wi‑Fi '+host});$('#npHost').value=''}catch(e){toast(e.message,'err')}});
 $('#npList').addEventListener('click',async e=>{
   const tb=e.target.closest('[data-np-test]');
-  if(tb){tb.disabled=true;try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('ส่งใบทดสอบแล้ว ✓','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false}return;}
+  if(tb){tb.disabled=true;const old=tb.textContent;tb.textContent='กำลังพิมพ์…';try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('พิมพ์ทดสอบแล้ว ✓','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false;tb.textContent=old}return;}
   const db=e.target.closest('[data-np-del]');
   if(db&&confirm('ลบเครื่องพิมพ์นี้?')){try{await apiJson('/api/printers/'+db.dataset.npDel,'DELETE');loadNetPrinters()}catch(err){toast(err.message,'err')}}
 });

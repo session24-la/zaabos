@@ -923,3 +923,8 @@ main{max-width:1180px;padding-top:14px}
 .np-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line,#e5e5e5)}
 .np-row small{display:block;opacity:.7}
 .np-actions{display:flex;gap:6px;flex-shrink:0}
+.np-assign{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
+.np-assign span{font-weight:700;white-space:nowrap}.np-assign select{max-width:62%}
+.np-found{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;margin-bottom:8px;border:1px dashed var(--border,#ccc);border-radius:12px}
+.np-found small{display:block;opacity:.7}.np-manual{margin-top:12px}.np-manual summary{cursor:pointer;opacity:.8}
+.np-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:#22c55e}

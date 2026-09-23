@@ -2270,7 +2270,7 @@ def send_order_items_to_kitchen(oid):
                         VALUES(?,?,?,?,?,?,?,?,?,?)''',
                      (g.tenant_id,order['branch_id'],oid,station_id,'pending',0,'',ts,'kitchen',json.dumps(ids)))
     log_action('send_order_items_to_kitchen', detail=f'{oid}: {item_ids}')
-    conn.commit()
+    conn.commit(); _wake_printer()
     return jsonify(ok=True, sent_at=ts, item_ids=item_ids, printed_by_server=_network_printing(conn, order['branch_id'], 'kitchen'))
 
 # ---------- Round 14D: pricing / promotions / service charge / tax ----------
@@ -2982,19 +2982,28 @@ def _local_printing():
 
 def _network_printing(conn, branch_id, role):
     if not _local_printing(): return False
-    return bool(conn.execute('SELECT 1 FROM printers WHERE tenant_id=? AND branch_id=? AND role=? AND active=1 LIMIT 1',
+    return bool(conn.execute("SELECT 1 FROM printers WHERE tenant_id=? AND branch_id=? AND role IN (?,'both') AND active=1 LIMIT 1",
                              (g.tenant_id, branch_id, role)).fetchone())
+
+def _wake_printer():
+    if _local_printing():
+        import printing
+        printing.notify()
 
 def _printer_payload(conn, d, branch_id):
     name=(d.get('name') or '').strip()[:60]; host=(d.get('host') or '').strip()[:100]; role=(d.get('role') or 'receipt').strip()
     connection=(d.get('connection') or 'network').strip()
     if connection not in ('network','system'): raise ValueError('การเชื่อมต่อไม่ถูกต้อง')
     if not name or not host: raise ValueError('กรุณาใส่ชื่อและ IP ของเครื่องพิมพ์' if connection=='network' else 'กรุณาเลือกเครื่องพิมพ์ USB')
-    if role not in ('receipt','kitchen'): raise ValueError('ประเภทเครื่องพิมพ์ไม่ถูกต้อง')
+    if role not in ('receipt','kitchen','both','none'): raise ValueError('ประเภทเครื่องพิมพ์ไม่ถูกต้อง')
     if connection=='system':
         import printing
         if host not in printing.system_queues(): raise ValueError('ไม่พบเครื่องพิมพ์ USB นี้บนเครื่อง')
     elif any(ch.isspace() or ch in '/:@' for ch in host): raise ValueError('IP เครื่องพิมพ์ไม่ถูกต้อง (เช่น 192.168.1.50)')
+    else:
+        from urllib.parse import urlparse
+        if host==(urlparse(os.getenv('ZAABOS_PUBLIC_URL') or '').hostname or ''):
+            raise ValueError('นี่คือ IP ของเครื่องคอมพิวเตอร์นี้ ไม่ใช่เครื่องพิมพ์ — ดู IP จากใบ Self-test ของเครื่องพิมพ์')
     try: port=int(d.get('port') or 9100)
     except (TypeError,ValueError): raise ValueError('พอร์ตไม่ถูกต้อง')
     if not 1<=port<=65535: raise ValueError('พอร์ตไม่ถูกต้อง')
@@ -3005,7 +3014,7 @@ def _printer_payload(conn, d, branch_id):
         try: station=int(station)
         except (TypeError,ValueError): raise ValueError('สถานีครัวไม่ถูกต้อง')
         if not conn.execute('SELECT 1 FROM kitchen_stations WHERE id=? AND tenant_id=?',(station,g.tenant_id)).fetchone(): raise ValueError('ไม่พบสถานีครัว')
-    return name,role,(station if role=='kitchen' else None),host,port,paper,connection
+    return name,role,(station if role in ('kitchen','both') else None),host,port,paper,connection
 
 @app.get('/api/printers')
 @login_required
@@ -3033,6 +3042,39 @@ def printer_create():
                      (g.tenant_id,bid,name,role,station,host,port,paper,now(),connection))
     log_action('printer_created',detail=f'{name} {role} {host}:{port}'); conn.commit()
     return jsonify(ok=True,id=cur.lastrowid)
+
+@app.put('/api/printers/assign')
+@login_required
+@role_required('owner','manager')
+def printers_assign():
+    """One tap: 'receipts print on X' / 'kitchen tickets print on Y' (or on the browser when None)."""
+    d=request.get_json() or {}; conn=db(); job=d.get('job')
+    try: bid=int(d.get('branch_id'))
+    except (TypeError,ValueError): return jsonify(error='กรุณาเลือกสาขา'),400
+    if job not in ('receipt','kitchen'): return jsonify(error='ประเภทงานไม่ถูกต้อง'),400
+    pid=d.get('printer_id') or None
+    rows=conn.execute('SELECT id,role FROM printers WHERE tenant_id=? AND branch_id=? AND active=1 AND station_id IS NULL',(g.tenant_id,bid)).fetchall()
+    if pid is not None and not any(r['id']==int(pid) for r in rows): return jsonify(error='ไม่พบเครื่องพิมพ์'),404
+    other='kitchen' if job=='receipt' else 'receipt'
+    for r in rows:
+        has_other=r['role'] in (other,'both')
+        want=(pid is not None and r['id']==int(pid))
+        role=('both' if has_other else job) if want else (other if has_other else 'none')
+        if role!=r['role']: conn.execute('UPDATE printers SET role=? WHERE id=?',(role,r['id']))
+    log_action('printer_assign',detail=f'{job} -> {pid}'); conn.commit()
+    return jsonify(ok=True)
+
+@app.get('/api/printers/discover')
+@login_required
+@role_required('owner','manager')
+def printers_discover():
+    """Printers this shop PC can use right now: USB (OS queues) and Wi-Fi (port 9100 on the LAN)."""
+    if not _local_printing(): return jsonify(usb=[],network=[],local=False)
+    import printing
+    from urllib.parse import urlparse
+    own=urlparse(os.getenv('ZAABOS_PUBLIC_URL') or '').hostname or ''
+    net=printing.scan_network(own) if request.args.get('network')=='1' else []
+    return jsonify(local=True,usb=printing.system_printers(),network=[{'host':h} for h in net],own_ip=own)
 
 @app.get('/api/printers/system')
 @login_required
@@ -3080,7 +3122,7 @@ def print_receipt_job(oid):
     payload=json.dumps({'lang':str(d.get('lang') or 'th')[:5],'order_type_label':str(d.get('order_type_label') or '')[:40]},ensure_ascii=False)
     conn.execute("""INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,payload)
                     VALUES(?,?,?,?,?,?,?,?,?,?)""",(g.tenant_id,o['branch_id'],oid,None,'pending',0,'',now(),'receipt',payload))
-    conn.commit(); return jsonify(ok=True,queued=True)
+    conn.commit(); _wake_printer(); return jsonify(ok=True,queued=True)
 
 @app.get('/api/print/jobs')
 @login_required
@@ -3101,7 +3143,7 @@ def print_job_retry(jid):
     conn=db(); row=conn.execute('SELECT id FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
     if not row: return jsonify(error='ไม่พบงานพิมพ์'),404
     conn.execute("UPDATE kitchen_print_jobs SET status='pending',attempts=0,last_error='',next_attempt_at=NULL WHERE id=?",(jid,))
-    log_action('print_job_retry',detail=str(jid)); conn.commit()
+    log_action('print_job_retry',detail=str(jid)); conn.commit(); _wake_printer()
     return jsonify(ok=True)
 
 # =====================================================================

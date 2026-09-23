@@ -260,3 +260,43 @@ def test_receipt_matches_web_receipt_fields(shop, local_print):
     lo = json.dumps(printing.receipt_lines(order_row, items, pays, rs, ZoneInfo('Asia/Vientiane'), '', 'lo', 'LAK'), ensure_ascii=False)
     assert 'ລວມ' in lo and '23/09/2026' in lo
     printing.render(th, '80', printing.FONT_SCALE['large'])   # renders without error at every scale
+
+
+def test_one_printer_can_do_receipts_and_kitchen_and_be_reassigned(shop, local_print):
+    _only_this_shop(shop)
+    a = add_printer(shop, local_print.port, role='none')
+    b = add_printer(shop, local_print.port, role='none')
+    for job in ('receipt', 'kitchen'):
+        ok(call(shop, 'owner', 'PUT', '/api/printers/assign', {'branch_id': shop['branch'], 'job': job, 'printer_id': a}))
+    roles = {p['id']: p['role'] for p in ok(call(shop, 'owner', 'GET', f"/api/printers?branch_id={shop['branch']}"))['printers']}
+    assert roles == {a: 'both', b: 'none'}
+    # Kitchen moves to B; A keeps receipts only.
+    ok(call(shop, 'owner', 'PUT', '/api/printers/assign', {'branch_id': shop['branch'], 'job': 'kitchen', 'printer_id': b}))
+    roles = {p['id']: p['role'] for p in ok(call(shop, 'owner', 'GET', f"/api/printers?branch_id={shop['branch']}"))['printers']}
+    assert roles == {a: 'receipt', b: 'kitchen'}
+    # Receipts back to the browser dialog.
+    ok(call(shop, 'owner', 'PUT', '/api/printers/assign', {'branch_id': shop['branch'], 'job': 'receipt', 'printer_id': None}))
+    oid = order(shop)
+    assert ok(call(shop, 'staff', 'POST', f'/api/orders/{oid}/print-receipt'))['queued'] is False
+    assert ok(call(shop, 'staff', 'PUT', f'/api/orders/{oid}/send-to-kitchen', {'item_ids': [r['id'] for r in _items(oid)]}))['printed_by_server'] is True
+    printing.process_once(core)
+    assert _wait(lambda: len(local_print.received) == 1)
+
+
+def test_cannot_add_this_computer_as_a_printer(shop, local_print, monkeypatch):
+    monkeypatch.setenv('ZAABOS_PUBLIC_URL', 'http://192.168.1.21:8080')
+    code, body = call(shop, 'owner', 'POST', '/api/printers', {'branch_id': shop['branch'], 'name': 'x', 'host': '192.168.1.21', 'port': 9100})
+    assert code == 400 and 'IP ของเครื่องคอมพิวเตอร์นี้' in body['error']
+
+
+def test_network_scan_finds_a_listening_printer(local_print, monkeypatch):
+    """Scan the /24 of a fake 'own IP' where only one address answers on the printer port."""
+    real = socket.create_connection
+    def fake(addr, timeout=None):
+        host, port = addr
+        if host == '10.9.8.50':
+            return real(('127.0.0.1', local_print.port), timeout=timeout)
+        raise OSError('closed')
+    monkeypatch.setattr(printing.socket, 'create_connection', fake)
+    assert printing.scan_network('10.9.8.7', port=9100) == ['10.9.8.50']
+    assert printing.scan_network('127.0.0.1') == []

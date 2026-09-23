@@ -294,9 +294,49 @@ def send_system(queue, data, wait=None):
         pending = subprocess.run(['lpstat', '-o', queue], capture_output=True, text=True, timeout=5).stdout
         if job not in pending:
             return
-        time.sleep(0.5)
+        time.sleep(0.15)
     subprocess.run(['cancel', job], capture_output=True, timeout=5)
     raise OSError('เครื่องพิมพ์ USB ไม่ตอบ (ตรวจสาย/เปิดเครื่อง/กระดาษ)')
+
+
+def system_printers():
+    """[{queue, label}] for this computer's print queues, with the human name macOS shows."""
+    import subprocess
+    queues = system_queues()
+    labels = {}
+    try:
+        out = subprocess.run(['lpstat', '-l', '-p'], capture_output=True, text=True, timeout=5).stdout
+        cur = None
+        for line in out.splitlines():
+            if line.startswith('printer '):
+                cur = line.split()[1]
+            elif cur and line.strip().startswith('Description:'):
+                labels[cur] = line.split(':', 1)[1].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return [{'queue': q, 'label': labels.get(q) or q.replace('_', ' ').strip()} for q in queues]
+
+
+def scan_network(own_ip, port=9100, timeout=0.35):
+    """Find receipt printers on the shop Wi-Fi: devices in this /24 that accept raw printing on
+    port 9100. Takes ~2 s; skips this computer itself."""
+    from concurrent.futures import ThreadPoolExecutor
+    parts = str(own_ip).split('.')
+    if len(parts) != 4 or own_ip.startswith('127.'):
+        return []
+    base = '.'.join(parts[:3])
+
+    def probe(i):
+        host = f'{base}.{i}'
+        if host == own_ip:
+            return None
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return host
+        except OSError:
+            return None
+    with ThreadPoolExecutor(64) as ex:
+        return [h for h in ex.map(probe, range(1, 255)) if h]
 
 
 def deliver(printer, data, sender=None):
@@ -463,7 +503,7 @@ def resolve_printer(conn, job):
     if job['printer_id']:
         return conn.execute('SELECT * FROM printers WHERE id=? AND active=1', (job['printer_id'],)).fetchone()
     role = 'receipt' if job['job_type'] == 'receipt' else 'kitchen'
-    rows = conn.execute('SELECT * FROM printers WHERE tenant_id=? AND branch_id=? AND role=? AND active=1 ORDER BY id',
+    rows = conn.execute("SELECT * FROM printers WHERE tenant_id=? AND branch_id=? AND role IN (?,'both') AND active=1 ORDER BY id",
                         (job['tenant_id'], job['branch_id'], role)).fetchall()
     if role == 'kitchen':
         for r in rows:
@@ -535,7 +575,15 @@ def process_once(core, sender=send):
     return handled
 
 
-def start_worker(core, interval=1.0):
+_wake = threading.Event()
+
+
+def notify():
+    """A job was just queued: print now instead of waiting for the next poll."""
+    _wake.set()
+
+
+def start_worker(core, interval=2.0):
     stop = threading.Event()
 
     def loop():
@@ -544,7 +592,8 @@ def start_worker(core, interval=1.0):
                 process_once(core)
             except Exception as exc:   # the POS must keep selling even if printing breaks
                 print(f'[ZaabOS] print worker error: {exc}', file=sys.stderr, flush=True)
-            stop.wait(interval)
+            _wake.wait(interval)
+            _wake.clear()
 
     threading.Thread(target=loop, name='zaabos-print', daemon=True).start()
     return stop
