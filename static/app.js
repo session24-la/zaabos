@@ -1802,17 +1802,14 @@ async function loadOperations(){
   if(!currentBranchId)return;
   try{
     const data=await api('/api/operations/shift?branch_id='+currentBranchId), sh=data.shift, sum=data.summary||{};
-    const status=$('#shiftStatus'), actions=$('#shiftActionArea');
+    const status=$('#shiftStatus'), actions=$('#shiftActionArea'), blind=me && me.role==='staff';
     if(sh){
       const opened=formatDateTime(sh.opened_at), pb=sum.payment_breakdown||{};
       status.innerHTML=`
         <div class="shift-state-card is-open"><span class="shift-dot"></span><div><small>สถานะ</small><b>กะเปิดอยู่</b><span class="shift-sub">${escapeHtml(opened)}</span></div></div>
-        <div class="shift-state-card shift-kpi"><small>ยอดรับชำระในกะ</small><b>${fmtMoney(sum.gross_received||0)}</b><span class="shift-sub">${Number(sum.bill_count||0)} บิล</span></div>
-        <div class="shift-state-card shift-kpi"><small>เงินสด</small><b>${fmtMoney(pb.cash||0)}</b><span class="shift-sub">รับเงินจริงในกะนี้</span></div>
-        <div class="shift-state-card shift-kpi"><small>QR / โอน</small><b>${fmtMoney((pb.qr||0)+(pb.transfer||0)+(pb.bank_transfer||0))}</b><span class="shift-sub">ไม่รวมในลิ้นชักเงินสด</span></div>
-        <div class="shift-state-card shift-kpi"><small>คืนเงิน</small><b>${fmtMoney(sum.refund_total||0)}</b><span class="shift-sub">${Number(sum.refund_count||0)} รายการ</span></div>
-        <div class="shift-state-card shift-kpi accent"><small>ยอดสุทธิในกะ</small><b>${fmtMoney(sum.net_received||0)}</b><span class="shift-sub">รับชำระ − คืนเงิน</span></div>
-        <div class="shift-state-card shift-kpi cash-expected"><small>เงินสดที่ควรมีในลิ้นชัก</small><b>${fmtMoney(sum.expected_cash||0)}</b><span class="shift-sub">เริ่ม ${fmtMoney(sh.opening_cash)} · เข้า ${fmtMoney(sum.cash_in||0)} · ออก ${fmtMoney(sum.cash_out||0)}</span></div>
+        <div class="shift-state-card shift-kpi"><small>${blind?'จำนวนบิลในกะ':'ยอดรับชำระในกะ'}</small><b>${blind?Number(sum.bill_count||0):fmtMoney(sum.gross_received||0)}</b><span class="shift-sub">${blind?'ยังไม่แสดงยอดเงินก่อนนับเงินสด':Number(sum.bill_count||0)+' บิล'}</span></div>
+        ${blind?'<div class="shift-state-card shift-kpi"><small>ยอดการเงิน</small><b>ซ่อนจนกว่าจะปิดกะ</b><span class="shift-sub">Blind Cash Count</span></div>':`<div class="shift-state-card shift-kpi"><small>เงินสด</small><b>${fmtMoney(pb.cash||0)}</b><span class="shift-sub">รับเงินจริงในกะนี้</span></div><div class="shift-state-card shift-kpi"><small>QR / โอน</small><b>${fmtMoney((pb.qr||0)+(pb.transfer||0)+(pb.bank_transfer||0))}</b><span class="shift-sub">ไม่รวมในลิ้นชักเงินสด</span></div><div class="shift-state-card shift-kpi"><small>คืนเงิน</small><b>${fmtMoney(sum.refund_total||0)}</b><span class="shift-sub">${Number(sum.refund_count||0)} รายการ</span></div><div class="shift-state-card shift-kpi accent"><small>ยอดสุทธิในกะ</small><b>${fmtMoney(sum.net_received||0)}</b><span class="shift-sub">รับชำระ − คืนเงิน</span></div>`}
+        ${blind?'<div class="shift-state-card shift-kpi cash-expected"><small>เงินสดที่ควรมีในลิ้นชัก</small><b>••••••</b><span class="shift-sub">จะแสดงหลังยืนยันยอดนับจริง</span></div>':`<div class="shift-state-card shift-kpi cash-expected"><small>เงินสดที่ควรมีในลิ้นชัก</small><b>${fmtMoney(sum.expected_cash||0)}</b><span class="shift-sub">เริ่ม ${fmtMoney(sh.opening_cash)} · เข้า ${fmtMoney(sum.cash_in||0)} · ออก ${fmtMoney(sum.cash_out||0)}</span></div>`}
         <div class="shift-state-card"><small>พนักงาน</small><b>${escapeHtml(sh.opened_by_name||'')}</b><span class="shift-sub">กะนี้ไม่ตัดยอดตอน 00:00</span></div>`;
       actions.innerHTML=`<div class="shift-close-box"><div><b>ปิดกะ</b><div class="muted">ให้นับเงินจริงในลิ้นชักเพียงครั้งเดียว ระบบจะเทียบกับยอดที่ควรมีอัตโนมัติ</div></div><div class="shift-close-controls"><input id="shiftCountedCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="เงินสดนับจริง"><input id="shiftCloseNote" maxlength="300" placeholder="หมายเหตุ (ถ้ามี)"><button class="danger-btn" id="closeShiftBtn" type="button">ปิดกะ &amp; ตรวจยอด</button></div></div>`;
       $('#closeShiftBtn').onclick=()=>openCloseShiftConfirmation(sum);
@@ -1832,13 +1829,13 @@ function openCloseShiftConfirmation(sum={}){
   if(!countedEl)return;
   const raw=String(countedEl.value||'').trim();
   if(raw===''){toast('กรุณานับและกรอกเงินสดจริงก่อนปิดกะ','err');countedEl.focus();return;}
-  const counted=Number(raw), expected=Number(sum.expected_cash||0);
+  const counted=Number(raw), blind=me && me.role==='staff', expected=Number(sum.expected_cash||0);
   if(!Number.isFinite(counted)||counted<0){toast('ยอดเงินสดนับจริงไม่ถูกต้อง','err');countedEl.focus();return;}
   const notes=(noteEl?.value||'').trim();
   pendingCloseShift={branch_id:currentBranchId,counted_cash:counted,notes};
-  $('#shiftConfirmExpected').textContent=fmtMoney(expected);
+  $('#shiftConfirmExpected').textContent=blind?'จะแสดงหลังปิดกะ':fmtMoney(expected);
   $('#shiftConfirmCounted').textContent=fmtMoney(counted);
-  $('#shiftConfirmDiff').textContent=fmtMoney(counted-expected);
+  $('#shiftConfirmDiff').textContent=blind?'จะแสดงหลังปิดกะ':fmtMoney(counted-expected);
   const noteBox=$('#shiftConfirmNote'); noteBox.textContent=notes?'หมายเหตุ: '+notes:''; noteBox.classList.toggle('hidden',!notes);
   openModal('#closeShiftConfirmModal');
 }
