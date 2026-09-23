@@ -143,7 +143,7 @@ def test_import_from_cloud_copies_menu_tables_and_settings():
 @pytest.mark.skipif(sys.platform.startswith('win'), reason='POSIX shell swap (macOS)')
 def test_update_swap_replaces_app_and_rolls_back_on_failure(tmp_path):
     import subprocess
-    bundle = tmp_path / 'Apps' / 'ZaabOS Local.app'; (bundle / 'Contents').mkdir(parents=True)
+    bundle = tmp_path / "Apps $cash 'quoted'" / 'ZaabOS Local.app'; (bundle / 'Contents').mkdir(parents=True)
     (bundle / 'Contents' / 'v').write_text('old')
     new = tmp_path / 'new' / 'ZaabOS.app'; (new / 'Contents').mkdir(parents=True); (new / 'Contents' / 'v').write_text('new')
     log = tmp_path / 'relaunched'
@@ -154,3 +154,36 @@ def test_update_swap_replaces_app_and_rolls_back_on_failure(tmp_path):
     log.unlink()
     subprocess.run(['/bin/sh', '-c', local_ops.mac_swap_script(dead_pid, bundle, tmp_path / 'missing.app', relaunch=f'echo >"{log}"')], timeout=20)
     assert (bundle / 'Contents' / 'v').read_text() == 'new' and log.exists()
+
+
+@pytest.mark.skipif(sys.platform.startswith('win'), reason='POSIX shell swap (macOS)')
+@pytest.mark.parametrize('blocked', ['first_move', 'existing_recovery'])
+def test_update_swap_preserves_installed_app_when_backup_cannot_be_created(tmp_path, monkeypatch, blocked):
+    import os
+    import subprocess
+    bundle = tmp_path / 'ZaabOS.app'
+    bundle.mkdir()
+    (bundle / 'version').write_text('installed')
+    new = tmp_path / 'new.app'
+    new.mkdir()
+    (new / 'version').write_text('downloaded')
+    recovery = Path(str(bundle) + '.old')
+    if blocked == 'first_move':
+        # Simulate an OS move failure, without touching a real installed application.
+        commands = tmp_path / 'commands'
+        commands.mkdir()
+        mover = commands / 'mv'
+        mover.write_text('#!/bin/sh\nexit 1\n')
+        mover.chmod(0o755)
+        monkeypatch.setenv('PATH', str(commands) + os.pathsep + os.environ['PATH'])
+    else:
+        recovery.mkdir()
+        (recovery / 'version').write_text('previous recovery')
+    relaunched = tmp_path / 'relaunched'
+    subprocess.run(['/bin/sh', '-c', local_ops.mac_swap_script(
+        999999, bundle, new, relaunch=f'echo >"{relaunched}"')], check=True, timeout=20)
+    assert (bundle / 'version').read_text() == 'installed'
+    assert (new / 'version').read_text() == 'downloaded'
+    assert relaunched.exists()
+    if blocked == 'existing_recovery':
+        assert (recovery / 'version').read_text() == 'previous recovery'

@@ -1,7 +1,7 @@
 name: POS runtime regression
 on:
   push:
-    branches: [fix/pos-runtime-consistency]
+    branches: [main, fix/pos-runtime-consistency]
   pull_request:
     branches: [main]
 permissions:
@@ -43,3 +43,5 @@ jobs:
         env:
           DATABASE_URL: postgresql://zaabos_ci:disposable-ci-only@127.0.0.1:5432/zaabos_ci
         run: python -m pytest tests/test_runtime_regressions.py tests/test_money_reconciliation.py tests/test_printing.py -q
+      - name: Busy service, server crash and unplugged printer
+        run: python -m pytest tests/soak_shop_day.py -q -W error::pytest.PytestUnhandledThreadExceptionWarning
