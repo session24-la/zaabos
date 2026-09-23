@@ -34,8 +34,24 @@ jobs:
           curl -sf http://127.0.0.1:18765/ | grep -q '<title>ZaabOS'
           test -f "$RUNNER_TEMP/zaabos-data/zaabos.db"
           ls "$RUNNER_TEMP/zaabos-data/backups" | grep -q zaabos_local_
+      # Zip it ourselves: upload-artifact drops the .app folder and its internal symlinks, which
+      # leaves a Mac bundle that fails with "Failed to load Python shared library".
+      - name: Package
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent dist/ZaabOS.app ZaabOS-Local-macOS.zip
+          else
+            powershell -NoProfile -Command "Compress-Archive -Path dist/ZaabOS -DestinationPath ZaabOS-Local-Windows.zip"
+          fi
+      - name: Packaged zip still runs (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir unzip-check && ditto -x -k ZaabOS-Local-macOS.zip unzip-check
+          unzip-check/ZaabOS.app/Contents/MacOS/ZaabOS --no-browser --port 18766 --data-dir "$RUNNER_TEMP/zip-data" > zip.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:18766/healthz && break; sleep 1; done
+          curl -sf http://127.0.0.1:18766/healthz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ZaabOS-Local-${{ runner.os }}
-          path: ${{ runner.os == 'macOS' && 'dist/ZaabOS.app' || 'dist/ZaabOS' }}
+          path: ZaabOS-Local-*.zip
           retention-days: 30
