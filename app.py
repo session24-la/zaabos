@@ -1571,7 +1571,7 @@ def add_menu_item():
     name = (d.get('name') or '').strip(); branch_id = d.get('branch_id')
     if not name or not branch_id: return jsonify(error='กรุณาใส่ชื่อเมนูและเลือกสาขา'), 400
     try:
-        base_price = float(d.get('base_price') or 0)
+        base_price = money_float(money_decimal(d.get('base_price') or 0))
     except (TypeError, ValueError):
         return jsonify(error='ราคาไม่ถูกต้อง'), 400
     if not _valid_image_data_uri(d.get('image_url')):
@@ -1646,7 +1646,7 @@ def edit_menu_item(mid):
     if not old: return jsonify(error='ไม่พบเมนู'), 404
     d = request.get_json() or {}
     try:
-        base_price = float(d.get('base_price', old['base_price']))
+        base_price = money_float(money_decimal(d.get('base_price', old['base_price'])))
     except (TypeError, ValueError):
         return jsonify(error='ราคาไม่ถูกต้อง'), 400
     if 'image_url' in d and not _valid_image_data_uri(d.get('image_url')):
@@ -1964,7 +1964,7 @@ def _fulfillment_fields(d, order_type, public=False):
     if scheduled and ('T' not in scheduled or len(scheduled) < 16):
         raise ValueError('วันเวลารับ/จัดส่งล่วงหน้าไม่ถูกต้อง')
     try:
-        fee=float(d.get('delivery_fee') or 0) if (order_type=='delivery' and not public) else 0.0
+        fee=money_float(money_decimal(d.get('delivery_fee') or 0)) if (order_type=='delivery' and not public) else 0.0
     except (TypeError,ValueError):
         raise ValueError('ค่าจัดส่งไม่ถูกต้อง')
     if fee < 0 or fee > 100000000: raise ValueError('ค่าจัดส่งไม่ถูกต้อง')
@@ -2390,7 +2390,7 @@ def create_promotion():
     d=request.get_json() or {}; code=(d.get('code') or '').strip().upper()[:40]; name=(d.get('name') or '').strip()[:120]; typ=(d.get('discount_type') or 'percent').strip()
     if not code or not name or typ not in ('percent','fixed'): return jsonify(error='ข้อมูลโปรโมชั่นไม่ถูกต้อง'),400
     try:
-        value=float(d.get('discount_value') or 0); minimum=float(d.get('min_spend') or 0); maxd=d.get('max_discount'); maxd=float(maxd) if maxd not in (None,'') else None
+        value=money_float(money_decimal(d.get('discount_value') or 0)); minimum=money_float(money_decimal(d.get('min_spend') or 0)); maxd=d.get('max_discount'); maxd=money_float(money_decimal(maxd)) if maxd not in (None,'') else None
     except (TypeError,ValueError): return jsonify(error='จำนวนเงิน/ส่วนลดไม่ถูกต้อง'),400
     if value<=0 or minimum<0 or (typ=='percent' and value>100) or (maxd is not None and maxd<0): return jsonify(error='ค่าของโปรโมชั่นไม่ถูกต้อง'),400
     bid=d.get('branch_id'); bid=int(bid) if bid not in (None,'') else None; conn=db()
