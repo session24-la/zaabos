@@ -18,7 +18,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = '2.2.1'
+APP_VERSION = '2.2.2'
 RELEASES_API = os.getenv('ZAABOS_UPDATE_FEED') or 'https://api.github.com/repos/session24-la/zaabos/releases?per_page=20'
 RELEASE_TAG_PREFIX = 'local-v'
 LAUNCH_AGENT_LABEL = 'com.zaabos.local'
@@ -101,6 +101,32 @@ def autostart_enabled():
     return False
 
 
+LAUNCHD_FLAG = '--from-launchd'
+
+
+def launch_agent_plist(args):
+    return {'Label': LAUNCH_AGENT_LABEL, 'ProgramArguments': list(args), 'RunAtLoad': True,
+            'KeepAlive': {'SuccessfulExit': False}, 'LimitLoadToSessionType': 'Aqua', 'ProcessType': 'Interactive'}
+
+
+def launchd_handoff():
+    """macOS: crash-restart only works for a process that launchd itself started. When the owner
+    opens the app by hand (or an update/restore relaunches it), refresh the LaunchAgent and let
+    launchd start the real instance, then this copy exits. Returns True if handed off."""
+    if sys.platform != 'darwin' or not getattr(sys, 'frozen', False) or not autostart_enabled():
+        return False
+    set_autostart(True)                      # current app path + launchd flag, even after a move/update
+    domain = f'gui/{os.getuid()}'
+    subprocess.run(['launchctl', 'bootout', f'{domain}/{LAUNCH_AGENT_LABEL}'], capture_output=True)
+    r = subprocess.run(['launchctl', 'bootstrap', domain, str(_launch_agent_path())], capture_output=True, text=True)
+    if r.returncode != 0:
+        r = subprocess.run(['launchctl', 'kickstart', f'{domain}/{LAUNCH_AGENT_LABEL}'], capture_output=True, text=True)
+    if r.returncode != 0:
+        _log(f'launchd handoff failed, running directly: {(r.stderr or "").strip()}')
+        return False
+    return True
+
+
 def set_autostart(enabled):
     """Start ZaabOS when the owner logs in; on macOS also restart it if it crashes
     (KeepAlive only on a non-zero exit, so 'Quit ZaabOS' really quits)."""
@@ -108,16 +134,15 @@ def set_autostart(enabled):
     if sys.platform == 'darwin':
         path = _launch_agent_path()
         if not enabled:
-            subprocess.run(['launchctl', 'unload', str(path)], capture_output=True)
+            # No `launchctl unload`: when launchd runs ZaabOS that would kill the POS mid-service.
+            # Removing the file stops it from starting at the next login.
             path.unlink(missing_ok=True)
             return False
         import plistlib
         path.parent.mkdir(parents=True, exist_ok=True)
-        args = [exe] if getattr(sys, 'frozen', False) else [sys.executable, exe]
+        args = ([exe] if getattr(sys, 'frozen', False) else [sys.executable, exe]) + [LAUNCHD_FLAG]
         with open(path, 'wb') as f:
-            plistlib.dump({'Label': LAUNCH_AGENT_LABEL, 'ProgramArguments': args, 'RunAtLoad': True,
-                           'KeepAlive': {'SuccessfulExit': False}, 'LimitLoadToSessionType': 'Aqua',
-                           'ProcessType': 'Interactive'}, f)
+            plistlib.dump(launch_agent_plist(args), f)
         return True
     if sys.platform.startswith('win'):
         import winreg
@@ -324,11 +349,32 @@ def mac_swap_script(pid, bundle, new_app, relaunch='open'):
             f'sleep 1; {relaunch} {installed}')
 
 
-def install_update(info, core=None):
+def update_outcome(data_dir):
+    """After a restart: '' when no update was pending, else a message saying whether it worked."""
+    cfg = load_config(data_dir)
+    pending = cfg.pop('pending_update', None)
+    if not pending:
+        return ''
+    save_config(data_dir, cfg)
+    if pending == APP_VERSION:
+        return f'อัปเดตเป็นเวอร์ชัน {APP_VERSION} เรียบร้อย'
+    return f'อัปเดตเป็นเวอร์ชัน {pending} ไม่สำเร็จ — ยังใช้ {APP_VERSION} อยู่ ลองอัปเดตใหม่อีกครั้ง'
+
+
+def install_update(info, core=None, data_dir=None):
     """Download, unpack and verify the new app, back up the data, then swap the app in after
     this process exits and start it again. Shop data lives outside the app and is untouched."""
     if not getattr(sys, 'frozen', False):
         raise RuntimeError('อัปเดตอัตโนมัติใช้ได้กับแอปที่ติดตั้งแล้วเท่านั้น')
+    bundle = app_bundle()
+    if sys.platform == 'darwin' and bundle is not None:
+        # We are running from the installed app, so a leftover recovery copy is stale. Left in
+        # place, the swap script would skip the update silently.
+        shutil.rmtree(str(bundle) + '.old', ignore_errors=True)
+    if data_dir is not None:
+        cfg = load_config(data_dir)
+        cfg['pending_update'] = info['version']
+        save_config(data_dir, cfg)
     work = Path(tempfile.mkdtemp(prefix='zaabos-update-'))
     zip_path = work / asset_name()
     req = urllib.request.Request(info['url'], headers={'User-Agent': 'ZaabOS'})

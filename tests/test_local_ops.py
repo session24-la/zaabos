@@ -187,3 +187,33 @@ def test_update_swap_preserves_installed_app_when_backup_cannot_be_created(tmp_p
     assert relaunched.exists()
     if blocked == 'existing_recovery':
         assert (recovery / 'version').read_text() == 'previous recovery'
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS LaunchAgent')
+def test_opened_by_hand_hands_over_to_launchd_so_crashes_restart(tmp_path, monkeypatch):
+    import plistlib, subprocess
+    calls = []
+    monkeypatch.setattr(local_ops.Path, 'home', classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(local_ops.sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(local_ops, 'app_executable', lambda: Path('/Applications/ZaabOS Local.app/Contents/MacOS/ZaabOS'))
+    monkeypatch.setattr(local_ops.subprocess, 'run', lambda cmd, **k: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, '', ''))
+    assert local_ops.launchd_handoff() is False, 'no hand-off when auto-start is off'
+    local_ops.set_autostart(True)
+    assert local_ops.launchd_handoff() is True
+    plist = plistlib.loads((tmp_path / 'Library/LaunchAgents/com.zaabos.local.plist').read_bytes())
+    assert plist['ProgramArguments'][-1] == local_ops.LAUNCHD_FLAG, 'launchd copy must not hand off again (loop)'
+    assert [c[1] for c in calls[-2:]] == ['bootout', 'bootstrap']
+    # turning auto-start off must never stop the running POS
+    calls.clear()
+    local_ops.set_autostart(False)
+    assert not any('unload' in c or 'bootout' in c for c in calls)
+
+
+def test_update_outcome_reports_success_or_silent_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_ops, 'APP_VERSION', '2.2.2')
+    assert local_ops.update_outcome(tmp_path) == ''
+    local_ops.save_config(tmp_path, {'pending_update': '2.2.2'})
+    assert 'เรียบร้อย' in local_ops.update_outcome(tmp_path)
+    local_ops.save_config(tmp_path, {'pending_update': '2.3.0'})
+    assert 'ไม่สำเร็จ' in local_ops.update_outcome(tmp_path)
+    assert local_ops.update_outcome(tmp_path) == '', 'reported once'
