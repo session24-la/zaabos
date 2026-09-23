@@ -259,3 +259,38 @@ td{border-bottom:1px solid var(--border);padding:9px 10px}
 .report-card .rc-value{font-size:24px!important;font-weight:800!important;letter-spacing:-.02em;margin-top:4px}
 details>summary{cursor:pointer;font-weight:650}
 @media (min-width:900px){#tab-reports>.panel,#tab-operations>.panel,#tab-history>.panel,#tab-inventory>.panel,#tab-users>.panel,#tab-branches>.panel,#tab-pricing>.panel,#tab-tables>.panel{max-width:1180px}}
+/* ---------- tables & QR ---------- */
+#tableGrid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(210px,1fr))!important;gap:12px!important}
+.table-chip{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:12px!important;padding:14px!important;
+  display:flex!important;flex-direction:column;gap:12px;align-items:stretch!important;text-align:left!important;box-shadow:none!important}
+.table-chip .tc-name{font-size:16px;font-weight:750;display:flex;align-items:center;gap:8px}
+.table-chip .tc-name .ic{color:var(--text-faint)}
+.table-chip .tc-actions{display:grid;grid-template-columns:1fr 40px 40px;gap:6px}
+.table-chip .tc-actions button{min-height:38px;border:1px solid var(--border);background:var(--surface);border-radius:9px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-weight:650;color:var(--text)}
+.table-chip .tc-actions .tc-qr{background:var(--surface-2)}
+.table-chip .tc-actions .tc-del{color:var(--neg)}
+/* ---------- history: filters in one row ---------- */
+.history-head{display:flex!important;align-items:flex-end!important;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.history-head .head-actions{display:flex!important;flex-direction:row!important;gap:8px;align-items:center;flex-wrap:wrap;width:auto!important}
+.history-head .head-actions select{min-width:150px;width:auto!important}
+.history-head .head-actions button{min-height:44px;white-space:nowrap}
+@media (min-width:900px){
+  .nav-more-menu{display:flex!important;flex-direction:column!important;grid-template-columns:none!important;width:250px!important}
+  .nav-more-menu.hidden{display:none!important}
+  .nav-more-menu button{display:flex!important;flex-direction:row!important;align-items:center;width:100%;white-space:nowrap;font-size:14px!important;font-weight:600;color:var(--text)!important;padding:0 12px!important}
+  .nav-more-menu button .tab-ic{font-size:18px;color:var(--text-muted)}
+  .nav-more-menu .mobile-more-only{display:none!important}
+}
+.np-others{margin-top:8px}.np-others summary{color:var(--text-muted);font-size:13px;margin-bottom:8px}
+.np-found.np-other{opacity:.75}
+/* phones: two tables per row, compact tiles; bottom tab bar on the new palette */
+@media (max-width:760px){
+  .table-board{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important}
+  .board-tile{min-height:112px!important;padding:12px!important}
+  .bt-amount{font-size:18px;margin-top:10px}
+  .bt-open{margin-top:10px}
+  .pos-nav{background:var(--surface)!important;border-top:1px solid var(--border)!important;box-shadow:none!important}
+  .pos-nav>button.active{color:var(--primary-text)!important}
+  header{padding:0 12px}
+  .lang-select{max-width:74px}
+}

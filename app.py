@@ -3164,7 +3164,8 @@ def printers_discover():
     from urllib.parse import urlparse
     own=urlparse(os.getenv('ZAABOS_PUBLIC_URL') or '').hostname or ''
     net=printing.scan_network(own) if request.args.get('network')=='1' else []
-    return jsonify(local=True,usb=printing.system_printers(),network=[{'host':h} for h in net],own_ip=own)
+    usb=[dict(q, receipt_like=bool(printing.RECEIPT_HINT.search(q['queue']) or printing.RECEIPT_HINT.search(q['label']))) for q in printing.system_printers()]
+    return jsonify(local=True,usb=usb,network=[{'host':h} for h in net],own_ip=own)
 
 @app.get('/api/printers/system')
 @login_required
