@@ -1632,7 +1632,7 @@ def _save_option_groups(conn, item_id, groups):
             oname = (opt.get('name') or '').strip()
             if not oname: continue
             try:
-                delta = float(opt.get('price_delta') or 0)
+                delta = money_float(money_decimal(opt.get('price_delta') or 0))
             except (TypeError, ValueError):
                 delta = 0
             conn.execute('INSERT INTO menu_options(group_id,name,price_delta,sort_order) VALUES(?,?,?,?)',
@@ -2569,7 +2569,7 @@ def reopen_paid_order(oid):
     conn.execute("""UPDATE orders SET payment_status='unpaid',payment_method=NULL,cash_received=NULL,paid_at=NULL,
                  tax_amount=0,service_charge_amount=0,discount_amount=0,discount_label='',promotion_id=NULL,status='served',updated_at=?
                  WHERE id=? AND tenant_id=?""",(ts,oid,g.tenant_id))
-    _record_critical(conn,'reopen_paid_order',order['branch_id'],'order',oid,reason,approved_by,f'payments={len(payments)} amount={sum(float(p["amount"]) for p in payments)}')
+    _record_critical(conn,'reopen_paid_order',order['branch_id'],'order',oid,reason,approved_by,f'payments={len(payments)} amount={money_float(money_sum(p["amount"] for p in payments))}')
     log_action('reopen_paid_order',detail=f'{oid}: payments={len(payments)} reason={reason}')
     conn.commit(); return jsonify(ok=True,order_id=oid,table_id=order['table_id'])
 
@@ -2919,7 +2919,7 @@ def ingredients_list():
 @role_required('owner','manager')
 def ingredient_create():
     d=request.get_json() or {}; name=(d.get('name') or '').strip()[:120]
-    try: bid=int(d.get('branch_id')); qty=float(d.get('stock_qty') or 0); low=float(d.get('low_stock_threshold') or 0); cost=float(d.get('cost_per_unit') or 0)
+    try: bid=int(d.get('branch_id')); qty=float(d.get('stock_qty') or 0); low=float(d.get('low_stock_threshold') or 0); cost=money_float(money_decimal(d.get('cost_per_unit') or 0))
     except:return jsonify(error='ข้อมูลวัตถุดิบไม่ถูกต้อง'),400
     if not name or qty<0 or low<0 or cost<0:return jsonify(error='ข้อมูลวัตถุดิบไม่ถูกต้อง'),400
     conn=db()
