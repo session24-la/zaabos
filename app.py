@@ -3238,6 +3238,20 @@ def print_job_retry(jid):
     log_action('print_job_retry',detail=str(jid)); conn.commit(); _wake_printer()
     return jsonify(ok=True)
 
+@app.post('/api/print/jobs/<int:jid>/cancel')
+@login_required
+@role_required('owner','manager','staff')
+def print_job_cancel(jid):
+    """Remove a pending/failed job from the active queue without deleting its audit history."""
+    conn=db()
+    row=conn.execute('SELECT id,status FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
+    if not row: return jsonify(error='ไม่พบงานพิมพ์'),404
+    if row['status']=='printed': return jsonify(error='งานนี้พิมพ์สำเร็จแล้ว ไม่สามารถยกเลิกย้อนหลังได้'),409
+    conn.execute("UPDATE kitchen_print_jobs SET status='cancelled',last_error='' WHERE id=?",(jid,))
+    log_action('print_job_cancel',detail=str(jid)); conn.commit()
+    return jsonify(ok=True)
+
+
 # =====================================================================
 # Users management (same pattern as CASHFLOW 24)
 # =====================================================================
@@ -3563,6 +3577,8 @@ def close_shift():
     try: counted=money_decimal(d.get('counted_cash',0) or 0)
     except: return jsonify(error='ยอดเงินนับจริงไม่ถูกต้อง'),400
     if counted<0: return jsonify(error='ยอดเงินนับจริงต้องไม่ติดลบ'),400
+    # Blind count must be an explicit cashier entry; an omitted value must never silently become zero.
+    if d.get('counted_cash') in (None, ''): return jsonify(error='กรุณานับและกรอกเงินสดจริงก่อนปิดกะ'),400
     summary=_shift_live_summary(conn,sh,g.user['id'])
     cash_sales=summary['cash_sales']; cash_refunds=summary['cash_refunds']; cash_reversals=summary['cash_reversals']; expected=summary['expected_cash']
     counted=money_float(counted); diff=money_float(money_decimal(counted)-money_decimal(expected)); ts=now()
