@@ -555,11 +555,11 @@ function renderTables() {
   if (!tables.length) { grid.innerHTML = emptyState('', t('empty_tables')); return; }
   grid.innerHTML = tables.map(t => `
     <div class="table-chip">
-      <div class="tc-name">${escapeHtml(t.name)}</div>
+      <div class="tc-name"><i class="ic ic-table-2" aria-hidden="true"></i>${escapeHtml(t.name)}</div>
       <div class="tc-actions">
-        <button data-qr="${t.id}">QR</button>
-        <button data-edit-table="${t.id}"><i class="ic ic-pencil" aria-hidden="true"></i></button>
-        <button data-del-table="${t.id}"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
+        <button class="tc-qr" data-qr="${t.id}"><i class="ic ic-qr-code" aria-hidden="true"></i> QR</button>
+        <button data-edit-table="${t.id}" title="แก้ไข" aria-label="แก้ไข"><i class="ic ic-pencil" aria-hidden="true"></i></button>
+        <button class="tc-del" data-del-table="${t.id}" title="ลบ" aria-label="ลบ"><i class="ic ic-trash-2" aria-hidden="true"></i></button>
       </div>
     </div>`).join('');
 }
@@ -1942,10 +1942,15 @@ function npRenderAssign(){
 }
 function npRenderFound(){
   const have=new Set(npPrinters.map(p=>p.connection==='system'?'usb:'+p.host:'net:'+p.host));
-  const rows=[...npUsb.map(u=>({key:'usb:'+u.queue,icon:iconHtml('plug'),title:u.label,sub:'USB ต่อกับเครื่องนี้',add:{connection:'system',host:u.queue,name:u.label}})),
-              ...npNet.map(n=>({key:'net:'+n.host,icon:iconHtml('wifi'),title:'เครื่องพิมพ์ Wi‑Fi',sub:n.host,add:{connection:'network',host:n.host,port:9100,name:'Wi‑Fi '+n.host}}))]
-    .filter(r=>!have.has(r.key));
-  $('#npFound').innerHTML=rows.map((r,i)=>`<div class="np-found"><div><b>${r.icon} ${escapeHtml(r.title)}</b><small>${escapeHtml(r.sub)}</small></div><button class="save settings-save-compact" data-np-found="${i}" type="button">ใช้เครื่องนี้</button></div>`).join('');
+  const row=(u,other)=>({key:'usb:'+u.queue,icon:iconHtml('plug'),title:u.label,sub:other?'เครื่องพิมพ์ทั่วไป — ไม่ใช่เครื่องพิมพ์ใบเสร็จ':'USB ต่อกับเครื่องนี้',other,add:{connection:'system',host:u.queue,name:u.label}});
+  // Receipt printers first; office/photo/label printers only on request (easy to pick by mistake).
+  const rows=[...npUsb.filter(u=>u.receipt_like!==false).map(u=>row(u,false)),
+              ...npNet.map(n=>({key:'net:'+n.host,icon:iconHtml('wifi'),title:'เครื่องพิมพ์ Wi‑Fi',sub:n.host,add:{connection:'network',host:n.host,port:9100,name:'Wi‑Fi '+n.host}})),
+              ...npUsb.filter(u=>u.receipt_like===false).map(u=>row(u,true))].filter(r=>!have.has(r.key));
+  const main=rows.filter(r=>!r.other),others=rows.filter(r=>r.other);
+  const html=r=>`<div class="np-found${r.other?' np-other':''}"><div><b>${r.icon} ${escapeHtml(r.title)}</b><small>${escapeHtml(r.sub)}</small></div><button class="${r.other?'ghost-btn':'save settings-save-compact'}" data-np-found="${rows.indexOf(r)}" type="button">ใช้เครื่องนี้</button></div>`;
+  $('#npFound').innerHTML=(main.length?main.map(html).join(''):`<div class="muted printer-help">ยังไม่พบเครื่องพิมพ์ใบเสร็จ — เสียบสาย USB แล้วเปิดหน้านี้ใหม่ หรือกดค้นหา Wi‑Fi</div>`)+
+    (others.length?`<details class="np-others"><summary>แสดงเครื่องพิมพ์อื่น (${others.length})</summary>${others.map(html).join('')}</details>`:'');
   $('#npFound')._rows=rows;
 }
 async function loadNetPrinters(){
