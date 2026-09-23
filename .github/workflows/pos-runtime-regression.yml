@@ -1,5 +1,6 @@
 name: POS runtime regression
 on:
+  workflow_dispatch:
   push:
     branches: [main, fix/pos-runtime-consistency]
   pull_request:
