@@ -2448,6 +2448,13 @@ document.addEventListener('click', e => { if (!e.target.closest('.notif-wrap')) 
 $('#navUserBtn').addEventListener('click', e => { e.stopPropagation(); const m = $('#whoMenu'); m.classList.toggle('from-nav', true); m.classList.toggle('hidden'); });
 $('#whoBtn').addEventListener('click', () => $('#whoMenu').classList.remove('from-nav'));
 
+// ---- Esc closes the sheet on top (the order workspace included) ----
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  const open = $$('.modal.show'); if (!open.length) return;
+  open[open.length - 1].classList.remove('show');
+});
+
 // ---- Clock ----
 function tickClock() {
   const d = new Date(), loc = localeFor(currentLang) + '-u-ca-gregory';

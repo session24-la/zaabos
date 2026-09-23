@@ -106,7 +106,9 @@ label>span{color:var(--text-muted);font-weight:600;font-size:12.5px}
 /* ---------- login ---------- */
 .login-wrap,#loginView,.login-screen{background:radial-gradient(1200px 600px at 50% -10%,rgba(232,185,100,.10),transparent 60%),var(--bg)!important}
 .login-card{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:20px!important;box-shadow:var(--shadow-lg)!important}
-.login-card .brand{font-size:26px}
+.login-card .brand{font-size:28px;justify-content:center}
+.login-logo{width:58px;height:58px;margin:4px auto 12px}.login-logo svg{width:100%;height:100%;display:block}
+.login-tag{text-align:center;font-size:10.5px;font-weight:700;letter-spacing:.22em;color:var(--text-faint);margin:2px 0 6px}
 .brand::before{content:none!important;display:none!important}
 .brand{font-weight:800;letter-spacing:-.02em;color:var(--text);gap:0!important}
 .brand b{color:var(--primary)}
