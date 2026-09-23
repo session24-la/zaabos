@@ -480,6 +480,8 @@ def kitchen_lines(order, items, station_name, tz):
              {'rule': True}]
     for it in items:
         lines.append({'text': f"{it['qty']} × {it['name']}", 'size': 'large', 'bold': True})
+        if it.get('name2'):
+            lines.append({'text': '      ' + it['name2'], 'size': 'normal'})
         if it.get('options'):
             lines.append({'text': '   + ' + ', '.join(it['options']), 'size': 'normal'})
         if it.get('notes'):
@@ -541,7 +543,7 @@ def receipt_lines(order, items, payments, rs, tz, cashier='', lang='th', currenc
     lines.append({'left': [('Order  ', False), ('#' + order['order_no'], True)], 'right': []})
     lines.append({'rule': True})
     for it in items:
-        subs = ([' / '.join(it['options'])] if it.get('options') else []) + ([it['notes']] if it.get('notes') else [])
+        subs = ([it['name2']] if it.get('name2') else []) + ([' / '.join(it['options'])] if it.get('options') else []) + ([it['notes']] if it.get('notes') else [])
         lines.append({'qty': it['qty'], 'left': it['name'], 'right': m(it['qty'] * it['unit_price']), 'subs': subs})
     lines.append({'rule': True})
     lines.append({'left': L['subtotal'], 'right': m(subtotal)})
@@ -606,6 +608,7 @@ def _items_for(conn, order_id, item_ids=None):
             continue
         opts = [o['option_name_snapshot'] for o in conn.execute('SELECT option_name_snapshot FROM order_item_options WHERE order_item_id=? ORDER BY id', (r['id'],)).fetchall()]
         out.append({'id': r['id'], 'qty': qty, 'name': r['item_name_snapshot'], 'unit_price': float(r['unit_price'] or 0),
+                    'name2': (r['item_name2_snapshot'] if 'item_name2_snapshot' in r.keys() else '') or '',
                     'options': opts, 'notes': r['notes'] or ''})
     return out
 

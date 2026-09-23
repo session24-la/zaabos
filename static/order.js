@@ -167,7 +167,7 @@ function renderMenuGrid() {
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
       ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
-      <span class="mc-name">${escapeHtml(it.name)}</span>
+      <span class="mc-name">${escapeHtml(qrNames(it).main)}</span>${qrNames(it).sub ? `<span class="mc-sub">${escapeHtml(qrNames(it).sub)}</span>` : ''}
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
     </div>`).join('');
@@ -183,7 +183,7 @@ $('#menuGrid').addEventListener('click', (e) => {
 let pendingItem = null;
 function openItemModal(item) {
   pendingItem = item;
-  $('#itemModalTitle').textContent = item.name;
+  $('#itemModalTitle').textContent = qrNames(item).main;
   $('#itemModalDesc').textContent = item.description || '';
   $('#itemNotes').value = ''; $('#itemQty').textContent = '1'; $('#itemError').textContent = '';
   const body = $('#itemModalBody');
@@ -234,7 +234,7 @@ $('#itemAdd').addEventListener('click', () => {
     }
   }
   const qty = parseInt($('#itemQty').textContent, 10);
-  cart.push({ menu_item_id: pendingItem.id, name: pendingItem.name, unit_price: currentItemUnitPrice(), qty, selected_options: selected, optionLabels: labels, notes: $('#itemNotes').value.trim() });
+  cart.push({ menu_item_id: pendingItem.id, name: qrNames(pendingItem).main, unit_price: currentItemUnitPrice(), qty, selected_options: selected, optionLabels: labels, notes: $('#itemNotes').value.trim() });
   closeModals();
   updateCartFab();
   toast(t('toast_added_to_cart'), 'ok');
@@ -390,3 +390,15 @@ $('#checkoutSubmit').addEventListener('click', async () => {
 $('#successNewOrderBtn').addEventListener('click', () => { closeModals(); });
 
 loadMenu();
+
+// Customer sees the dish in the language they picked on their phone when the shop entered it,
+// with the shop's second language (or the main name) underneath.
+function qrNames(it) {
+  let n = {}; try { n = typeof it.name_i18n === 'object' ? (it.name_i18n || {}) : JSON.parse(it.name_i18n || '{}'); } catch (e) {}
+  const L = (menuData && menuData.menu_langs) || {};
+  const shopMain = (L.primary && n[L.primary]) || it.name;
+  const main = n[currentLang] || shopMain;
+  let sub = L.secondary && n[L.secondary] && n[L.secondary] !== main ? n[L.secondary] : '';
+  if (!sub && main !== shopMain) sub = shopMain;
+  return { main, sub };
+}

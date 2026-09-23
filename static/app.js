@@ -755,7 +755,7 @@ function openMenuItemModal(id) {
     const it = boot.items.find(x => x.id === id);
     $('#menuItemModalTitle').textContent = t('modal_edit_menu_item_title');
     $('#menuItemId').value = it.id;
-    $('#menuItemName').value = it.name;
+    $('#menuItemName').value = it.name; setNameI18n(it.name_i18n);
     $('#menuItemDesc').value = it.description || '';
     $('#menuItemCategory').value = it.category_id || '';
     $('#menuItemPrice').value = it.base_price;
@@ -769,7 +769,7 @@ function openMenuItemModal(id) {
     menuItemImageDraft = it.image_url || null;
   } else {
     $('#menuItemModalTitle').textContent = t('modal_add_menu_item_title');
-    $('#menuItemId').value = ''; $('#menuItemName').value = ''; $('#menuItemDesc').value = '';
+    $('#menuItemId').value = ''; $('#menuItemName').value = ''; $('#menuItemDesc').value = ''; setNameI18n('{}');
     $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false;
     $('#menuItemCostPrice').value = ''; $('#menuItemTrackStock').checked = false;
     $('#menuItemStockQty').value = ''; $('#menuItemLowStockThreshold').value = 5;
@@ -864,7 +864,7 @@ $('#menuItemSave').addEventListener('click', async () => {
     stockQty = parseInt($('#menuItemStockQty').value, 10);
     if (isNaN(stockQty) || stockQty < 0) { $('#menuItemError').textContent = t('err_stock_invalid'); return; }
   }
-  const payload = {
+  const payload = { name_i18n: readNameI18n(),
     name, description: $('#menuItemDesc').value.trim(), category_id: $('#menuItemCategory').value || null,
     base_price: price, sold_out: $('#menuItemSoldOut').checked, option_groups: optGroupsDraft,
     image_url: menuItemImageDraft,
@@ -1018,7 +1018,7 @@ function orderCardHtml(o) {
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
     const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" title="ยกเลิกรายการ" aria-label="ยกเลิกรายการ" data-cancel-item="${o.id}:${it.id}:${activeQty}"><i class="ic ic-x" aria-hidden="true"></i> ยกเลิก</button></span>` : '';
     return `<li class="oc-item-row">
-      <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
+      <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<span class="name2">${escapeHtml(it.item_name2_snapshot)}</span>` : ''}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
       ${sentBadge}
     </li>`;
   }).join('');
@@ -1375,7 +1375,7 @@ async function printReceipt(orderId) {
     const amount = qty * Number(it.unit_price || 0);
     const opts = (it.options || []).length ? `<div class="rp-item-sub">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(' / '))}</div>` : '';
     const note = it.notes ? `<div class="rp-item-sub">${escapeHtml(it.notes)}</div>` : '';
-    return `<tr><td class="rp-qty">${qty}</td><td class="rp-item">${escapeHtml(it.item_name_snapshot)}${opts}${note}</td><td class="rp-price">${fmtMoney(amount)}</td></tr>`;
+    return `<tr><td class="rp-qty">${qty}</td><td class="rp-item">${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<div class="rp-item-sub">${escapeHtml(it.item_name2_snapshot)}</div>` : ''}${opts}${note}</td><td class="rp-price">${fmtMoney(amount)}</td></tr>`;
   }).join('');
   const guest = o.guest_count != null ? o.guest_count : '-';
   $('#receiptPrintArea').className='receipt-print '+receiptClass;
@@ -1419,7 +1419,7 @@ function printKitchenTicket(orderId, itemIds) {
   const itemsHtml = items.map(it => {
     const optLine = it.options.length ? `<div class="kt-print-opts">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
     const noteLine = it.notes ? `<div class="kt-print-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : '';
-    return `<div class="kt-print-item">${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${optLine}${noteLine}</div>`;
+    return `<div class="kt-print-item">${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<div class="kt-print-opts">${escapeHtml(it.item_name2_snapshot)}</div>` : ''}${optLine}${noteLine}</div>`;
   }).join('');
   $('#kitchenTicketPrintArea').innerHTML = `
     <div class="kt-print-head">${escapeHtml(t('kitchen_ticket_header'))}</div>
@@ -1603,7 +1603,7 @@ function renderTakeOrderMenu() {
     <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick-item="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
       ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
-      <span class="mc-name">${escapeHtml(it.name)}</span>
+      <span class="mc-name">${escapeHtml(menuNames(it).main)}</span>${menuNames(it).sub ? `<span class="mc-sub">${escapeHtml(menuNames(it).sub)}</span>` : ''}
       <div class="mc-price">${fmtMoney(it.base_price)}</div>
     </div>`).join('');
   updateTakeOrderFeedback();
@@ -1633,7 +1633,7 @@ $('#takeOrderMenuGrid').addEventListener('click', (e) => {
   if (item.sold_out) return;
   if (!item.option_groups || !item.option_groups.length) {
     const found=cart.find(c=>c.menu_item_id===item.id && !c.optionLabels.length && !c.notes);
-    if(found) found.qty += 1; else cart.push({menu_item_id:item.id,name:item.name,unit_price:item.base_price,qty:1,selected_options:{},optionLabels:[],notes:''});
+    if(found) found.qty += 1; else cart.push({menu_item_id:item.id,name:menuNames(item).main,unit_price:item.base_price,qty:1,selected_options:{},optionLabels:[],notes:''});
     renderCart(); return;
   }
   openItemOptionPicker(item);
@@ -1863,11 +1863,11 @@ let receiptSettingsCache={};
 function rsEl(id){return document.getElementById(id)}
 function rsValue(id,fallback=''){const el=rsEl(id);return el&&typeof el.value==='string'?el.value:fallback}
 function rsChecked(id,fallback=true){const el=rsEl(id);return el?!!el.checked:fallback}
-function readReceiptSettingsForm(){return{branch_id:currentBranchId,shop_name:rsValue('rsShopName').trim(),branch_name:rsValue('rsBranchName').trim(),subtitle:rsValue('rsSubtitle').trim(),address:rsValue('rsAddress').trim(),phone:rsValue('rsPhone').trim(),tax_id:rsValue('rsTaxId').trim(),footer:rsValue('rsFooter').trim(),paper_width:rsValue('rsPaper','80'),font_scale:rsValue('rsFont','normal'),header_align:rsValue('rsAlign','center'),show_branch:rsChecked('rsShowBranch'),show_guest:rsChecked('rsShowGuest'),show_cashier:rsChecked('rsShowCashier'),show_payment_breakdown:rsChecked('rsShowPayments'),show_order_time:rsChecked('rsShowOrderTime'),show_paid_time:rsChecked('rsShowPaidTime'),receipt_printer_route:rsValue('rsReceiptPrinterRoute','front'),kitchen_printer_route:rsValue('rsKitchenPrinterRoute','kitchen'),kitchen_auto_queue:rsChecked('rsKitchenAutoQueue')}}
+function readReceiptSettingsForm(){return{branch_id:currentBranchId,menu_lang_primary:rsValue('rsMenuLang1',''),menu_lang_secondary:rsValue('rsMenuLang2',''),shop_name:rsValue('rsShopName').trim(),branch_name:rsValue('rsBranchName').trim(),subtitle:rsValue('rsSubtitle').trim(),address:rsValue('rsAddress').trim(),phone:rsValue('rsPhone').trim(),tax_id:rsValue('rsTaxId').trim(),footer:rsValue('rsFooter').trim(),paper_width:rsValue('rsPaper','80'),font_scale:rsValue('rsFont','normal'),header_align:rsValue('rsAlign','center'),show_branch:rsChecked('rsShowBranch'),show_guest:rsChecked('rsShowGuest'),show_cashier:rsChecked('rsShowCashier'),show_payment_breakdown:rsChecked('rsShowPayments'),show_order_time:rsChecked('rsShowOrderTime'),show_paid_time:rsChecked('rsShowPaidTime'),receipt_printer_route:rsValue('rsReceiptPrinterRoute','front'),kitchen_printer_route:rsValue('rsKitchenPrinterRoute','kitchen'),kitchen_auto_queue:rsChecked('rsKitchenAutoQueue')}}
 let receiptPreviewMode='receipt';
 function renderReceiptSettingsPreview(){const r=readReceiptSettingsForm(),el=$('#receiptSettingsPreview');if(!el)return;el.className=`receipt-settings-preview paper-${r.paper_width} font-${r.font_scale} head-${r.header_align} preview-${receiptPreviewMode}`;const title=$('#receiptPreviewTitle');if(receiptPreviewMode==='kitchen'){if(title)title.textContent='ตัวอย่างใบสั่งห้องครัว';el.innerHTML=`<div class="rp-brand">KITCHEN ORDER</div>${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}<div class="rp-sep"></div><div class="kp-order"><b>#Z-20260921-0058</b><strong>โต๊ะ 4</strong></div><div class="kp-time">20:45 · รับออเดอร์แล้ว</div><div class="rp-sep"></div><div class="kp-item"><b>2×</b><span>ข้าวผัดตัวอย่าง<small>ไม่ใส่เผ็ด · เพิ่มไข่</small></span></div><div class="kp-item"><b>1×</b><span>น้ำตัวอย่าง</span></div><div class="rp-sep"></div><div class="kp-note"><b>หมายเหตุ</b><br>ตัวอย่างหมายเหตุจากลูกค้า</div><div class="rp-powered">ZaabOS · Kitchen</div>`;return}if(title)title.textContent='ตัวอย่างใบเสร็จหน้าร้าน';el.innerHTML=`<div class="rp-brand">${escapeHtml(r.shop_name||'ชื่อร้าน')}</div>${r.subtitle?`<div class="rp-brand-sub">${escapeHtml(r.subtitle)}</div>`:''}${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}${r.address?`<div class="rp-center rp-shop-detail">${escapeHtml(r.address)}</div>`:''}${r.phone?`<div class="rp-center rp-shop-detail">${escapeHtml(r.phone)}</div>`:''}<div class="rp-sep"></div><div class="rp-meta"><span>โต๊ะ</span><b>โต๊ะ 4</b>${r.show_guest?'<span>ลูกค้า</span><b>3</b>':''}</div><table class="rp-items"><tbody><tr><td>1</td><td>เมนูตัวอย่าง</td><td class="rp-price">₭50,000</td></tr></tbody></table><div class="rp-sep"></div><div class="rp-total"><span>รวม</span><span>₭50,000</span></div>${r.show_payment_breakdown?'<div class="rp-row"><span>Cash</span><span>₭50,000</span></div>':''}<div class="rp-thanks">${escapeHtml(r.footer||'ขอบใจที่ใช้บริการ')}</div><div class="rp-powered">ZaabOS</div>`}
 $('#receiptPreviewSwitch')?.addEventListener('click',e=>{const b=e.target.closest('[data-preview-mode]');if(!b)return;receiptPreviewMode=b.dataset.previewMode;$('#receiptPreviewSwitch').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));renderReceiptSettingsPreview()});
-async function loadReceiptSettings(){if(!currentBranchId)return;try{const r=await api('/api/settings/receipt?branch_id='+currentBranchId);receiptSettingsCache=r;const vals={rsShopName:r.shop_name||'',rsBranchName:r.branch_name||'',rsSubtitle:r.subtitle||'',rsAddress:r.address||'',rsPhone:r.phone||'',rsTaxId:r.tax_id||'',rsFooter:r.footer||'',rsPaper:r.paper_width||'80',rsFont:r.font_scale||'normal',rsAlign:r.header_align||'center',rsReceiptPrinterRoute:r.receipt_printer_route||'front',rsKitchenPrinterRoute:r.kitchen_printer_route||'kitchen'};Object.entries(vals).forEach(([id,v])=>{const el=rsEl(id);if(el)el.value=v});const checks={rsShowBranch:r.show_branch!==false,rsShowGuest:r.show_guest!==false,rsShowCashier:r.show_cashier!==false,rsShowPayments:r.show_payment_breakdown!==false,rsShowOrderTime:r.show_order_time!==false,rsShowPaidTime:r.show_paid_time!==false,rsKitchenAutoQueue:r.kitchen_auto_queue!==false};Object.entries(checks).forEach(([id,v])=>{const el=rsEl(id);if(el)el.checked=v});renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}}
+async function loadReceiptSettings(){if(!currentBranchId)return;try{const r=await api('/api/settings/receipt?branch_id='+currentBranchId);receiptSettingsCache=r;const vals={rsShopName:r.shop_name||'',rsBranchName:r.branch_name||'',rsSubtitle:r.subtitle||'',rsAddress:r.address||'',rsPhone:r.phone||'',rsTaxId:r.tax_id||'',rsFooter:r.footer||'',rsPaper:r.paper_width||'80',rsFont:r.font_scale||'normal',rsAlign:r.header_align||'center',rsReceiptPrinterRoute:r.receipt_printer_route||'front',rsMenuLang1:r.menu_lang_primary||'',rsMenuLang2:r.menu_lang_secondary||'',rsKitchenPrinterRoute:r.kitchen_printer_route||'kitchen'};Object.entries(vals).forEach(([id,v])=>{const el=rsEl(id);if(el)el.value=v});const checks={rsShowBranch:r.show_branch!==false,rsShowGuest:r.show_guest!==false,rsShowCashier:r.show_cashier!==false,rsShowPayments:r.show_payment_breakdown!==false,rsShowOrderTime:r.show_order_time!==false,rsShowPaidTime:r.show_paid_time!==false,rsKitchenAutoQueue:r.kitchen_auto_queue!==false};Object.entries(checks).forEach(([id,v])=>{const el=rsEl(id);if(el)el.checked=v});renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}}
 $('#tab-receiptsettings').addEventListener('input',renderReceiptSettingsPreview);$('#tab-receiptsettings').addEventListener('change',renderReceiptSettingsPreview);$('#saveReceiptSettingsBtn').onclick=async()=>{try{const r=await apiJson('/api/settings/receipt','PUT',readReceiptSettingsForm());receiptSettingsCache=r.settings||{};toast('บันทึกการตั้งค่าร้านและใบเสร็จแล้ว','ok');renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}};
 
 async function loadPricing(){
@@ -2043,3 +2043,12 @@ new MutationObserver(()=>{if($('#confirmPaymentModal').classList.contains('show'
   label();menu.insertBefore(btn,menu.firstChild);
   btn.addEventListener('click',()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';try{localStorage.setItem(KEY,root.dataset.theme)}catch(e){}label();});
 })();
+
+// ---------- Menu names in several languages (primary + secondary line) ----------
+const NAME_I18N_FIELDS={th:'#menuNameTh',lo:'#menuNameLo',zh:'#menuNameZh',en:'#menuNameEn'};
+function parseNameI18n(v){if(!v)return{};if(typeof v==='object')return v;try{return JSON.parse(v)||{}}catch(e){return{}}}
+function setNameI18n(v){const n=parseNameI18n(v);for(const[k,sel]of Object.entries(NAME_I18N_FIELDS)){const el=$(sel);if(el)el.value=n[k]||'';}}
+function readNameI18n(){const o={};for(const[k,sel]of Object.entries(NAME_I18N_FIELDS)){const el=$(sel);if(el&&el.value.trim())o[k]=el.value.trim();}return o;}
+// {main, sub} for a menu row on this branch's POS, following Settings → menu name languages.
+function menuNames(it){const L=(boot.menu_langs||{})[String(currentBranchId)]||(boot.menu_langs||{})[currentBranchId]||{};const n=parseNameI18n(it.name_i18n);
+  const main=(L.primary&&n[L.primary])||it.name;const sub=(L.secondary&&n[L.secondary]&&n[L.secondary]!==main)?n[L.secondary]:'';return{main,sub};}

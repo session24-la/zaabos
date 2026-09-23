@@ -226,3 +226,36 @@ header{background:var(--surface)!important;border-bottom:1px solid var(--border)
 .kitchen-ticket .kt-actions button:first-child{background:var(--pos)!important;border-color:var(--pos)!important;color:#fff!important}
 .kitchen-ticket .kt-sent-badge{color:var(--text-faint)!important;font-size:12px!important;background:transparent!important}
 .kitchen-ticket .kt-item-highlight{box-shadow:inset 3px 0 0 var(--primary)!important;padding-left:10px!important;margin-left:-10px}
+/* second-language dish names */
+.mc-sub,.name2,.kt-name2{display:block;font-size:12.5px;color:var(--text-muted);font-weight:500;line-height:1.3;margin-top:1px}
+.kt-name2{font-size:15px}
+.name-i18n{border:1px solid var(--border);border-radius:12px;padding:12px;margin:10px 0;background:var(--surface-2)}
+.name-i18n-head{font-weight:700;font-size:13px;margin-bottom:8px}
+.name-i18n-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+/* ---------- back office: menu manager ---------- */
+#tab-menu .menu-manager-grid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))!important;gap:12px!important}
+.menu-manager-card{padding:0!important;overflow:hidden;gap:0!important}
+.menu-manager-card .menu-card-media{height:auto!important;min-height:0!important;aspect-ratio:auto!important}
+.menu-manager-card .menu-photo-placeholder{height:72px!important;min-height:0!important;background:var(--surface-2)!important;border-bottom:1px solid var(--border);
+  -webkit-mask:none!important;display:grid;place-items:center}
+.menu-manager-card .menu-card-media img{height:140px!important;width:100%;object-fit:cover}
+.menu-manager-card .menu-card-body{padding:12px 14px 14px!important}
+.menu-manager-card .mc-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.menu-manager-card .mc-desc{color:var(--text-muted);font-size:12.5px;margin-top:2px}
+.menu-manager-card .mc-actions{display:flex;gap:6px;margin-top:12px}
+.menu-manager-card .mc-actions .ghost-btn{min-height:34px;padding:0 10px;font-size:12.5px}
+#tab-menu .settings-layout,#tab-menu>div{grid-template-columns:300px 1fr!important}
+.menu-category-row,.category-row{border-radius:10px!important}
+/* ---------- back office: generic lists, tables, stats ---------- */
+.list-card{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:12px!important;padding:12px 14px!important}
+table{border-collapse:collapse}
+th{color:var(--text-muted);font-weight:650;font-size:12.5px;text-align:left;border-bottom:1px solid var(--border);padding:8px 10px}
+td{border-bottom:1px solid var(--border);padding:9px 10px}
+.stat,.stat-card,.report-card,.kpi,.summary-card{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:12px!important;box-shadow:none!important}
+.settings-section{border-top:1px solid var(--border)!important}
+.settings-section h3{font-size:15px;font-weight:750}
+.report-card{padding:14px 16px!important}
+.report-card .rc-label{color:var(--text-muted);font-size:12.5px;font-weight:600}
+.report-card .rc-value{font-size:24px!important;font-weight:800!important;letter-spacing:-.02em;margin-top:4px}
+details>summary{cursor:pointer;font-weight:650}
+@media (min-width:900px){#tab-reports>.panel,#tab-operations>.panel,#tab-history>.panel,#tab-inventory>.panel,#tab-users>.panel,#tab-branches>.panel,#tab-pricing>.panel,#tab-tables>.panel{max-width:1180px}}

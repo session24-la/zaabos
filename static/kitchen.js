@@ -145,7 +145,7 @@ function renderBoard(orders) {
       liClass = age >= 0 && age < KITCHEN_HIGHLIGHT_MS ? ' kt-item-highlight' : ' kt-item-sent';
       sentBadge = `<span class="kt-sent-badge"><i class="ic ic-bell" aria-hidden="true"></i> ${clock}</span>`;
       const cancelNote = cancelled > 0 ? `<div class="kt-cancelled"><i class="ic ic-circle-x" aria-hidden="true"></i> ${escapeHtml(t('kt_cancelled_qty') || 'Cancelled')} ${cancelled}${it.cancellation_reason ? ' · ' + escapeHtml(it.cancellation_reason) : ''}</div>` : '';
-      const active = activeQty > 0 ? `<b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}` : `<s>${escapeHtml(it.item_name_snapshot)}</s>`;
+      const active = (activeQty > 0 ? `<b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}` : `<s>${escapeHtml(it.item_name_snapshot)}</s>`) + (it.item_name2_snapshot ? `<div class="kt-name2">${escapeHtml(it.item_name2_snapshot)}</div>` : '');
       return `<li class="${liClass}${activeQty === 0 ? ' kt-item-cancelled' : ''}">${active} ${sentBadge}
       ${it.options.length ? `<div class="kt-opts">${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')}</div>` : ''}
       ${it.notes ? `<div class="kt-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}</li>`;
