@@ -1001,3 +1001,9 @@ main{max-width:1180px;padding-top:14px}
   #takeOrderModal .send-kitchen-toggle{margin:6px 0 2px}
   #takeOrderModal #takeOrderSubmit{min-height:48px}
 }
+
+.print-center-fab{position:fixed;right:18px;bottom:18px;z-index:80;border:1px solid var(--border);border-radius:999px;padding:10px 14px;background:var(--surface);color:var(--text);font-weight:800;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+#printCenterModal .sheet{width:min(720px,94vw);max-height:82vh;overflow:auto}
+#printCenterList .list-row{gap:12px;align-items:center}
+#printCenterList .row-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:760px){.print-center-fab{right:12px;bottom:12px;padding:9px 12px;font-size:12px}}
