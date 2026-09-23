@@ -2167,19 +2167,26 @@ def staff_create_order():
         order_id = cur.lastrowid
         if not order_id:
             raise RuntimeError('order insert did not return an id')
+        new_item_ids = []
         for it in prepared_items:
             oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
                 VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
             oi_id = oi_cur.lastrowid
             if not oi_id:
                 raise RuntimeError('order item insert did not return an id')
+            new_item_ids.append(oi_id)
             for opt in it['options']:
                 conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
                     (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
             _decrement_stock(conn, g.tenant_id, it['menu_item_id'], it['quantity'])
+        sent = bool(d.get('send_to_kitchen'))
+        if sent:   # staff already checked the order at the table: no second "send to kitchen" tap to forget
+            _send_items_to_kitchen(conn, {'id': order_id, 'tenant_id': g.tenant_id, 'branch_id': int(branch_id)}, new_item_ids)
         log_action('staff_create_order', detail=order_no)
         conn.commit()
-        return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total)
+        if sent: _wake_printer()
+        return jsonify(ok=True, order_no=order_no, order_id=order_id, total_amount=total, item_ids=new_item_ids, sent_to_kitchen=sent,
+                       printed_by_server=sent and _network_printing(conn, int(branch_id), 'kitchen'))
     except INTEGRITY_ERRORS:
         conn.rollback()
         if client_request_id:
@@ -2226,6 +2233,24 @@ def update_order_status(oid):
     conn.commit()
     return jsonify(ok=True)
 
+def _send_items_to_kitchen(conn, order, item_ids):
+    """Mark items as sent and queue one kitchen ticket per station (same transaction as the order)."""
+    ts = now(); oid = order['id']
+    for iid in item_ids:
+        conn.execute('UPDATE order_items SET kitchen_sent_at=? WHERE id=?', (ts, iid))
+    placeholders=','.join('?' for _ in item_ids)
+    station_rows=conn.execute(f'''SELECT oi.id AS item_id, mi.kitchen_station_id AS station_id
+        FROM order_items oi LEFT JOIN menu_items mi ON mi.id=oi.menu_item_id AND mi.tenant_id=?
+        WHERE oi.order_id=? AND oi.id IN ({placeholders})''', [order['tenant_id'],oid,*item_ids]).fetchall()
+    by_station={}
+    for r in station_rows: by_station.setdefault(r['station_id'],[]).append(r['item_id'])
+    # Each ticket remembers exactly which items it carries, so a reprint shows the same round.
+    for station_id,ids in (by_station or {None:item_ids}).items():
+        conn.execute('''INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,item_ids)
+                        VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                     (order['tenant_id'],order['branch_id'],oid,station_id,'pending',0,'',ts,'kitchen',json.dumps(ids)))
+    return ts
+
 @app.put('/api/orders/<int:oid>/send-to-kitchen')
 @login_required
 @role_required('owner', 'manager', 'staff')
@@ -2254,21 +2279,7 @@ def send_order_items_to_kitchen(oid):
         item_ids = [i for i in item_ids if not by_id[i]['kitchen_sent_at']]
         if not item_ids:
             return jsonify(error='รายการที่เลือกส่งเข้าครัวแล้ว'), 409
-    ts = now()
-    for iid in item_ids:
-        conn.execute('UPDATE order_items SET kitchen_sent_at=? WHERE id=?', (ts, iid))
-    # Server-side kitchen print queue: create one job per station touched by this send.
-    placeholders=','.join('?' for _ in item_ids)
-    station_rows=conn.execute(f'''SELECT oi.id AS item_id, mi.kitchen_station_id AS station_id
-        FROM order_items oi LEFT JOIN menu_items mi ON mi.id=oi.menu_item_id AND mi.tenant_id=?
-        WHERE oi.order_id=? AND oi.id IN ({placeholders})''', [g.tenant_id,oid,*item_ids]).fetchall()
-    by_station={}
-    for r in station_rows: by_station.setdefault(r['station_id'],[]).append(r['item_id'])
-    # Each ticket remembers exactly which items it carries, so a reprint shows the same round.
-    for station_id,ids in (by_station or {None:item_ids}).items():
-        conn.execute('''INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,item_ids)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)''',
-                     (g.tenant_id,order['branch_id'],oid,station_id,'pending',0,'',ts,'kitchen',json.dumps(ids)))
+    ts = _send_items_to_kitchen(conn, order, item_ids)
     log_action('send_order_items_to_kitchen', detail=f'{oid}: {item_ids}')
     conn.commit(); _wake_printer()
     return jsonify(ok=True, sent_at=ts, item_ids=item_ids, printed_by_server=_network_printing(conn, order['branch_id'], 'kitchen'))
@@ -2372,6 +2383,40 @@ def update_order_fulfillment(oid):
     log_action('update_fulfillment',detail=f'{oid}: {status}')
     conn.commit(); return jsonify(ok=True,status=status)
 
+def _bill_quote(conn, order, promotion_code=None, manual=Decimal('0.00'), discount_reason=None):
+    """The one formula for what a bill costs: items - discount (promo + manual) + service + tax
+    + delivery. Checkout screen and payment both use it, so they can never disagree."""
+    subtotal=money_decimal(order['total_amount']); delivery=money_decimal(order['delivery_fee'])
+    settings=_pricing_settings(conn,order['branch_id']); discount=Decimal('0.00'); label=''; promotion_id=None
+    code=(promotion_code or '').strip()
+    if code:
+        promo=_active_promotion(conn,code,order['branch_id'],subtotal); promotion_id=promo['id']; label=promo['name']
+        discount=(subtotal*money_decimal(promo['discount_value'])/Decimal('100')) if promo['discount_type']=='percent' else money_decimal(promo['discount_value'])
+        if promo['max_discount'] is not None: discount=min(discount,money_decimal(promo['max_discount']))
+    if manual>0:
+        discount+=manual; label=(discount_reason or 'ส่วนลดพิเศษ')[:120]
+    discount=min(money_decimal(discount),subtotal); base=max(Decimal('0.00'),subtotal-discount)
+    service=money_decimal(base*Decimal(str(settings.get('service_charge_rate') or 0))/Decimal('100'))
+    tax=money_decimal((base+service)*Decimal(str(settings.get('tax_rate') or 0))/Decimal('100'))
+    due=money_decimal(base+service+tax+delivery)
+    return dict(subtotal=subtotal,discount=discount,label=label,promotion_id=promotion_id,service=service,tax=tax,delivery=delivery,due=due,
+                service_rate=float(settings.get('service_charge_rate') or 0),tax_rate=float(settings.get('tax_rate') or 0))
+
+@app.post('/api/orders/<int:oid>/quote')
+@login_required
+@role_required('owner','manager','staff')
+def quote_order(oid):
+    """What the checkout screen shows before taking money (no approval needed just to look)."""
+    conn=db(); order=conn.execute('SELECT * FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    d=request.get_json() or {}
+    try:
+        manual=money_decimal(d.get('discount_amount') or 0)
+        if manual<0: raise ValueError('ส่วนลดไม่ถูกต้อง')
+        q=_bill_quote(conn,order,d.get('promotion_code'),manual,d.get('discount_reason'))
+    except (ValueError,TypeError) as e: return jsonify(error=str(e)),400
+    return jsonify({k:(money_float(v) if isinstance(v,Decimal) else v) for k,v in q.items()})
+
 @app.put('/api/orders/<int:oid>/payment')
 @login_required
 @role_required('owner','manager','staff')
@@ -2395,23 +2440,14 @@ def update_order_payment(oid):
         if x < 0 or x > Decimal('1000000000'): raise ValueError('จำนวนเงินไม่ถูกต้อง')
         return x
     try:
-        subtotal=money_decimal(order['total_amount']); delivery=money_decimal(order['delivery_fee'])
-        settings=_pricing_settings(conn,order['branch_id']); discount=Decimal('0.00'); label=''; promotion_id=None
-        code=(d.get('promotion_code') or '').strip()
-        if code:
-            promo=_active_promotion(conn,code,order['branch_id'],subtotal); promotion_id=promo['id']; label=promo['name']
-            discount=(subtotal*money_decimal(promo['discount_value'])/Decimal('100')) if promo['discount_type']=='percent' else money_decimal(promo['discount_value'])
-            if promo['max_discount'] is not None: discount=min(discount,money_decimal(promo['max_discount']))
         manual=money(d.get('discount_amount'),0)
         if manual>0:
             approved_by,err=_critical_approval(conn,d)
             if err:return err
-            discount+=manual; label=(d.get('discount_reason') or 'ส่วนลดพิเศษ')[:120]
-            _record_critical(conn,'discount',order['branch_id'],'order',oid,label,approved_by,f'manual_discount={manual}')
-        discount=min(money_decimal(discount),subtotal); base=max(Decimal('0.00'),subtotal-discount)
-        service=money_decimal(base*Decimal(str(settings.get('service_charge_rate') or 0))/Decimal('100'))
-        tax=money_decimal((base+service)*Decimal(str(settings.get('tax_rate') or 0))/Decimal('100'))
-        due=money_decimal(base+service+tax+delivery)
+        q=_bill_quote(conn,order,d.get('promotion_code'),manual,d.get('discount_reason'))
+        if manual>0:
+            _record_critical(conn,'discount',order['branch_id'],'order',oid,q['label'],approved_by,f'manual_discount={manual}')
+        tax,service,discount,label,promotion_id,due=q['tax'],q['service'],q['discount'],q['label'],q['promotion_id'],q['due']
         parts=d.get('payments')
         if not parts:
             parts=[{'method':d.get('payment_method'),'amount':due,'cash_received':d.get('cash_received'),'reference':d.get('reference')}]
@@ -2506,8 +2542,11 @@ def add_order_items(oid):
     total=_recalculate_order_total(conn,oid)
     if order['status'] in ('ready', 'served'):
         conn.execute("UPDATE orders SET status='received',updated_at=? WHERE id=?", (now(),oid))
+    sent=bool(d.get('send_to_kitchen')) and bool(ids)
+    if sent: _send_items_to_kitchen(conn,order,ids)
     log_action('add_order_items',detail=f'{oid}: {ids}'); conn.commit()
-    return jsonify(ok=True,item_ids=ids,total_amount=total)
+    if sent: _wake_printer()
+    return jsonify(ok=True,item_ids=ids,total_amount=total,sent_to_kitchen=sent,printed_by_server=sent and _network_printing(conn,order['branch_id'],'kitchen'))
 
 @app.put('/api/orders/<int:oid>/items/<int:iid>/cancel')
 @login_required

@@ -150,7 +150,8 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
                          rumps.MenuItem(f'แท็บเล็ต/มือถือ: {public_url}', callback=self.copy_public), None,
                          rumps.MenuItem('สำรองข้อมูลตอนนี้', callback=self.backup_now),
                          rumps.MenuItem('กู้ข้อมูลจากไฟล์สำรอง…', callback=self.restore),
-                         rumps.MenuItem('เปิดโฟลเดอร์ข้อมูล', callback=self.open_data), None,
+                         rumps.MenuItem('เปิดโฟลเดอร์ข้อมูล', callback=self.open_data),
+                         rumps.MenuItem('ตรวจสุขภาพระบบ', callback=self.health), None,
                          self.autostart_item, self.hostname_item, self.update_item, None,
                          rumps.MenuItem('ปิด ZaabOS', callback=self.quit_app)]
             if os.getenv('ZAABOS_ADDRESS_WARNING'):
@@ -199,6 +200,21 @@ def run_mac_menu_bar(local_url, public_url, data_dir, core):
             local_ops.stage_restore(data_dir, path)
             local_ops.relaunch_after_exit()
             rumps.quit_application()
+
+        def health(self, _):
+            import local_api
+            try:
+                with core.app.app_context():
+                    conn = core.db()
+                    tenant = conn.execute('SELECT id FROM tenants WHERE active=1 ORDER BY id LIMIT 1').fetchone()
+                    checks = local_api.health_checks(core, conn, tenant['id'], data_dir)
+            except Exception as exc:
+                rumps.alert('ตรวจไม่สำเร็จ', str(exc))
+                return
+            icon = {'ok': '🟢', 'warn': '🟡', 'bad': '🔴'}
+            bad = sum(c['level'] != 'ok' for c in checks)
+            rumps.alert('ทุกอย่างปกติ ✓' if not bad else f'ต้องดู {bad} เรื่อง',
+                        '\n'.join(f"{icon[c['level']]} {c['title']}" + (f"\n     {c['detail']}" if c['detail'] and c['level'] != 'ok' else '') for c in checks))
 
         def open_data(self, _):
             open_url(str(data_dir))

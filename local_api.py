@@ -229,7 +229,67 @@ def register(core, data_dir, port):
         conn.commit()
         return jsonify(ok=True, **result)
 
+    @app.get('/api/local/health')
+    @owner
+    def local_health():
+        """Daily end-of-day check for the in-shop trial: green = safe to go home."""
+        return jsonify(checks=health_checks(core, core.db(), g.tenant_id, data_dir))
+
     def _exit_soon():
         """Let the HTTP reply go out, then exit so the relaunch script can take over."""
         import threading
         threading.Timer(1.0, lambda: os._exit(0)).start()
+
+
+def health_checks(core, conn, tenant_id, data_dir, days=14):
+    """Each check: {key, ok, level ('ok'|'warn'|'bad'), title, detail}."""
+    import shutil
+    import time
+    from datetime import datetime, timedelta, timezone
+    out = []
+
+    def add(key, level, title, detail=''):
+        out.append({'key': key, 'ok': level == 'ok', 'level': level, 'title': title, 'detail': detail})
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec='seconds')
+    D = lambda v: round(float(v or 0), 2)
+    bad_bills = []
+    for o in conn.execute("SELECT * FROM orders WHERE tenant_id=? AND payment_status='paid' AND COALESCE(paid_at,created_at)>=?", (tenant_id, since)).fetchall():
+        items = D(conn.execute('SELECT COALESCE(SUM((quantity-COALESCE(cancelled_quantity,0))*unit_price),0) t FROM order_items WHERE order_id=?', (o['id'],)).fetchone()['t'])
+        due = D(D(o['total_amount']) - D(o['discount_amount']) + D(o['service_charge_amount']) + D(o['tax_amount']) + D(o['delivery_fee']))
+        paid = D(conn.execute('SELECT COALESCE(SUM(amount),0) t FROM payments WHERE order_id=? AND reversed_at IS NULL', (o['id'],)).fetchone()['t'])
+        if items != D(o['total_amount']) or paid != due:
+            bad_bills.append(o['order_no'])
+    add('money', 'bad' if bad_bills else 'ok', 'ยอดเงินทุกบิลตรงกัน' if not bad_bills else f'มี {len(bad_bills)} บิลยอดไม่ตรง',
+        ', '.join(bad_bills[:10]) if bad_bills else f'ตรวจบิลที่ชำระแล้วย้อนหลัง {days} วัน')
+    diffs = conn.execute("""SELECT id,closed_at,difference FROM work_shifts WHERE tenant_id=? AND status='closed' AND closed_at>=? AND ABS(COALESCE(difference,0))>=1
+                            ORDER BY closed_at DESC LIMIT 10""", (tenant_id, since)).fetchall()
+    add('drawer', 'warn' if diffs else 'ok', 'เงินในลิ้นชักตรงทุกกะ' if not diffs else f'{len(diffs)} กะ เงินนับจริงไม่ตรงกับระบบ',
+        ' · '.join(f"กะ #{r['id']}: {r['difference']:+,.0f}" for r in diffs))
+    old = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat(timespec='seconds')
+    stale = conn.execute("""SELECT order_no,table_name_snapshot FROM orders WHERE tenant_id=? AND payment_status='unpaid'
+                            AND status NOT IN ('completed','cancelled') AND created_at<? ORDER BY id LIMIT 10""", (tenant_id, old)).fetchall()
+    add('open_bills', 'warn' if stale else 'ok', 'ไม่มีบิลค้างข้ามวัน' if not stale else f'{len(stale)} บิลเปิดค้างเกิน 12 ชม. (ลืมเก็บเงิน/ลืมยกเลิก?)',
+        ', '.join(f"{r['order_no']} {r['table_name_snapshot'] or ''}" for r in stale))
+    open_shifts = conn.execute("SELECT COUNT(*) c FROM work_shifts WHERE tenant_id=? AND status='open' AND opened_at<?", (tenant_id, old)).fetchone()['c']
+    add('shifts', 'warn' if open_shifts else 'ok', 'ไม่มีกะค้าง' if not open_shifts else f'{open_shifts} กะเปิดค้างเกิน 12 ชม. — ปิดกะก่อนกลับบ้าน')
+    five = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec='seconds')
+    stuck = conn.execute("SELECT COUNT(*) c FROM kitchen_print_jobs WHERE tenant_id=? AND (status='failed' OR (status='pending' AND created_at<? AND EXISTS (SELECT 1 FROM printers p WHERE p.tenant_id=kitchen_print_jobs.tenant_id AND p.active=1)))",
+                         (tenant_id, five)).fetchone()['c']
+    add('printing', 'warn' if stuck else 'ok', 'พิมพ์ครบทุกใบ' if not stuck else f'{stuck} ใบพิมพ์ไม่ออก — กดแถบแดงเพื่อพิมพ์ซ้ำ')
+    ok_db = conn.execute('PRAGMA quick_check').fetchone()[0] == 'ok' if not getattr(core, 'IS_POSTGRES', False) else True
+    add('database', 'ok' if ok_db else 'bad', 'ฐานข้อมูลสมบูรณ์' if ok_db else 'ฐานข้อมูลมีปัญหา — ติดต่อผู้ดูแล และอย่าปิดเครื่อง')
+    backups = sorted(Path(core.BACKUP_DIR).glob('zaabos_*.db'), key=lambda p: p.stat().st_mtime) if Path(core.BACKUP_DIR).is_dir() else []
+    age_h = (time.time() - backups[-1].stat().st_mtime) / 3600 if backups else None
+    add('backup', 'ok' if age_h is not None and age_h < 3 else 'bad', 'สำรองข้อมูลล่าสุด ' + (f'{age_h * 60:.0f} นาทีที่แล้ว' if age_h is not None else '— ไม่มี'))
+    mirror = local_ops.mirror_dir(data_dir)
+    copies = sorted(Path(mirror).glob('zaabos_*.db'), key=lambda p: p.stat().st_mtime) if mirror and Path(mirror).is_dir() else []
+    m_age = (time.time() - copies[-1].stat().st_mtime) / 3600 if copies else None
+    add('offsite', 'ok' if m_age is not None and m_age < 6 else 'warn',
+        f'สำเนานอกเครื่อง ({Path(mirror).name if mirror else "ไม่มี"}) ' + (f'{m_age:.1f} ชม. ที่แล้ว' if m_age is not None else '— ยังไม่มี'),
+        '' if mirror else 'เปิด iCloud Drive / OneDrive เพื่อให้คัดลอกอัตโนมัติ')
+    free_gb = shutil.disk_usage(data_dir).free / 1e9
+    add('disk', 'ok' if free_gb > 2 else 'warn', f'พื้นที่ว่าง {free_gb:.0f} GB')
+    warn = os.getenv('ZAABOS_ADDRESS_WARNING') or ''
+    add('address', 'warn' if warn else 'ok', 'ที่อยู่แท็บเล็ต/QR ไม่เปลี่ยน' if not warn else 'IP ของเครื่องเปลี่ยน', warn)
+    return out
