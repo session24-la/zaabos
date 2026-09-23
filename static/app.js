@@ -2054,13 +2054,20 @@ $('#cpMethodSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m
 $('#cpMethod').addEventListener('change',syncPaySeg);
 new MutationObserver(()=>{if($('#confirmPaymentModal').classList.contains('show'))syncPaySeg();}).observe($('#confirmPaymentModal'),{attributes:true,attributeFilter:['class']});
 (function(){
-  const KEY='zaabos_theme',root=document.documentElement;
-  try{const saved=localStorage.getItem(KEY);if(saved==='dark'||saved==='light')root.dataset.theme=saved;}catch(e){}
+  const KEY='zaabos_theme',root=document.documentElement,media=window.matchMedia('(prefers-color-scheme: dark)');
+  let mode='system';
+  try{const saved=localStorage.getItem(KEY);if(saved==='dark'||saved==='light'||saved==='system')mode=saved;}catch(e){}
+  function apply(){root.dataset.theme=mode==='system'?(media.matches?'dark':'light'):mode;root.dataset.themeMode=mode;}
+  apply();
+  if(media.addEventListener)media.addEventListener('change',()=>{if(mode==='system')apply();});
   const menu=$('#whoMenu');if(!menu)return;
-  const btn=document.createElement('button');btn.type='button';btn.id='themeToggleBtn';
-  const label=()=>{btn.innerHTML=root.dataset.theme==='dark'?'<i class="ic ic-sun" aria-hidden="true"></i> โหมดสว่าง':'<i class="ic ic-moon" aria-hidden="true"></i> โหมดมืด';};
-  label();menu.insertBefore(btn,menu.firstChild);
-  btn.addEventListener('click',()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';try{localStorage.setItem(KEY,root.dataset.theme)}catch(e){}label();});
+  const wrap=document.createElement('div');wrap.id='themeModeControl';wrap.className='theme-mode-control';
+  const title=document.createElement('span');title.className='theme-mode-title';title.textContent='โหมดหน้าจอ';wrap.appendChild(title);
+  const seg=document.createElement('div');seg.className='theme-mode-seg';wrap.appendChild(seg);
+  [['light','สว่าง'],['dark','มืด'],['system','ตามระบบ']].forEach(([value,label])=>{const b=document.createElement('button');b.type='button';b.dataset.themeMode=value;b.textContent=label;seg.appendChild(b);});
+  function sync(){seg.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.themeMode===mode));}
+  seg.addEventListener('click',ev=>{const b=ev.target.closest('button[data-theme-mode]');if(!b)return;mode=b.dataset.themeMode;try{localStorage.setItem(KEY,mode)}catch(e){}apply();sync();});
+  sync();menu.insertBefore(wrap,menu.firstChild);
 })();
 
 // ---------- Menu names in several languages (primary + secondary line) ----------
