@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import sqlite3
+from contextlib import closing
 import subprocess
 import sys
 import tempfile
@@ -217,7 +218,7 @@ def mirror_backup(data_dir, backup_file):
 def validate_backup(path):
     """A restore must be a healthy ZaabOS database, never an arbitrary file."""
     try:
-        with sqlite3.connect(f'file:{path}?mode=ro', uri=True) as c:
+        with closing(sqlite3.connect(f'file:{path}?mode=ro', uri=True)) as c:
             if c.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 raise ValueError('ไฟล์สำรองเสียหาย')
             tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -252,7 +253,7 @@ def apply_pending_restore(data_dir):
     if db.exists():
         keep = data_dir / 'backups' / f"zaabos_before-restore_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}.db"
         keep.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(db) as src, sqlite3.connect(keep) as out:
+        with closing(sqlite3.connect(db)) as src, closing(sqlite3.connect(keep)) as out:
             src.backup(out)
     for suffix in ('-wal', '-shm'):
         Path(str(db) + suffix).unlink(missing_ok=True)

@@ -16,6 +16,7 @@ import os
 import secrets
 import socket
 import sqlite3
+from contextlib import closing
 import sys
 import threading
 import webbrowser
@@ -49,7 +50,7 @@ def needs_first_admin(db_path):
     if not db_path.exists():
         return True
     try:
-        with sqlite3.connect(db_path) as c:
+        with closing(sqlite3.connect(db_path)) as c:
             return c.execute("SELECT 1 FROM users WHERE role='super_admin' LIMIT 1").fetchone() is None
     except sqlite3.Error:
         return True
@@ -57,7 +58,7 @@ def needs_first_admin(db_path):
 
 def first_password_changed(db_path):
     try:
-        with sqlite3.connect(db_path) as c:
+        with closing(sqlite3.connect(db_path)) as c:
             row = c.execute("SELECT must_change_password FROM users WHERE role='super_admin' ORDER BY id LIMIT 1").fetchone()
             return bool(row) and not row[0]
     except sqlite3.Error:

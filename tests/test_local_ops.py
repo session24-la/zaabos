@@ -3,6 +3,7 @@ restore, self-update, import from the cloud."""
 import io
 import json
 import sqlite3
+from contextlib import closing
 import sys
 from pathlib import Path
 
@@ -14,10 +15,11 @@ import local_ops  # noqa: E402
 
 
 def _zaabos_db(path, orders=2):
-    with sqlite3.connect(path) as c:
+    with closing(sqlite3.connect(path)) as c:
         for t in ('orders', 'payments', 'menu_items', 'users'):
             c.execute(f'CREATE TABLE {t}(id INTEGER PRIMARY KEY, x TEXT)')
         c.executemany('INSERT INTO orders(x) VALUES(?)', [('o',)] * orders)
+        c.commit()
     return path
 
 
@@ -55,18 +57,19 @@ def test_restore_swaps_database_on_next_start_and_keeps_the_old_one(tmp_path):
     backup = _zaabos_db(tmp_path / 'zaabos_local_old.db', orders=7)
     assert local_ops.stage_restore(data, backup) == 7
     local_ops.apply_pending_restore(data)
-    with sqlite3.connect(data / 'zaabos.db') as c:
+    with closing(sqlite3.connect(data / 'zaabos.db')) as c:
         assert c.execute('SELECT COUNT(*) FROM orders').fetchone()[0] == 7
     assert not (data / 'zaabos.db-wal').exists() and not (data / 'restore-pending.db').exists()
     kept = list((data / 'backups').glob('zaabos_before-restore_*.db'))
-    with sqlite3.connect(kept[0]) as c:
+    with closing(sqlite3.connect(kept[0])) as c:
         assert c.execute('SELECT COUNT(*) FROM orders').fetchone()[0] == 1
 
 
 def test_restore_refuses_files_that_are_not_zaabos_backups(tmp_path):
     junk = tmp_path / 'x.db'
-    with sqlite3.connect(junk) as c:
+    with closing(sqlite3.connect(junk)) as c:
         c.execute('CREATE TABLE t(a)')
+        c.commit()
     with pytest.raises(ValueError):
         local_ops.stage_restore(tmp_path, junk)
     (tmp_path / 'y.db').write_bytes(b'not a database at all')

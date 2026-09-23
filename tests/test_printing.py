@@ -5,6 +5,7 @@ send to kitchen -> job -> render -> ESC/POS over TCP -> printed/failed -> reprin
 """
 import json
 import socket
+import sys
 import threading
 
 import pytest
@@ -200,6 +201,8 @@ def _items(oid):
 
 @pytest.fixture
 def fake_cups(tmp_path, monkeypatch):
+    if sys.platform.startswith('win'):
+        pytest.skip('USB printing goes through CUPS (macOS/Linux); Windows uses Wi-Fi printers for now')
     """Stand-in lp/lpstat/cancel on PATH. `offline` file present = printer never takes the job."""
     import os, stat
     bindir = tmp_path / 'bin'; bindir.mkdir()
