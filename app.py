@@ -1895,7 +1895,7 @@ def _restore_stock(conn, tenant_id, menu_item_id, qty):
 
 def _recalculate_order_total(conn, oid):
     row = conn.execute('SELECT COALESCE(SUM((quantity-COALESCE(cancelled_quantity,0))*unit_price),0) AS total FROM order_items WHERE order_id=?', (oid,)).fetchone()
-    total = money_float(max(0, float(row['total'] or 0)))
+    total = money_float(max(Decimal('0.00'), money_decimal(row['total'] or 0)))
     conn.execute('UPDATE orders SET total_amount=?,updated_at=? WHERE id=?', (total, now(), oid))
     return total
 
@@ -2650,7 +2650,7 @@ def update_order_item_quantity(oid,iid):
     if delta>0: _decrement_stock(conn,g.tenant_id,it['menu_item_id'],delta)
     elif delta<0: _restore_stock(conn,g.tenant_id,it['menu_item_id'],-delta)
     new_total_qty=new_active+cancelled
-    conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(new_total_qty,new_total_qty*float(it['unit_price']),iid))
+    conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(new_total_qty,money_float(money_decimal(new_total_qty)*money_decimal(it['unit_price'])),iid))
     total=_recalculate_order_total(conn,oid)
     if delta < 0:
         _record_critical(conn,'reduce_item_quantity',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} {old_active}->{new_active}')
@@ -2853,9 +2853,9 @@ def split_order(source_id):
                 conn.execute('UPDATE order_items SET order_id=? WHERE id=?',(destination_id,it['id']))
             else:
                 remain=int(it['quantity'])-qty
-                conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(remain,remain*float(it['unit_price']),it['id']))
+                conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(remain,money_float(money_decimal(remain)*money_decimal(it['unit_price'])),it['id']))
                 nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at,item_name2_snapshot)
-                                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],qty*float(it['unit_price']),it['notes'],it['kitchen_sent_at'],0,'',None,it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else ''))
+                                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],money_float(money_decimal(qty)*money_decimal(it['unit_price'])),it['notes'],it['kitchen_sent_at'],0,'',None,it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else ''))
                 for op in conn.execute('SELECT * FROM order_item_options WHERE order_item_id=?',(it['id'],)).fetchall():
                     conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(nc.lastrowid,op['group_name_snapshot'],op['option_name_snapshot'],op['price_delta_snapshot']))
 
@@ -3694,8 +3694,9 @@ def add_expense():
     category = (d.get('category') or '').strip()[:100]
     if not category: return jsonify(error='กรุณาเลือกหรือกรอกหมวดรายจ่าย'), 400
     try:
-        amount = float(d.get('amount'))
+        amount = money_decimal(d.get('amount'))
         if amount <= 0: raise ValueError()
+        amount = money_float(amount)
     except (TypeError, ValueError):
         return jsonify(error='จำนวนเงินไม่ถูกต้อง'), 400
     expense_date = (d.get('expense_date') or restaurant_today())[:10]
