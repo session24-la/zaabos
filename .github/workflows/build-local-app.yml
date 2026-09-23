@@ -3,6 +3,8 @@ on:
   push:
     branches: [step3-6-shop-ready, main]
     tags: ['local-v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,15 +38,25 @@ jobs:
           BIN=dist/ZaabOS/ZaabOS; [ -f "$BIN.exe" ] && BIN="$BIN.exe"
           "$BIN" --no-browser --port 18765 --data-dir "$RUNNER_TEMP/zaabos-data" > smoke.log 2>&1 &
           SMOKE_PID=$!
+          cleanup() {
+            result=$?
+            trap - EXIT
+            kill "$SMOKE_PID" 2>/dev/null || true
+            if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //IM ZaabOS.exe >/dev/null 2>&1 || true; else pkill -f dist/ZaabOS || true; fi
+            # Windows keeps application files locked until the process exits.
+            sleep 2
+            if [ "$result" -ne 0 ]; then cat smoke.log; fi
+            exit "$result"
+          }
+          trap cleanup EXIT
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:18765/healthz && break; sleep 1; done
           curl -sf http://127.0.0.1:18765/healthz
-          curl -sf http://127.0.0.1:18765/ | grep -q '<title>ZaabOS'
+          curl -fsS --max-time 15 http://127.0.0.1:18765/readyz
+          # grep -q on a pipe exits early and intermittently gives curl exit 23.
+          curl -fsS --max-time 15 http://127.0.0.1:18765/ -o "$RUNNER_TEMP/zaabos-home.html"
+          grep -q '<title>ZaabOS' "$RUNNER_TEMP/zaabos-home.html"
           test -f "$RUNNER_TEMP/zaabos-data/zaabos.db"
-          ls "$RUNNER_TEMP/zaabos-data/backups" | grep -q zaabos_local_
-          # stop it: a running ZaabOS.exe keeps its files locked and the zip step fails
-          kill $SMOKE_PID 2>/dev/null || true
-          if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //IM ZaabOS.exe >/dev/null 2>&1 || true; else pkill -f dist/ZaabOS || true; fi
-          sleep 2
+          ls "$RUNNER_TEMP/zaabos-data/backups" | grep zaabos_local_ >/dev/null
       # Zip it ourselves: upload-artifact drops the .app folder and its internal symlinks, which
       # leaves a Mac bundle that fails with "Failed to load Python shared library".
       - name: Package

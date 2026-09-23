@@ -5,6 +5,7 @@ Everything here is best-effort and must never stop the POS from selling.
 """
 import json
 import os
+import shlex
 import shutil
 import socket
 import sqlite3
@@ -17,7 +18,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = '2.2.0'
+APP_VERSION = '2.2.1'
 RELEASES_API = os.getenv('ZAABOS_UPDATE_FEED') or 'https://api.github.com/repos/session24-la/zaabos/releases?per_page=20'
 RELEASE_TAG_PREFIX = 'local-v'
 LAUNCH_AGENT_LABEL = 'com.zaabos.local'
@@ -310,11 +311,17 @@ def check_update(timeout=8):
 def mac_swap_script(pid, bundle, new_app, relaunch='open'):
     """After `pid` exits: move the new .app into place; if that fails, put the old one back.
     Either way start the app again so the shop is never left without a POS."""
-    return (f'while kill -0 {pid} 2>/dev/null; do sleep 0.3; done; '
-            f'rm -rf "{bundle}.old"; '
-            f'if mv "{bundle}" "{bundle}.old" && mv "{new_app}" "{bundle}"; then rm -rf "{bundle}.old"; '
-            f'else rm -rf "{bundle}"; mv "{bundle}.old" "{bundle}"; fi; '
-            f'sleep 1; {relaunch} "{bundle}"')
+    installed = shlex.quote(str(bundle))
+    recovery = shlex.quote(str(bundle) + '.old')
+    incoming = shlex.quote(str(new_app))
+    # Do not touch the installed app unless moving it aside succeeded. A failed
+    # first move used to enter rollback and delete the only working application.
+    # An existing recovery copy may be needed after an interrupted earlier swap.
+    return (f'while kill -0 {int(pid)} 2>/dev/null; do sleep 0.3; done; '
+            f'if [ ! -e {recovery} ] && [ ! -L {recovery} ] && mv {installed} {recovery}; then '
+            f'if mv {incoming} {installed}; then rm -rf {recovery}; '
+            f'else rm -rf {installed}; mv {recovery} {installed}; fi; fi; '
+            f'sleep 1; {relaunch} {installed}')
 
 
 def install_update(info, core=None):

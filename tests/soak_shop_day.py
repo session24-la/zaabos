@@ -44,17 +44,22 @@ class FakePrinter:
         s.setsockopt(self.socket.SOL_SOCKET, self.socket.SO_REUSEADDR, 1)
         s.bind(('127.0.0.1', self.port))
         s.listen(16)
+        s.settimeout(0.2)
         self._srv, self.online = s, True
-        threading.Thread(target=self._serve, args=(s,), daemon=True).start()
+        self._thread = threading.Thread(target=self._serve, args=(s,), daemon=True)
+        self._thread.start()
 
     def unplug(self):
         self.online = False
         self._srv.close()
+        self._thread.join(timeout=2)
 
     def _serve(self, s):
-        while True:
+        while self.online:
             try:
                 c, _ = s.accept()
+            except self.socket.timeout:
+                continue
             except OSError:
                 return
             with c:
@@ -122,7 +127,8 @@ def run(seconds=30, crash=True, unplug=True, seed=7, verbose=True):
     branch = boot['branches'][0]['id']
     tables = boot['tables']
     items = boot['items']
-    admin.ok('POST', '/api/printers', {'branch_id': branch, 'name': 'Kitchen', 'role': 'kitchen', 'host': '127.0.0.1', 'port': printer.port})
+    # Distinct test hostname: both simulated devices share the runner's loopback.
+    admin.ok('POST', '/api/printers', {'branch_id': branch, 'name': 'Kitchen', 'role': 'kitchen', 'host': 'localhost', 'port': printer.port})
     staff_pw = 'staff-pass-' + uuid.uuid4().hex[:6]
     for i in range(3):
         admin.ok('POST', '/api/users', {'username': f'tab{i}', 'display_name': f'Tablet {i}', 'password': staff_pw, 'role': 'staff'})
