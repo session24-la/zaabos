@@ -146,11 +146,11 @@ def register_table_open_bill(core):
                 cur = conn.execute(
                     """INSERT INTO order_items(
                          order_id,menu_item_id,item_name_snapshot,quantity,
-                         unit_price,line_total,notes,kitchen_sent_at)
-                       VALUES(?,?,?,?,?,?,?,?)""",
+                         unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot)
+                       VALUES(?,?,?,?,?,?,?,?,?)""",
                     (primary['id'], item['menu_item_id'], item['item_name'],
                      item['quantity'], item['unit_price'], item['line_total'],
-                     item['notes'], None),
+                     item['notes'], None, item.get('item_name2', '')),
                 )
                 item_id = cur.lastrowid
                 if not item_id:

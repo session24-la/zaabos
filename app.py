@@ -752,6 +752,17 @@ def ensure_schema_migrations(conn):
             conn.execute(f'UPDATE {table} SET icon=? WHERE icon=?', (name, emo))
     conn.commit()
     record_migration(conn, 30, 'lucide_icon_names')
+    # Menu names in several languages (TH/LO/ZH/EN); order lines keep the second-language name too.
+    if IS_POSTGRES:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS name_i18n TEXT NOT NULL DEFAULT '{}'")
+        conn.execute("ALTER TABLE order_items ADD COLUMN IF NOT EXISTS item_name2_snapshot TEXT NOT NULL DEFAULT ''")
+    else:
+        if 'name_i18n' not in {r['name'] for r in conn.execute('PRAGMA table_info(menu_items)').fetchall()}:
+            conn.execute("ALTER TABLE menu_items ADD COLUMN name_i18n TEXT NOT NULL DEFAULT '{}'")
+        if 'item_name2_snapshot' not in {r['name'] for r in conn.execute('PRAGMA table_info(order_items)').fetchall()}:
+            conn.execute("ALTER TABLE order_items ADD COLUMN item_name2_snapshot TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+    record_migration(conn, 31, 'menu_names_multilingual')
 
 
 
@@ -1590,6 +1601,7 @@ def add_menu_item():
          d.get('image_url'), d.get('sort_order') or 0, cost_price, track_stock, stock_qty, low_stock_threshold, station_id, now()))
     item_id = cur.lastrowid
     _save_option_groups(conn, item_id, d.get('option_groups') or [])
+    conn.execute('UPDATE menu_items SET name_i18n=? WHERE id=?', (json.dumps(_clean_name_i18n(d.get('name_i18n')), ensure_ascii=False), cur.lastrowid))
     log_action('add_menu_item', detail=name)
     conn.commit()
     return jsonify(ok=True, id=item_id)
@@ -1658,6 +1670,8 @@ def edit_menu_item(mid):
         station=conn.execute('SELECT id FROM kitchen_stations WHERE id=? AND tenant_id=? AND active=1 AND (branch_id IS NULL OR branch_id=?)',(station_id,g.tenant_id,old['branch_id'])).fetchone()
         if not station:return jsonify(error='สถานีครัวไม่ถูกต้อง'),400
     else: station_id=None
+    if 'name_i18n' in d:
+        conn.execute('UPDATE menu_items SET name_i18n=? WHERE id=?', (json.dumps(_clean_name_i18n(d.get('name_i18n')), ensure_ascii=False), mid))
     conn.execute('''UPDATE menu_items SET name=?,description=?,base_price=?,category_id=?,image_url=?,
         sold_out=?,sort_order=?,cost_price=?,track_stock=?,stock_qty=?,low_stock_threshold=?,kitchen_station_id=? WHERE id=?''',
         ((d.get('name') or old['name']).strip(), d.get('description', old['description']), base_price,
@@ -1732,7 +1746,8 @@ def bootstrap():
     items_rows = conn.execute('SELECT * FROM menu_items WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,)).fetchall()
     items = [_menu_item_with_options(conn, r) for r in items_rows]
     # Local shop server: QR codes must point at the shop PC's network address, not localhost.
-    return jsonify(branches=branches, tables=tables, categories=categories, items=items,
+    langs = {b['id']: dict(zip(('primary', 'secondary'), menu_langs(conn, g.tenant_id, b['id']))) for b in branches}
+    return jsonify(branches=branches, tables=tables, categories=categories, items=items, menu_langs=langs,
                    public_url=(os.getenv('ZAABOS_PUBLIC_URL') or '').rstrip('/') or None)
 
 # =====================================================================
@@ -1758,6 +1773,31 @@ def _order_with_items(conn, order):
         d['payments'] = []
     return d
 
+MENU_LANGS = ('th', 'lo', 'zh', 'en')
+
+def _clean_name_i18n(raw):
+    """{'th': 'ผัดไทย', 'zh': '泰式炒粉', ...} — only known languages, trimmed, blanks dropped."""
+    if isinstance(raw, str):
+        try: raw = json.loads(raw or '{}')
+        except ValueError: raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    return {k: str(raw.get(k) or '').strip()[:120] for k in MENU_LANGS if str(raw.get(k) or '').strip()}
+
+def menu_langs(conn, tenant_id, branch_id):
+    """(primary, secondary) menu-name languages chosen in the shop settings; '' = just the main name."""
+    try: rs = receipt_settings_for(conn, tenant_id, branch_id)
+    except Exception: return '', ''
+    p = rs.get('menu_lang_primary') if rs.get('menu_lang_primary') in MENU_LANGS else ''
+    q = rs.get('menu_lang_secondary') if rs.get('menu_lang_secondary') in MENU_LANGS else ''
+    return p, (q if q != p else '')
+
+def item_display_names(item, primary, secondary):
+    """Main line and optional second line for a menu row (tickets, receipts, order lines)."""
+    names = _clean_name_i18n(item['name_i18n'] if 'name_i18n' in item.keys() else '{}')
+    main = names.get(primary) or item['name']
+    second = names.get(secondary, '') if secondary else ''
+    return main, (second if second and second != main else '')
+
 def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
     """Recompute prices server-side from the real menu — never trust client-sent
     totals. Returns (order_items_to_insert, total) or raises ValueError(msg)."""
@@ -1767,6 +1807,7 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
         raise ValueError('หนึ่งออเดอร์มีรายการได้ไม่เกิน 100 รายการ')
     prepared = []
     total = Decimal('0.00')
+    lang1, lang2 = menu_langs(conn, tenant_id, branch_id)
     for line in cart:
         menu_item_id = line.get('menu_item_id')
         qty = line.get('quantity') or 1
@@ -1809,7 +1850,8 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
         line_total = money_decimal(unit_price * qty)
         total = money_decimal(total + line_total)
         prepared.append({
-            'menu_item_id': menu_item_id, 'item_name': item['name'], 'quantity': qty,
+            'menu_item_id': menu_item_id, 'item_name': item_display_names(item, lang1, lang2)[0],
+            'item_name2': item_display_names(item, lang1, lang2)[1], 'quantity': qty,
             'unit_price': money_float(unit_price), 'line_total': money_float(line_total),
             'notes': (line.get('notes') or '').strip()[:300], 'options': chosen_options,
         })
@@ -1896,6 +1938,7 @@ def public_menu():
         tenant=dict(name=tenant['name'], icon=tenant['icon'], currency=tenant['currency']),
         branch_id=branch_id,
         table=dict(id=table['id'], name=table['name']) if table else None,
+        menu_langs=dict(zip(('primary', 'secondary'), menu_langs(conn, tenant_id, branch_id))),
         categories=categories, items=items,
     )
 
@@ -2006,8 +2049,8 @@ def public_create_order():
         if not order_id:
             raise RuntimeError('public order insert did not return an id')
         for it in prepared_items:
-            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
-                VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
+            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot)
+                VALUES(?,?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None, it.get('item_name2', '')))
             oi_id = oi_cur.lastrowid
             if not oi_id:
                 raise RuntimeError('public order item insert did not return an id')
@@ -2177,8 +2220,8 @@ def staff_create_order():
             raise RuntimeError('order insert did not return an id')
         new_item_ids = []
         for it in prepared_items:
-            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at)
-                VALUES(?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None))
+            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot)
+                VALUES(?,?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None, it.get('item_name2', '')))
             oi_id = oi_cur.lastrowid
             if not oi_id:
                 raise RuntimeError('order item insert did not return an id')
@@ -2541,8 +2584,8 @@ def add_order_items(oid):
     except ValueError as e: return jsonify(error=str(e)),400
     ids=[]
     for it in prepared:
-        cur=conn.execute('INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at) VALUES(?,?,?,?,?,?,?,?)',
-            (oid,it['menu_item_id'],it['item_name'],it['quantity'],it['unit_price'],it['line_total'],it['notes'],None))
+        cur=conn.execute('INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot) VALUES(?,?,?,?,?,?,?,?,?)',
+            (oid,it['menu_item_id'],it['item_name'],it['quantity'],it['unit_price'],it['line_total'],it['notes'],None,it.get('item_name2','')))
         iid=cur.lastrowid; ids.append(iid)
         for op in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
@@ -2811,8 +2854,8 @@ def split_order(source_id):
             else:
                 remain=int(it['quantity'])-qty
                 conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(remain,remain*float(it['unit_price']),it['id']))
-                nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at)
-                                  VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],qty*float(it['unit_price']),it['notes'],it['kitchen_sent_at'],0,'',None))
+                nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at,item_name2_snapshot)
+                                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],qty*float(it['unit_price']),it['notes'],it['kitchen_sent_at'],0,'',None,it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else ''))
                 for op in conn.execute('SELECT * FROM order_item_options WHERE order_item_id=?',(it['id'],)).fetchall():
                     conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(nc.lastrowid,op['group_name_snapshot'],op['option_name_snapshot'],op['price_delta_snapshot']))
 
@@ -3540,7 +3583,7 @@ def _receipt_settings_defaults(conn, branch_id, tenant_id=None):
     tenant_id=g.tenant_id if tenant_id is None else tenant_id
     tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(tenant_id,)).fetchone()
     branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,tenant_id)).fetchone()
-    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True)
+    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True, menu_lang_primary='', menu_lang_secondary='')
 
 @app.get('/api/settings/receipt')
 @login_required
@@ -3560,7 +3603,7 @@ def save_receipt_settings():
     try: branch_id=int(d.get('branch_id'))
     except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
     if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue'}
+    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue','menu_lang_primary','menu_lang_secondary'}
     defaults=_receipt_settings_defaults(conn,branch_id); clean={}
     for k in allowed:
         v=d.get(k,defaults.get(k))

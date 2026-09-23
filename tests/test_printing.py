@@ -435,3 +435,34 @@ def test_no_guessing_when_two_new_receipt_printers(monkeypatch):
     assert printing.find_replacement('Old', taken={'B'}) == ('A', 'Xprinter A')
     inv['Old']['connected'] = True
     assert printing.find_replacement('Old', taken={'B'}) is None, 'saved printer is plugged in: do not switch'
+
+
+def test_menu_names_in_two_languages_reach_order_kitchen_and_receipt(shop, local_print):
+    """Shop picks Thai + Chinese: order lines, kitchen ticket and receipt carry both names; a dish
+    without a Chinese name shows one line; the QR menu tells the phone which languages to use."""
+    _only_this_shop(shop)
+    ok(call(shop, 'owner', 'PUT', '/api/settings/receipt', {'branch_id': shop['branch'], 'menu_lang_primary': 'th', 'menu_lang_secondary': 'zh'}))
+    ok(call(shop, 'owner', 'PUT', f"/api/menu-items/{shop['noodle']}", {'name_i18n': {'th': 'ผัดไทย', 'zh': '泰式炒粉', 'xx': 'ignored'}}))
+    boot = ok(call(shop, 'staff', 'GET', '/api/bootstrap'))
+    assert boot['menu_langs'][str(shop['branch'])] == {'primary': 'th', 'secondary': 'zh'}
+    noodle = next(i for i in boot['items'] if i['id'] == shop['noodle'])
+    assert json.loads(noodle['name_i18n']) == {'th': 'ผัดไทย', 'zh': '泰式炒粉'}
+    add_printer(shop, local_print.port, role='kitchen')
+    oid = ok(call(shop, 'staff', 'POST', '/api/orders', {'branch_id': shop['branch'], 'order_type': 'takeaway', 'send_to_kitchen': True,
+                                                          'cart': [{'menu_item_id': shop['noodle'], 'quantity': 1}, {'menu_item_id': shop['beer'], 'quantity': 1}]}))['order_id']
+    rows = _items(oid)
+    assert [(r['item_name_snapshot'], r['item_name2_snapshot']) for r in rows] == [('ผัดไทย', '泰式炒粉'), ('Beer', '')]
+    with core.app.app_context():
+        c = core.db()
+        items = printing._items_for(c, oid)
+        order_row = c.execute('SELECT * FROM orders WHERE id=?', (oid,)).fetchone()
+    from zoneinfo import ZoneInfo
+    kitchen = json.dumps(printing.kitchen_lines(order_row, items, '', ZoneInfo('Asia/Vientiane')), ensure_ascii=False)
+    assert '泰式炒粉' in kitchen and 'ผัดไทย' in kitchen
+    receipt = json.dumps(printing.receipt_lines(order_row, items, [], {}, ZoneInfo('Asia/Vientiane')), ensure_ascii=False)
+    assert '泰式炒粉' in receipt
+    with core.app.app_context():
+        token = core.db().execute('SELECT qr_token FROM dining_tables WHERE id=?', (shop['tables'][0],)).fetchone()['qr_token']
+    with core.app.test_client() as cl:
+        menu = cl.get(f'/api/public/menu?table={token}').get_json()
+    assert menu['menu_langs'] == {'primary': 'th', 'secondary': 'zh'}

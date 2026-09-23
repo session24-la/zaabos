@@ -108,6 +108,9 @@ def import_from_cloud(core, conn, tenant_id, branch_id, fetch, cloud_branch_id=N
             for op in grp.get('options') or []:
                 conn.execute('INSERT INTO menu_options(group_id,name,price_delta,active,sort_order) VALUES(?,?,?,1,?)',
                              (gid, op['name'], op.get('price_delta') or 0, op.get('sort_order') or 0))
+        if it.get('name_i18n'):
+            conn.execute('UPDATE menu_items SET name_i18n=? WHERE id=?',
+                         (it['name_i18n'] if isinstance(it['name_i18n'], str) else json.dumps(it['name_i18n'], ensure_ascii=False), iid))
         items += 1
     tables = 0
     for t in [t for t in boot.get('tables') or [] if t.get('branch_id') == sb]:
