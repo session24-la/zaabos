@@ -3509,8 +3509,14 @@ def current_shift():
     # Blind cash count: staff must count the drawer before seeing the system's expected cash.
     # Owner/manager retain live reconciliation visibility for supervision.
     if g.user['role']=='staff':
+        # True blind count: do not expose components from which expected drawer cash
+        # can be reconstructed before the cashier submits the physical count.
         summary=dict(summary)
-        summary.pop('expected_cash',None)
+        for key in ('expected_cash','cash_sales','cash_taken','cash_refunds','cash_reversals','cash_in','cash_out'):
+            summary.pop(key,None)
+        summary['payment_breakdown']=[
+            x for x in (summary.get('payment_breakdown') or []) if x.get('payment_method')!='cash'
+        ]
     return jsonify(shift=dict(sh),movements=[dict(x) for x in moves],summary=summary)
 
 @app.post('/api/operations/shift/open')
