@@ -3151,7 +3151,8 @@ def printer_test(pid):
     # Test prints go straight out and report the real result, so setup gets an immediate answer.
     import printing
     try:
-        printing.deliver(p,printing.escpos(printing.render(printing.test_lines(p['name'],os.getenv('ZAABOS_PUBLIC_URL') or ''),p['paper_width'])))
+        used=printing.deliver_or_switch(conn,p,printing.escpos(printing.render(printing.test_lines(p['name'],os.getenv('ZAABOS_PUBLIC_URL') or ''),p['paper_width'])))
+        if used['host']!=p['host']: return jsonify(ok=True,switched_to=used['name'])
     except Exception as e:
         where=f'USB "{p["host"]}"' if p['connection']=='system' else f'{p["host"]}:{p["port"]} — ตรวจว่าเปิดเครื่องและอยู่ Wi-Fi เดียวกัน'
         return jsonify(error=f'พิมพ์ทดสอบไม่สำเร็จ: {where} ({e})'),502

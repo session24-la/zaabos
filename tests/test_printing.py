@@ -212,6 +212,7 @@ def fake_cups(tmp_path, monkeypatch):
         'lpstat': f'#!/bin/sh\nif [ "$1" = "-e" ]; then echo _RP331; exit 0; fi\n'
                   f'if [ -f "{state}/offline" ] && [ ! -f "{state}/cancelled" ]; then echo "RP331-7 kot 100 now"; fi\n',
         'cancel': f'#!/bin/sh\ntouch "{state}/cancelled"\n',
+        'lpinfo': '#!/bin/sh\nexit 0\n',
     }
     for name, body in scripts.items():
         f = bindir / name; f.write_text(body); f.chmod(f.stat().st_mode | stat.S_IEXEC)
@@ -375,3 +376,62 @@ def test_windows_usb_printer_offline_job_is_deleted(monkeypatch):
     with pytest.raises(OSError):
         printing.send_system('RONGTA 80mm', b'\x1b@ticket', wait=0.3)
     assert wp.deleted == [42], 'a job the printer did not take must be removed from the spooler'
+
+
+@pytest.fixture
+def swapped_printer_cups(tmp_path, monkeypatch):
+    """The shop unplugged the old receipt printer (queue still exists) and plugged in a new one.
+    A label printer and a photo printer are also on this Mac and must never be picked."""
+    import os, stat
+    if sys.platform.startswith('win'):
+        pytest.skip('CUPS scenario (macOS/Linux)')
+    bindir = tmp_path / 'bin'; bindir.mkdir()
+    state = tmp_path / 'cups'; state.mkdir()
+    scripts = {
+        'lp': f'#!/bin/sh\nq="$2"\ncat > "{state}/$q.bin"\necho "request id is $q-1 (1 file(s))"\n',
+        'lpstat': ('#!/bin/sh\n'
+                   'case "$1" in\n'
+                   '  -e) printf "Old_Receipt\\nXprinter_XP_80\\nDeli_DL_720W\\nCanon_SELPHY\\n";;\n'
+                   '  -v) printf "device for Old_Receipt: usb://RONGTA/USB%%20Receipt%%20Printer?serial=OLD\\n'
+                   'device for Xprinter_XP_80: usb://Xprinter/XP-80?serial=NEW\\ndevice for Deli_DL_720W: usb://Deli/DL-720W?serial=L\\n'
+                   'device for Canon_SELPHY: ippusb://Canon%%20SELPHY._ipp._tcp.local./\\n";;\n'
+                   '  -l) printf "printer Old_Receipt is idle.\\n\\tDescription: RONGTA USB Receipt Printer\\nprinter Xprinter_XP_80 is idle.\\n\\tDescription: Xprinter XP-80\\n'
+                   'printer Deli_DL_720W is idle.\\n\\tDescription: Deli DL-720W\\nprinter Canon_SELPHY is idle.\\n\\tDescription: Canon SELPHY CP1500\\n";;\n'
+                   '  -o) [ "$2" = "Old_Receipt" ] && echo "Old_Receipt-1 kot 100 now";;\n'
+                   'esac\n'),
+        'lpinfo': '#!/bin/sh\nprintf "network socket\\ndirect usb://Xprinter/XP-80?serial=NEW\\ndirect usb://Deli/DL-720W?serial=L\\n"\n',
+        'cancel': '#!/bin/sh\nexit 0\n',
+    }
+    for name, body in scripts.items():
+        f = bindir / name; f.write_text(body); f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv('PATH', f'{bindir}{os.pathsep}{os.environ["PATH"]}')
+    monkeypatch.setattr(printing, 'SYSTEM_WAIT_SECONDS', 0.5)
+    return state
+
+
+def test_replaced_usb_printer_is_picked_up_automatically(shop, local_print, swapped_printer_cups):
+    _only_this_shop(shop)
+    inv = printing.printer_inventory()
+    assert inv['Old_Receipt']['connected'] is False and inv['Xprinter_XP_80']['connected'] is True
+    assert not inv['Deli_DL_720W']['receipt_like'] and not inv['Canon_SELPHY']['receipt_like']
+    pid = ok(call(shop, 'owner', 'POST', '/api/printers', {'branch_id': shop['branch'], 'name': 'Old', 'role': 'both',
+                                                           'connection': 'system', 'host': 'Old_Receipt'}))['id']
+    oid = order(shop)
+    ok(call(shop, 'staff', 'PUT', f'/api/orders/{oid}/send-to-kitchen', {'item_ids': [r['id'] for r in _items(oid)]}))
+    printing.process_once(core)
+    assert (swapped_printer_cups / 'Xprinter_XP_80.bin').read_bytes().startswith(b'\x1b@'), 'ticket must come out of the new printer'
+    assert _jobs(shop)[-1]['status'] == 'printed'
+    with core.app.app_context():
+        row = core.db().execute('SELECT host,name FROM printers WHERE id=?', (pid,)).fetchone()
+    assert (row['host'], row['name']) == ('Xprinter_XP_80', 'Xprinter XP-80'), 'the route remembers the new printer'
+
+
+def test_no_guessing_when_two_new_receipt_printers(monkeypatch):
+    inv = {'Old': {'label': 'Old receipt', 'uri': 'usb://a', 'connected': False, 'receipt_like': True},
+           'A': {'label': 'Xprinter A', 'uri': 'usb://b', 'connected': True, 'receipt_like': True},
+           'B': {'label': 'Epson TM-T82', 'uri': 'usb://c', 'connected': True, 'receipt_like': True}}
+    monkeypatch.setattr(printing, 'printer_inventory', lambda: inv)
+    assert printing.find_replacement('Old') is None
+    assert printing.find_replacement('Old', taken={'B'}) == ('A', 'Xprinter A')
+    inv['Old']['connected'] = True
+    assert printing.find_replacement('Old', taken={'B'}) is None, 'saved printer is plugged in: do not switch'
