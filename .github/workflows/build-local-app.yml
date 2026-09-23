@@ -1,0 +1,89 @@
+name: Build ZaabOS Local (Windows + macOS)
+on:
+  push:
+    branches: [step2-local-shop-pos, main]
+    tags: ['local-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Tag must match the app version (the updater compares them)
+        if: startsWith(github.ref, 'refs/tags/local-v')
+        run: test "local-v$(python -c 'import local_ops; print(local_ops.APP_VERSION)')" = "${GITHUB_REF_NAME}"
+      - run: python -m pip install -r requirements-local.txt pytest pyinstaller pillow
+      - if: runner.os == 'macOS'
+        run: python -m pip install rumps
+      - name: Shop-PC end-to-end (sell, restart, data kept, backup)
+        run: python -m pytest tests/test_local_mode.py tests/test_money_reconciliation.py tests/test_printing.py tests/test_local_ops.py -q
+      - run: pyinstaller zaabos_local.spec --noconfirm
+      - name: Smoke-test the packaged app
+        run: |
+          BIN=dist/ZaabOS/ZaabOS; [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          "$BIN" --no-browser --port 18765 --data-dir "$RUNNER_TEMP/zaabos-data" > smoke.log 2>&1 &
+          SMOKE_PID=$!
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:18765/healthz && break; sleep 1; done
+          curl -sf http://127.0.0.1:18765/healthz
+          curl -sf http://127.0.0.1:18765/ | grep -q '<title>ZaabOS'
+          test -f "$RUNNER_TEMP/zaabos-data/zaabos.db"
+          ls "$RUNNER_TEMP/zaabos-data/backups" | grep -q zaabos_local_
+          # stop it: a running ZaabOS.exe keeps its files locked and the zip step fails
+          kill $SMOKE_PID 2>/dev/null || true
+          if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //IM ZaabOS.exe >/dev/null 2>&1 || true; else pkill -f dist/ZaabOS || true; fi
+          sleep 2
+      # Zip it ourselves: upload-artifact drops the .app folder and its internal symlinks, which
+      # leaves a Mac bundle that fails with "Failed to load Python shared library".
+      - name: Package
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent dist/ZaabOS.app ZaabOS-Local-macOS.zip
+          else
+            python -c "import shutil; shutil.make_archive('ZaabOS-Local-Windows', 'zip', 'dist', 'ZaabOS')"
+          fi
+      - name: Packaged zip still runs (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir unzip-check && ditto -x -k ZaabOS-Local-macOS.zip unzip-check
+          unzip-check/ZaabOS.app/Contents/MacOS/ZaabOS --no-browser --port 18766 --data-dir "$RUNNER_TEMP/zip-data" > zip.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:18766/healthz && break; sleep 1; done
+          curl -sf http://127.0.0.1:18766/healthz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: ZaabOS-Local-${{ runner.os }}
+          path: ZaabOS-Local-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # A local-v* tag publishes both zips as a GitHub Release; installed apps update from it.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/local-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release create "$GITHUB_REF_NAME" dist/ZaabOS-Local-macOS.zip dist/ZaabOS-Local-Windows.zip \
+            --repo "$GITHUB_REPOSITORY" --title "ZaabOS Local ${GITHUB_REF_NAME#local-v}" \
+            --notes "ZaabOS Local ${GITHUB_REF_NAME#local-v} — อัปเดตจากเมนู 🍜 หรือ ตั้งค่าร้าน → โปรแกรมในเครื่องร้าน"

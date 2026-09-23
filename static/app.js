@@ -316,7 +316,7 @@ function refreshCurrentTab(tab) {
   else if (tab === 'pricing') loadPricing();
   else if (tab === 'inventory') loadInventory();
   else if (tab === 'operations') loadOperations();
-  else if (tab === 'receiptsettings') loadReceiptSettings();
+  else if (tab === 'receiptsettings') { loadReceiptSettings(); loadNetPrinters(); loadLocalPanel(); }
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
   else if (tab === 'users') loadUsers();
@@ -547,7 +547,7 @@ $('#branchSave').addEventListener('click', async () => {
 
 // ===================== Tables & QR =====================
 
-function tableOrderUrl(token) { return location.origin + '/order/' + token; }
+function tableOrderUrl(token) { return ((boot && boot.public_url) || location.origin) + '/order/' + token; }
 
 function renderTables() {
   const grid = $('#tableGrid');
@@ -1081,9 +1081,10 @@ async function sendSelectedToKitchen(orderId, card) {
   const item_ids = Array.from(card.querySelectorAll('.oc-item-cb:checked')).map(cb => parseInt(cb.dataset.itemId, 10));
   if (!item_ids.length) return;
   try {
-    await apiJson('/api/orders/' + orderId + '/send-to-kitchen', 'PUT', { item_ids });
+    const sent = await apiJson('/api/orders/' + orderId + '/send-to-kitchen', 'PUT', { item_ids });
     toast(t('toast_sent_to_kitchen'), 'ok');
-    printKitchenTicket(orderId, item_ids);
+    // Wi-Fi kitchen printer: the shop PC prints it; don't also open the browser print dialog.
+    if (!sent.printed_by_server) printKitchenTicket(orderId, item_ids);
     onOrderActionDone();
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -1315,6 +1316,8 @@ function printElement(el) {
 async function printReceipt(orderId) {
   const o = findOrderById(orderId);
   if (!o) return;
+  // Wi-Fi receipt printer on the shop PC: queue it there instead of the browser print dialog.
+  try { const q = await apiJson('/api/orders/' + orderId + '/print-receipt', 'POST', {lang: currentLang, order_type_label: orderTypeLabel(o.order_type)}); if (q.queued) { toast('ส่งใบเสร็จไปเครื่องพิมพ์แล้ว', 'ok'); setTimeout(refreshPrintStatus, 2500); return; } } catch (e) {}
   const branch = (boot && boot.branches && boot.branches.find(b => Number(b.id) === Number(o.branch_id))) || null;
   let rs={}; try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(o.branch_id))}catch(e){}
   const shopName = rs.shop_name || ((me && me.tenant && me.tenant.name) || 'ZaabOS');
@@ -1324,7 +1327,8 @@ async function printReceipt(orderId) {
   const subtotal = Number(o.total_amount || 0);
   const discount = Number(o.discount_amount || 0);
   const service = Number(o.service_charge_amount || 0);
-  const grandTotal = Math.max(0, subtotal - discount) + service + tax;
+  const delivery = Number(o.delivery_fee || 0);
+  const grandTotal = Math.max(0, subtotal - discount) + service + tax + delivery;
   const paymentNames = {cash:'Cash / ເງິນສົດ',qr:'QR',card:'Card',bank_transfer:'Bank transfer',other:'Other'};
   const paymentRows = Array.isArray(o.payments) ? o.payments : [];
   const activeCashRows = paymentRows.filter(p => p.payment_method === 'cash');
@@ -1365,6 +1369,7 @@ async function printReceipt(orderId) {
     ${discount > 0 ? `<div class="rp-row"><span>ส่วนลด${o.discount_label?' · '+escapeHtml(o.discount_label):''}</span><span>−${fmtMoney(discount)}</span></div>` : ''}
     ${service > 0 ? `<div class="rp-row"><span>Service charge</span><span>${fmtMoney(service)}</span></div>` : ''}
     ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
+    ${delivery > 0 ? `<div class="rp-row"><span>ค่าส่ง / Delivery</span><span>${fmtMoney(delivery)}</span></div>` : ''}
     <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
     ${o.payment_status === 'paid' ? `<div class="rp-paid">【 PAID · ຊຳລະແລ້ວ 】</div>` : ''}
     ${rs.show_payment_breakdown!==false ? paymentBreakdown : (o.payment_method ? `<div class="rp-row"><span>Payment</span><span>${escapeHtml(paymentNames[o.payment_method] || o.payment_method)}</span></div>` : '')}
@@ -1869,3 +1874,95 @@ if(offlineQueueList)offlineQueueList.addEventListener('click',async e=>{
   if(rem&&confirm('ลบออเดอร์นี้ออกจากคิวออฟไลน์? ข้อมูลรายการนี้จะไม่ถูกส่งขึ้น Server')){await offlineDelete('outbox',rem.dataset.offlineRemove);await renderOfflineQueue();}
 });
 
+
+// ---------- Step 3: shop printers (USB or Wi-Fi) printed by the shop PC ----------
+let npPrinters=[], npUsb=[], npNet=[];
+const npWhere=p=>p.connection==='system'?'USB':(p.host+':'+p.port);
+function npRenderAssign(){
+  const opts=sel=>`<option value="">— หน้าต่าง Print ของเบราว์เซอร์ —</option>`+npPrinters.filter(p=>!p.station_id).map(p=>`<option value="${p.id}">${escapeHtml(p.name)} · ${escapeHtml(npWhere(p))}</option>`).join('');
+  for(const [id,job] of [['#npAssignReceipt','receipt'],['#npAssignKitchen','kitchen']]){
+    const cur=npPrinters.find(p=>!p.station_id&&(p.role===job||p.role==='both'));
+    $(id).innerHTML=opts();$(id).value=cur?String(cur.id):'';
+  }
+}
+function npRenderFound(){
+  const have=new Set(npPrinters.map(p=>p.connection==='system'?'usb:'+p.host:'net:'+p.host));
+  const rows=[...npUsb.map(u=>({key:'usb:'+u.queue,icon:'🔌',title:u.label,sub:'USB ต่อกับเครื่องนี้',add:{connection:'system',host:u.queue,name:u.label}})),
+              ...npNet.map(n=>({key:'net:'+n.host,icon:'📶',title:'เครื่องพิมพ์ Wi‑Fi',sub:n.host,add:{connection:'network',host:n.host,port:9100,name:'Wi‑Fi '+n.host}}))]
+    .filter(r=>!have.has(r.key));
+  $('#npFound').innerHTML=rows.map((r,i)=>`<div class="np-found"><div><b>${r.icon} ${escapeHtml(r.title)}</b><small>${escapeHtml(r.sub)}</small></div><button class="save settings-save-compact" data-np-found="${i}" type="button">ใช้เครื่องนี้</button></div>`).join('');
+  $('#npFound')._rows=rows;
+}
+async function loadNetPrinters(){
+  if(!currentBranchId)return;
+  try{
+    const [r,d]=await Promise.all([api('/api/printers?branch_id='+currentBranchId),api('/api/printers/discover').catch(()=>({usb:[],network:[],local:false}))]);
+    npPrinters=r.printers||[];npUsb=d.usb||[];
+    $('#npMode').textContent=r.local?'พิมพ์ตรงถึงเครื่องพิมพ์ในร้าน (USB หรือ Wi‑Fi) โดยไม่ขึ้นหน้าต่าง Print':'ตอนนี้เปิดจากคลาวด์ — พิมพ์ตรงได้เมื่อเปิดโปรแกรม ZaabOS บนเครื่องในร้าน';
+    $('#npScanBtn').classList.toggle('hidden',!r.local);
+    npRenderAssign();npRenderFound();
+    $('#npList').innerHTML=npPrinters.length?npPrinters.map(p=>{const jobs=[(p.role==='receipt'||p.role==='both')&&'ใบเสร็จ',(p.role==='kitchen'||p.role==='both')&&'ครัว'].filter(Boolean).join(' + ')||'ยังไม่ได้ใช้';return `<div class="np-row"><div><b>${p.connection==='system'?'🔌':'📶'} ${escapeHtml(p.name)}</b><small>${escapeHtml(npWhere(p))} · ${p.paper_width} mm · ${jobs}${p.station_name?' · '+escapeHtml(p.station_name):''}</small></div><div class="np-actions"><button class="ghost-btn" data-np-test="${p.id}">พิมพ์ทดสอบ</button><button class="icon-btn danger" data-np-del="${p.id}" title="ลบ">×</button></div></div>`}).join(''):emptyState('🖨️','ยังไม่มีเครื่องพิมพ์ — เลือกจากรายการด้านล่างได้เลย');
+  }catch(e){toast(e.message,'err')}
+}
+async function npAdd(payload){
+  const r=await apiJson('/api/printers','POST',{branch_id:currentBranchId,role:'none',paper_width:'80',...payload});
+  // First printer in the shop: use it for both receipts and kitchen right away.
+  for(const job of ['receipt','kitchen']){if(!npPrinters.some(p=>!p.station_id&&(p.role===job||p.role==='both')))await apiJson('/api/printers/assign','PUT',{branch_id:currentBranchId,job,printer_id:r.id});}
+  toast('บันทึกเครื่องพิมพ์แล้ว — กด "พิมพ์ทดสอบ" เพื่อเช็ก','ok');await loadNetPrinters();
+}
+document.querySelectorAll('[data-np-assign]').forEach(sel=>sel.addEventListener('change',async()=>{try{await apiJson('/api/printers/assign','PUT',{branch_id:currentBranchId,job:sel.dataset.npAssign,printer_id:sel.value?Number(sel.value):null});toast('บันทึกแล้ว','ok');loadNetPrinters()}catch(e){toast(e.message,'err')}}));
+$('#npFound').addEventListener('click',async e=>{const b=e.target.closest('[data-np-found]');if(!b)return;b.disabled=true;try{await npAdd($('#npFound')._rows[Number(b.dataset.npFound)].add)}catch(err){toast(err.message,'err');b.disabled=false}});
+$('#npScanBtn').addEventListener('click',async()=>{const b=$('#npScanBtn');b.disabled=true;b.textContent='กำลังค้นหา… (ประมาณ 3 วินาที)';try{const d=await api('/api/printers/discover?network=1');npUsb=d.usb||[];npNet=d.network||[];npRenderFound();if(!npNet.length)toast('ไม่พบเครื่องพิมพ์ Wi‑Fi — เครื่องพิมพ์ต้องต่อ Wi‑Fi เดียวกับ Mac ก่อน','err')}catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='🔍 ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน'}});
+$('#npAddIpBtn').addEventListener('click',async()=>{const host=$('#npHost').value.trim();try{await npAdd({connection:'network',host,port:Number($('#npPort').value||9100),name:'Wi‑Fi '+host});$('#npHost').value=''}catch(e){toast(e.message,'err')}});
+$('#npList').addEventListener('click',async e=>{
+  const tb=e.target.closest('[data-np-test]');
+  if(tb){tb.disabled=true;const old=tb.textContent;tb.textContent='กำลังพิมพ์…';try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('พิมพ์ทดสอบแล้ว ✓','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false;tb.textContent=old}return;}
+  const db=e.target.closest('[data-np-del]');
+  if(db&&confirm('ลบเครื่องพิมพ์นี้?')){try{await apiJson('/api/printers/'+db.dataset.npDel,'DELETE');loadNetPrinters()}catch(err){toast(err.message,'err')}}
+});
+async function refreshPrintStatus(){
+  const b=$('#printFailBanner');if(!b||!currentBranchId||!me||me.role==='super_admin'&&!me.tenant)return;
+  try{const r=await api('/api/printers?branch_id='+currentBranchId);b.classList.toggle('hidden',!r.failed);b.textContent=`🖨 พิมพ์ไม่สำเร็จ ${r.failed} งาน — แตะเพื่อพิมพ์ซ้ำ`;}catch(e){}
+}
+$('#printFailBanner').addEventListener('click',async()=>{
+  try{
+    const jobs=await api('/api/print/jobs?status=failed&branch_id='+currentBranchId);if(!jobs.length){refreshPrintStatus();return;}
+    const list=jobs.map(j=>`• ${j.job_type==='receipt'?'ใบเสร็จ':'ครัว'} #${j.order_no}${j.table_name_snapshot?' ('+j.table_name_snapshot+')':''} — ${j.last_error||''}`).join('\n');
+    if(!confirm(`งานที่พิมพ์ไม่ออก:\n${list}\n\nตรวจว่าเครื่องพิมพ์เปิดอยู่และมีกระดาษ แล้วกด OK เพื่อพิมพ์ซ้ำ (ครั้งเดียว)`))return;
+    for(const j of jobs)await apiJson('/api/print/jobs/'+j.id+'/retry','POST',{});
+    toast('ส่งพิมพ์ซ้ำแล้ว','ok');setTimeout(refreshPrintStatus,4000);
+  }catch(e){toast(e.message,'err')}
+});
+setInterval(refreshPrintStatus,15000);
+
+// ---------- Shop-PC program: update, auto-start, QR address, backups, import (local app only) ----------
+async function loadLocalPanel(){
+  let st;try{st=await api('/api/local/status')}catch(e){$('#localPanel').classList.add('hidden');return}
+  $('#localPanel').classList.remove('hidden');
+  $('#lpVersion').textContent=`ZaabOS เวอร์ชัน ${st.version} · ข้อมูลอยู่ที่ ${st.data_dir}`;
+  $('#lpUpdateText').textContent=st.update?`มีเวอร์ชันใหม่ ${st.update.version}`:`เวอร์ชัน ${st.version}`;
+  $('#lpUpdateBtn').textContent=st.update?`⬆️ อัปเดตเป็น ${st.update.version}`:'ตรวจหาอัปเดต';
+  $('#lpUpdateBtn').dataset.ready=st.update?'1':'';
+  $('#lpAutostart').checked=!!st.autostart;
+  $('#lpAddress').value=st.address_mode||'ip';
+  $('#lpAddressHelp').innerHTML=`ตอนนี้: <b>${escapeHtml(st.public_url||'')}</b>${st.address_warning?'<br>⚠️ '+escapeHtml(st.address_warning):''}<br>ชื่อเครื่อง = ${escapeHtml(st.hostname)} (ไม่เปลี่ยนแม้ IP เปลี่ยน แต่มือถือ Android บางรุ่นอาจเปิดไม่ได้) · แนะนำ: ใช้ IP แล้วล็อก IP ที่เราเตอร์ (DHCP reservation)`;
+  $('#lpMirror').textContent=st.mirror_dir?`สำรองอัตโนมัติทุก 2 ชั่วโมง และคัดลอกไปที่ ${st.mirror_dir} (อยู่รอดแม้เครื่องเสีย)`:'สำรองอัตโนมัติทุก 2 ชั่วโมง (ยังไม่มีที่เก็บนอกเครื่อง — เปิด iCloud Drive / OneDrive เพื่อให้คัดลอกอัตโนมัติ)';
+  $('#lpBackups').innerHTML=(st.backups||[]).slice(0,10).map(b=>`<div class="np-row"><div><b>${escapeHtml(new Date(b.mtime*1000).toLocaleString(localeFor(currentLang)))}</b><small>${escapeHtml(b.where)} · ${(b.bytes/1024).toFixed(0)} KB · ${escapeHtml(b.file)}</small></div><div class="np-actions"><button class="ghost-btn" data-lp-restore="${escapeHtml(b.file)}">กู้คืน</button></div></div>`).join('');
+}
+$('#lpUpdateBtn').addEventListener('click',async()=>{const b=$('#lpUpdateBtn');b.disabled=true;try{
+  if(!b.dataset.ready){const r=await apiJson('/api/local/check-update','POST',{});if(!r.update){toast('ใช้เวอร์ชันล่าสุดแล้ว','ok');return}loadLocalPanel();return}
+  if(!confirm('อัปเดตตอนนี้? ข้อมูลร้านไม่หาย (สำรองให้ก่อนอัตโนมัติ) ZaabOS จะปิดและเปิดใหม่ใน ~10 วินาที'))return;
+  b.textContent='กำลังดาวน์โหลด…';await apiJson('/api/local/update','POST',{});toast('กำลังติดตั้ง — หน้านี้จะรีโหลดเอง','ok');setTimeout(()=>location.reload(),15000)
+}catch(e){toast(e.message,'err')}finally{b.disabled=false}});
+$('#lpAutostart').addEventListener('change',async e=>{try{await apiJson('/api/local/autostart','PUT',{enabled:e.target.checked});toast('บันทึกแล้ว','ok')}catch(err){toast(err.message,'err');e.target.checked=!e.target.checked}});
+$('#lpAddress').addEventListener('change',async e=>{try{await apiJson('/api/local/address-mode','PUT',{mode:e.target.value});alert('บันทึกแล้ว — ปิดแล้วเปิด ZaabOS ใหม่ จากนั้นพิมพ์ QR โต๊ะใหม่')}catch(err){toast(err.message,'err')}});
+$('#lpBackupBtn').addEventListener('click',async()=>{try{const r=await apiJson('/api/local/backup','POST',{});toast('สำรองแล้ว'+(r.mirrored?' + คัดลอกนอกเครื่องแล้ว':''),'ok');loadLocalPanel()}catch(e){toast(e.message,'err')}});
+$('#lpBackups').addEventListener('click',async e=>{const b=e.target.closest('[data-lp-restore]');if(!b)return;
+  if(!confirm(`กู้ข้อมูลจาก ${b.dataset.lpRestore}?\nข้อมูลปัจจุบันจะถูกสำรองไว้ก่อน แล้ว ZaabOS จะเปิดใหม่`))return;
+  try{const r=await apiJson('/api/local/restore','POST',{file:b.dataset.lpRestore});toast(`กำลังกู้ข้อมูล (${r.orders} ออเดอร์) — หน้านี้จะรีโหลดเอง`,'ok');setTimeout(()=>location.reload(),12000)}catch(err){toast(err.message,'err')}});
+$('#lpImportBtn').addEventListener('click',async()=>{const b=$('#lpImportBtn');
+  if(!confirm('ดึงเมนู/โต๊ะ/ตั้งค่า จาก zaabos.com มาแทนของเดิมในเครื่องนี้?\n(ของเดิมถูกเก็บเข้าคลัง ไม่ลบ · สำรองข้อมูลให้ก่อน)'))return;
+  b.disabled=true;b.textContent='กำลังดึงข้อมูล…';
+  try{const r=await apiJson('/api/local/import-cloud','POST',{branch_id:currentBranchId,username:$('#lpCloudUser').value.trim(),password:$('#lpCloudPass').value});
+    $('#lpCloudPass').value='';alert(`ดึงข้อมูลจากสาขา "${r.branch}" แล้ว: ${r.categories} หมวด · ${r.items} เมนู · ${r.tables} โต๊ะ · ${r.stations} สถานีครัว\nพิมพ์ QR โต๊ะใหม่ก่อนใช้งาน`);location.reload();
+  }catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='ดึงข้อมูลมาใส่เครื่องนี้'}});

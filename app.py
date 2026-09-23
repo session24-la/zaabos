@@ -143,9 +143,9 @@ def get_secret_key():
     if env_key: return env_key
     if IS_POSTGRES:
         raise RuntimeError('ZAABOS_SECRET_KEY is required when PostgreSQL/production mode is enabled')
-    if SECRET_FILE.exists(): return SECRET_FILE.read_text().strip()
+    if SECRET_FILE.exists(): return SECRET_FILE.read_text(encoding='utf-8').strip()
     key = secrets.token_hex(32)
-    SECRET_FILE.write_text(key)
+    SECRET_FILE.write_text(key, encoding='utf-8')
     return key
 
 app.secret_key = get_secret_key()
@@ -166,7 +166,7 @@ STATUS_TRANSITIONS = {
     'served': {'completed','cancelled'},
     'completed': set(), 'cancelled': set(),
 }
-BACKUP_DIR = Path(os.getenv('ZAABOS_BACKUP_DIR') or (BASE / 'backups')).expanduser()
+BACKUP_DIR = Path(os.getenv('ZAABOS_BACKUP_DIR') or (DATA_DIR / 'backups')).expanduser()
 
 def _safe_backup_label(label='manual'):
     raw = ''.join(ch for ch in str(label or 'manual') if ch.isalnum() or ch in ('-', '_'))[:32]
@@ -199,7 +199,14 @@ def backup_db(label='auto'):
     else:
         if not DB.exists(): raise RuntimeError('ไม่พบฐานข้อมูล SQLite')
         dest = BACKUP_DIR / f'zaabos_{label}_{ts}.db'
-        shutil.copy2(DB, dest)
+        # SQLite online-backup API: a consistent copy even while tablets are writing (a plain
+        # file copy can catch a half-written page or miss rows still in the WAL file).
+        src = sqlite3.connect(DB, timeout=30)
+        try:
+            out = sqlite3.connect(dest)
+            try: src.backup(out)
+            finally: out.close()
+        finally: src.close()
         kind = 'sqlite'
     size = dest.stat().st_size
     if size < 1024:
@@ -230,9 +237,13 @@ def db():
         if IS_POSTGRES:
             g.db = PGConn(os.getenv('DATABASE_URL'))
         else:
-            g.db = sqlite3.connect(DB)
+            # Shop PC serves several tablets: wait for the write lock instead of failing at once,
+            # and use WAL so readers (KDS, reports) never block the cashier's writes.
+            g.db = sqlite3.connect(DB, timeout=15)
             g.db.row_factory = sqlite3.Row
             g.db.execute('PRAGMA foreign_keys=ON')
+            g.db.execute('PRAGMA journal_mode=WAL')
+            g.db.execute('PRAGMA synchronous=NORMAL')
     return g.db
 
 @app.teardown_appcontext
@@ -712,6 +723,27 @@ def ensure_schema_migrations(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS idx_orders_tenant_device ON orders(tenant_id,client_device_id,created_at)')
     conn.commit()
     record_migration(conn, 27, 'offline_pos_safe_sync')
+    # Step 3 — network printers on the shop Wi-Fi (printed by the shop PC; see printing.py).
+    id29 = 'INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY' if IS_POSTGRES else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS printers (
+        id {id29}, tenant_id INTEGER NOT NULL, branch_id INTEGER NOT NULL, name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'receipt', station_id INTEGER, host TEXT NOT NULL, port INTEGER NOT NULL DEFAULT 9100,
+        paper_width TEXT NOT NULL DEFAULT '80', active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL)""")
+    if IS_POSTGRES:
+        pj_cols = {r['column_name'] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='kitchen_print_jobs'").fetchall()}
+    else:
+        pj_cols = {r['name'] for r in conn.execute('PRAGMA table_info(kitchen_print_jobs)').fetchall()}
+    for col, ddl in (('job_type', "TEXT NOT NULL DEFAULT 'kitchen'"), ('printer_id', 'INTEGER'), ('item_ids', 'TEXT'), ('next_attempt_at', 'TEXT'), ('payload', 'TEXT')):
+        if col not in pj_cols:
+            conn.execute(f'ALTER TABLE kitchen_print_jobs ADD COLUMN {col} {ddl}')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_print_jobs_due ON kitchen_print_jobs(status,next_attempt_at)')
+    if IS_POSTGRES:
+        conn.execute("ALTER TABLE printers ADD COLUMN IF NOT EXISTS connection TEXT NOT NULL DEFAULT 'network'")
+    elif 'connection' not in {r['name'] for r in conn.execute('PRAGMA table_info(printers)').fetchall()}:
+        conn.execute("ALTER TABLE printers ADD COLUMN connection TEXT NOT NULL DEFAULT 'network'")   # 'network' Wi-Fi/LAN | 'system' USB queue
+    conn.commit()
+    record_migration(conn, 29, 'network_printers')
 
 
 
@@ -722,7 +754,7 @@ def ensure_schema_migrations(conn):
 def init_db():
     if IS_POSTGRES:
         conn = PGConn(os.getenv('DATABASE_URL'))
-        conn.executescript((BASE / 'schema_postgres.sql').read_text())
+        conn.executescript((BASE / 'schema_postgres.sql').read_text(encoding='utf-8'))
         ensure_default_tenant(conn)
         ensure_super_admin(conn)
         ensure_schema_migrations(conn)
@@ -733,7 +765,7 @@ def init_db():
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys=ON')
-    conn.executescript((BASE / 'schema.sql').read_text())
+    conn.executescript((BASE / 'schema.sql').read_text(encoding='utf-8'))
     create_tenant_indexes(conn)
     ensure_default_tenant(conn)
     ensure_super_admin(conn)
@@ -1691,7 +1723,9 @@ def bootstrap():
     categories = [dict(x) for x in conn.execute('SELECT * FROM menu_categories WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,))]
     items_rows = conn.execute('SELECT * FROM menu_items WHERE tenant_id=? AND active=1 ORDER BY sort_order,id', (g.tenant_id,)).fetchall()
     items = [_menu_item_with_options(conn, r) for r in items_rows]
-    return jsonify(branches=branches, tables=tables, categories=categories, items=items)
+    # Local shop server: QR codes must point at the shop PC's network address, not localhost.
+    return jsonify(branches=branches, tables=tables, categories=categories, items=items,
+                   public_url=(os.getenv('ZAABOS_PUBLIC_URL') or '').rstrip('/') or None)
 
 # =====================================================================
 # Orders — public (customer QR ordering, no login) + staff-side management
@@ -2225,17 +2259,19 @@ def send_order_items_to_kitchen(oid):
         conn.execute('UPDATE order_items SET kitchen_sent_at=? WHERE id=?', (ts, iid))
     # Server-side kitchen print queue: create one job per station touched by this send.
     placeholders=','.join('?' for _ in item_ids)
-    station_rows=conn.execute(f'''SELECT DISTINCT mi.kitchen_station_id AS station_id
+    station_rows=conn.execute(f'''SELECT oi.id AS item_id, mi.kitchen_station_id AS station_id
         FROM order_items oi LEFT JOIN menu_items mi ON mi.id=oi.menu_item_id AND mi.tenant_id=?
         WHERE oi.order_id=? AND oi.id IN ({placeholders})''', [g.tenant_id,oid,*item_ids]).fetchall()
-    station_ids=[r['station_id'] for r in station_rows] or [None]
-    for station_id in station_ids:
-        conn.execute('''INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at)
-                        VALUES(?,?,?,?,?,?,?,?)''',
-                     (g.tenant_id,order['branch_id'],oid,station_id,'pending',0,'',ts))
+    by_station={}
+    for r in station_rows: by_station.setdefault(r['station_id'],[]).append(r['item_id'])
+    # Each ticket remembers exactly which items it carries, so a reprint shows the same round.
+    for station_id,ids in (by_station or {None:item_ids}).items():
+        conn.execute('''INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,item_ids)
+                        VALUES(?,?,?,?,?,?,?,?,?,?)''',
+                     (g.tenant_id,order['branch_id'],oid,station_id,'pending',0,'',ts,'kitchen',json.dumps(ids)))
     log_action('send_order_items_to_kitchen', detail=f'{oid}: {item_ids}')
-    conn.commit()
-    return jsonify(ok=True, sent_at=ts, item_ids=item_ids)
+    conn.commit(); _wake_printer()
+    return jsonify(ok=True, sent_at=ts, item_ids=item_ids, printed_by_server=_network_printing(conn, order['branch_id'], 'kitchen'))
 
 # ---------- Round 14D: pricing / promotions / service charge / tax ----------
 def _pricing_settings(conn, branch_id):
@@ -2939,6 +2975,177 @@ def kitchen_print_job_result(jid):
       ('printed' if ok else 'pending','' if ok else (d.get('error') or 'print failed')[:300],now() if ok else None,jid));conn.commit()
     return jsonify(ok=True)
 
+# ---------- Step 3: network printers (shop Wi-Fi, printed by the shop PC) ----------
+def _local_printing():
+    """Only the shop-PC server can reach printers on the shop Wi-Fi; the cloud never claims jobs."""
+    return os.getenv('ZAABOS_LOCAL_PRINT') == '1'
+
+def _network_printing(conn, branch_id, role):
+    if not _local_printing(): return False
+    return bool(conn.execute("SELECT 1 FROM printers WHERE tenant_id=? AND branch_id=? AND role IN (?,'both') AND active=1 LIMIT 1",
+                             (g.tenant_id, branch_id, role)).fetchone())
+
+def _wake_printer():
+    if _local_printing():
+        import printing
+        printing.notify()
+
+def _printer_payload(conn, d, branch_id):
+    name=(d.get('name') or '').strip()[:60]; host=(d.get('host') or '').strip()[:100]; role=(d.get('role') or 'receipt').strip()
+    connection=(d.get('connection') or 'network').strip()
+    if connection not in ('network','system'): raise ValueError('การเชื่อมต่อไม่ถูกต้อง')
+    if not name or not host: raise ValueError('กรุณาใส่ชื่อและ IP ของเครื่องพิมพ์' if connection=='network' else 'กรุณาเลือกเครื่องพิมพ์ USB')
+    if role not in ('receipt','kitchen','both','none'): raise ValueError('ประเภทเครื่องพิมพ์ไม่ถูกต้อง')
+    if connection=='system':
+        import printing
+        if host not in printing.system_queues(): raise ValueError('ไม่พบเครื่องพิมพ์ USB นี้บนเครื่อง')
+    elif any(ch.isspace() or ch in '/:@' for ch in host): raise ValueError('IP เครื่องพิมพ์ไม่ถูกต้อง (เช่น 192.168.1.50)')
+    else:
+        from urllib.parse import urlparse
+        if host==(urlparse(os.getenv('ZAABOS_PUBLIC_URL') or '').hostname or ''):
+            raise ValueError('นี่คือ IP ของเครื่องคอมพิวเตอร์นี้ ไม่ใช่เครื่องพิมพ์ — ดู IP จากใบ Self-test ของเครื่องพิมพ์')
+    try: port=int(d.get('port') or 9100)
+    except (TypeError,ValueError): raise ValueError('พอร์ตไม่ถูกต้อง')
+    if not 1<=port<=65535: raise ValueError('พอร์ตไม่ถูกต้อง')
+    paper=str(d.get('paper_width') or '80')
+    if paper not in ('80','58'): raise ValueError('ขนาดกระดาษไม่ถูกต้อง')
+    station=d.get('station_id') or None
+    if station is not None:
+        try: station=int(station)
+        except (TypeError,ValueError): raise ValueError('สถานีครัวไม่ถูกต้อง')
+        if not conn.execute('SELECT 1 FROM kitchen_stations WHERE id=? AND tenant_id=?',(station,g.tenant_id)).fetchone(): raise ValueError('ไม่พบสถานีครัว')
+    return name,role,(station if role in ('kitchen','both') else None),host,port,paper,connection
+
+@app.get('/api/printers')
+@login_required
+@role_required('owner','manager','staff')
+def printers_list():
+    bid=request.args.get('branch_id',type=int)
+    if not bid: return jsonify(error='กรุณาเลือกสาขา'),400
+    conn=db()
+    rows=conn.execute('SELECT p.*,s.name AS station_name FROM printers p LEFT JOIN kitchen_stations s ON s.id=p.station_id WHERE p.tenant_id=? AND p.branch_id=? AND p.active=1 ORDER BY p.role,p.id',(g.tenant_id,bid)).fetchall()
+    counts={r['status']:r['c'] for r in conn.execute("SELECT status,COUNT(*) AS c FROM kitchen_print_jobs WHERE tenant_id=? AND branch_id=? AND status IN ('pending','failed') GROUP BY status",(g.tenant_id,bid)).fetchall()}
+    return jsonify(local=_local_printing(),printers=[dict(r) for r in rows],failed=int(counts.get('failed',0)),pending=int(counts.get('pending',0)))
+
+@app.post('/api/printers')
+@login_required
+@role_required('owner','manager')
+def printer_create():
+    d=request.get_json() or {}; conn=db()
+    try: bid=int(d.get('branch_id'))
+    except (TypeError,ValueError): return jsonify(error='กรุณาเลือกสาขา'),400
+    if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(bid,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
+    if (d.get('connection') or 'network')=='system' and not _local_printing(): return jsonify(error='เครื่องพิมพ์ USB ใช้ได้เฉพาะโปรแกรม ZaabOS บนเครื่องในร้าน'),409
+    try: name,role,station,host,port,paper,connection=_printer_payload(conn,d,bid)
+    except ValueError as e: return jsonify(error=str(e)),400
+    cur=conn.execute('INSERT INTO printers(tenant_id,branch_id,name,role,station_id,host,port,paper_width,active,created_at,connection) VALUES(?,?,?,?,?,?,?,?,1,?,?)',
+                     (g.tenant_id,bid,name,role,station,host,port,paper,now(),connection))
+    log_action('printer_created',detail=f'{name} {role} {host}:{port}'); conn.commit()
+    return jsonify(ok=True,id=cur.lastrowid)
+
+@app.put('/api/printers/assign')
+@login_required
+@role_required('owner','manager')
+def printers_assign():
+    """One tap: 'receipts print on X' / 'kitchen tickets print on Y' (or on the browser when None)."""
+    d=request.get_json() or {}; conn=db(); job=d.get('job')
+    try: bid=int(d.get('branch_id'))
+    except (TypeError,ValueError): return jsonify(error='กรุณาเลือกสาขา'),400
+    if job not in ('receipt','kitchen'): return jsonify(error='ประเภทงานไม่ถูกต้อง'),400
+    pid=d.get('printer_id') or None
+    rows=conn.execute('SELECT id,role FROM printers WHERE tenant_id=? AND branch_id=? AND active=1 AND station_id IS NULL',(g.tenant_id,bid)).fetchall()
+    if pid is not None and not any(r['id']==int(pid) for r in rows): return jsonify(error='ไม่พบเครื่องพิมพ์'),404
+    other='kitchen' if job=='receipt' else 'receipt'
+    for r in rows:
+        has_other=r['role'] in (other,'both')
+        want=(pid is not None and r['id']==int(pid))
+        role=('both' if has_other else job) if want else (other if has_other else 'none')
+        if role!=r['role']: conn.execute('UPDATE printers SET role=? WHERE id=?',(role,r['id']))
+    log_action('printer_assign',detail=f'{job} -> {pid}'); conn.commit()
+    return jsonify(ok=True)
+
+@app.get('/api/printers/discover')
+@login_required
+@role_required('owner','manager')
+def printers_discover():
+    """Printers this shop PC can use right now: USB (OS queues) and Wi-Fi (port 9100 on the LAN)."""
+    if not _local_printing(): return jsonify(usb=[],network=[],local=False)
+    import printing
+    from urllib.parse import urlparse
+    own=urlparse(os.getenv('ZAABOS_PUBLIC_URL') or '').hostname or ''
+    net=printing.scan_network(own) if request.args.get('network')=='1' else []
+    return jsonify(local=True,usb=printing.system_printers(),network=[{'host':h} for h in net],own_ip=own)
+
+@app.get('/api/printers/system')
+@login_required
+@role_required('owner','manager')
+def printers_system():
+    """USB printers plugged into the shop PC (its OS print queues)."""
+    if not _local_printing(): return jsonify(queues=[])
+    import printing
+    return jsonify(queues=printing.system_queues())
+
+@app.delete('/api/printers/<int:pid>')
+@login_required
+@role_required('owner','manager')
+def printer_delete(pid):
+    conn=db()
+    if not conn.execute('SELECT 1 FROM printers WHERE id=? AND tenant_id=?',(pid,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบเครื่องพิมพ์'),404
+    conn.execute('UPDATE printers SET active=0 WHERE id=? AND tenant_id=?',(pid,g.tenant_id)); conn.commit()
+    return jsonify(ok=True)
+
+@app.post('/api/printers/<int:pid>/test')
+@login_required
+@role_required('owner','manager','staff')
+def printer_test(pid):
+    conn=db(); p=conn.execute('SELECT * FROM printers WHERE id=? AND tenant_id=? AND active=1',(pid,g.tenant_id)).fetchone()
+    if not p: return jsonify(error='ไม่พบเครื่องพิมพ์'),404
+    if not _local_printing(): return jsonify(error='พิมพ์ผ่าน Wi-Fi ได้เฉพาะโปรแกรม ZaabOS ที่เปิดบนเครื่องในร้าน'),409
+    # Test prints go straight out and report the real result, so setup gets an immediate answer.
+    import printing
+    try:
+        printing.deliver(p,printing.escpos(printing.render(printing.test_lines(p['name'],os.getenv('ZAABOS_PUBLIC_URL') or ''),p['paper_width'])))
+    except Exception as e:
+        where=f'USB "{p["host"]}"' if p['connection']=='system' else f'{p["host"]}:{p["port"]} — ตรวจว่าเปิดเครื่องและอยู่ Wi-Fi เดียวกัน'
+        return jsonify(error=f'พิมพ์ทดสอบไม่สำเร็จ: {where} ({e})'),502
+    return jsonify(ok=True)
+
+@app.post('/api/orders/<int:oid>/print-receipt')
+@login_required
+@role_required('owner','manager','staff')
+def print_receipt_job(oid):
+    conn=db(); o=conn.execute('SELECT id,branch_id FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
+    if not o: return jsonify(error='ไม่พบออเดอร์'),404
+    if not _network_printing(conn,o['branch_id'],'receipt'): return jsonify(ok=True,queued=False)
+    d=request.get_json(silent=True) or {}
+    # The cashier's screen language decides the receipt words, exactly like the browser receipt.
+    payload=json.dumps({'lang':str(d.get('lang') or 'th')[:5],'order_type_label':str(d.get('order_type_label') or '')[:40]},ensure_ascii=False)
+    conn.execute("""INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,payload)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",(g.tenant_id,o['branch_id'],oid,None,'pending',0,'',now(),'receipt',payload))
+    conn.commit(); _wake_printer(); return jsonify(ok=True,queued=True)
+
+@app.get('/api/print/jobs')
+@login_required
+@role_required('owner','manager','staff')
+def print_jobs_list():
+    bid=request.args.get('branch_id',type=int); status=request.args.get('status') or 'failed'
+    if not bid: return jsonify(error='กรุณาเลือกสาขา'),400
+    rows=db().execute("""SELECT j.id,j.job_type,j.status,j.attempts,j.last_error,j.created_at,j.printed_at,o.order_no,o.table_name_snapshot,s.name AS station_name
+        FROM kitchen_print_jobs j JOIN orders o ON o.id=j.order_id LEFT JOIN kitchen_stations s ON s.id=j.station_id
+        WHERE j.tenant_id=? AND j.branch_id=? AND j.status=? ORDER BY j.id DESC LIMIT 50""",(g.tenant_id,bid,status)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.post('/api/print/jobs/<int:jid>/retry')
+@login_required
+@role_required('owner','manager','staff')
+def print_job_retry(jid):
+    """Controlled reprint: the same ticket (same items) goes back into the queue once."""
+    conn=db(); row=conn.execute('SELECT id FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
+    if not row: return jsonify(error='ไม่พบงานพิมพ์'),404
+    conn.execute("UPDATE kitchen_print_jobs SET status='pending',attempts=0,last_error='',next_attempt_at=NULL WHERE id=?",(jid,))
+    log_action('print_job_retry',detail=str(jid)); conn.commit(); _wake_printer()
+    return jsonify(ok=True)
+
 # =====================================================================
 # Users management (same pattern as CASHFLOW 24)
 # =====================================================================
@@ -3272,9 +3479,19 @@ def list_critical_operations():
     conn=db(); rows=conn.execute("SELECT c.*,u.display_name AS performed_by_name,a.display_name AS approved_by_name FROM critical_operations c LEFT JOIN users u ON u.id=c.performed_by_user_id LEFT JOIN users a ON a.id=c.approved_by_user_id WHERE c.tenant_id=? ORDER BY c.id DESC LIMIT 200",(g.tenant_id,)).fetchall()
     return jsonify([dict(x) for x in rows])
 
-def _receipt_settings_defaults(conn, branch_id):
-    tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(g.tenant_id,)).fetchone()
-    branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone()
+def receipt_settings_for(conn, tenant_id, branch_id):
+    """Saved receipt settings over defaults — shared by the browser receipt and the print worker."""
+    data=_receipt_settings_defaults(conn,branch_id,tenant_id)
+    row=conn.execute('SELECT settings_json FROM receipt_settings WHERE tenant_id=? AND branch_id=?',(tenant_id,branch_id)).fetchone()
+    if row:
+        try: data.update(json.loads(row['settings_json'] or '{}'))
+        except Exception: pass
+    return data
+
+def _receipt_settings_defaults(conn, branch_id, tenant_id=None):
+    tenant_id=g.tenant_id if tenant_id is None else tenant_id
+    tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(tenant_id,)).fetchone()
+    branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,tenant_id)).fetchone()
     return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True)
 
 @app.get('/api/settings/receipt')
@@ -3285,12 +3502,7 @@ def get_receipt_settings():
     try: branch_id=int(branch_id)
     except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
     if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    data=_receipt_settings_defaults(conn,branch_id)
-    row=conn.execute('SELECT settings_json FROM receipt_settings WHERE tenant_id=? AND branch_id=?',(g.tenant_id,branch_id)).fetchone()
-    if row:
-        try: data.update(json.loads(row['settings_json'] or '{}'))
-        except Exception: pass
-    return jsonify(data)
+    return jsonify(receipt_settings_for(conn,g.tenant_id,branch_id))
 
 @app.put('/api/settings/receipt')
 @login_required

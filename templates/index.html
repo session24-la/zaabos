@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css?v=28.2">
 <meta name="theme-color" content="#17151d"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ZaabOS"><meta name="mobile-web-app-capable" content="yes">
-</head><body><div id="networkBanner" class="network-banner hidden" role="status"><span class="network-dot"></span><span id="networkBannerText">ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้</span></div>
+</head><body><button id="printFailBanner" class="print-fail-banner hidden" type="button"></button><div id="networkBanner" class="network-banner hidden" role="status"><span class="network-dot"></span><span id="networkBannerText">ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้</span></div>
 
 <section id="loginView" class="login-screen hidden">
   <select id="loginLangSelect" class="lang-select lang-select-login"></select>
@@ -310,6 +310,46 @@
         </div><label class="printer-queue-toggle"><input id="rsKitchenAutoQueue" type="checkbox"><span><b>ส่งงานครัวเข้าคิวอัตโนมัติ</b><small>เมื่อส่งรายการเข้าครัว ให้สร้างงานพิมพ์แยกตามสถานีครัว</small></span></label><div class="printer-agent-note">หมายเหตุ: ZaabOS แยกคิวหน้าร้าน/ห้องครัวไว้แล้ว แต่การส่งตรงไปยังเครื่องพิมพ์จริงแบบไม่ขึ้นหน้าต่าง Print ต้องเชื่อม Local Print Agent ตามรุ่น/เครือข่ายของเครื่องพิมพ์ในขั้นติดตั้งฮาร์ดแวร์</div></div>
         <button class="save settings-save-compact" id="saveReceiptSettingsBtn" type="button">บันทึกการตั้งค่าสาขานี้</button>
       </div>
+      <div class="panel settings-editor" id="netPrintersPanel">
+        <div class="panel-head"><div><span class="eyebrow">PRINTERS</span><h2>เครื่องพิมพ์ในร้าน</h2><div class="muted" id="npMode">พิมพ์ตรงถึงเครื่องพิมพ์ โดยไม่ขึ้นหน้าต่าง Print</div></div></div>
+        <div class="settings-section"><h3>ใช้พิมพ์อะไร</h3>
+          <div class="np-assign"><span>🧾 ใบเสร็จลูกค้า</span><select id="npAssignReceipt" data-np-assign="receipt"></select></div>
+          <div class="np-assign"><span>👨‍🍳 ใบสั่งครัว</span><select id="npAssignKitchen" data-np-assign="kitchen"></select></div>
+          <div class="muted printer-help">เลือกแล้วบันทึกทันที ใช้เครื่องเดียวพิมพ์ทั้งสองอย่างได้</div>
+        </div>
+        <div class="settings-section"><h3>เครื่องพิมพ์ที่บันทึกไว้</h3><div id="npList"></div></div>
+        <div class="settings-section"><h3>เพิ่มเครื่องพิมพ์</h3>
+          <div id="npFound"></div>
+          <button class="ghost-btn" id="npScanBtn" type="button">🔍 ค้นหาเครื่องพิมพ์ Wi‑Fi ในร้าน</button>
+          <details class="np-manual"><summary>ใส่ IP เอง</summary><div class="form-grid">
+            <label><span>IP เครื่องพิมพ์</span><input id="npHost" maxlength="100" placeholder="192.168.1.50" inputmode="decimal"></label>
+            <label><span>พอร์ต</span><input id="npPort" type="number" value="9100" min="1" max="65535"></label>
+          </div><button class="ghost-btn" id="npAddIpBtn" type="button">เพิ่ม</button>
+          <div class="muted printer-help">IP ของ RP331 ดูจากใบ Self-test (ปิดเครื่อง → กด FEED ค้าง → เปิดเครื่อง) · ต้องไม่ใช่ IP ของ Mac</div></details>
+        </div>
+      </div>
+      <div class="panel settings-editor hidden" id="localPanel">
+        <div class="panel-head"><div><span class="eyebrow">THIS COMPUTER</span><h2>โปรแกรมในเครื่องร้าน</h2><div class="muted" id="lpVersion"></div></div></div>
+        <div class="settings-section"><h3>อัปเดตโปรแกรม</h3><div class="np-assign"><span id="lpUpdateText">ตรวจหาเวอร์ชันใหม่</span><button class="ghost-btn" id="lpUpdateBtn" type="button">ตรวจหาอัปเดต</button></div></div>
+        <div class="settings-section"><h3>การทำงานของเครื่อง</h3>
+          <label class="printer-queue-toggle"><input id="lpAutostart" type="checkbox"><span><b>เปิด ZaabOS อัตโนมัติเมื่อเปิดเครื่อง</b><small>และเปิดกลับมาเองถ้าโปรแกรมปิดไปโดยไม่ตั้งใจ · ระหว่างเปิดโปรแกรม เครื่องจะไม่หลับ</small></span></label>
+          <div class="np-assign"><span>ที่อยู่สำหรับแท็บเล็ต/QR</span><select id="lpAddress"><option value="ip">IP ของเครื่อง</option><option value="hostname">ชื่อเครื่อง</option></select></div>
+          <div class="muted printer-help" id="lpAddressHelp"></div>
+        </div>
+        <div class="settings-section"><h3>สำรอง &amp; กู้ข้อมูล</h3>
+          <div class="muted printer-help" id="lpMirror"></div>
+          <button class="ghost-btn" id="lpBackupBtn" type="button">สำรองข้อมูลตอนนี้</button>
+          <div id="lpBackups"></div>
+        </div>
+        <div class="settings-section"><h3>ดึงเมนู/โต๊ะ จาก zaabos.com</h3>
+          <div class="muted printer-help">คัดลอกเมนู ตัวเลือก โต๊ะ สถานีครัว ภาษี/ค่าบริการ และตั้งค่าใบเสร็จ มาใส่เครื่องนี้ (เมนูเดิมในเครื่องจะถูกเก็บเข้าคลัง ไม่ลบ) · ต้องต่ออินเทอร์เน็ต</div>
+          <div class="form-grid">
+            <label><span>ชื่อผู้ใช้ zaabos.com</span><input id="lpCloudUser" autocomplete="off"></label>
+            <label><span>รหัสผ่าน</span><input id="lpCloudPass" type="password" autocomplete="off"></label>
+          </div>
+          <button class="save settings-save-compact" id="lpImportBtn" type="button">ดึงข้อมูลมาใส่เครื่องนี้</button>
+        </div>
+      </div>
       <div class="panel receipt-preview-panel"><div class="panel-head receipt-preview-head"><div><h3 id="receiptPreviewTitle">ตัวอย่างใบเสร็จหน้าร้าน</h3><div class="muted">สลับดูตัวอย่างหน้าร้านและใบสั่งห้องครัวได้ทันที</div></div></div><div class="receipt-preview-switch" id="receiptPreviewSwitch"><button type="button" class="active" data-preview-mode="receipt">🧾 หน้าร้าน</button><button type="button" data-preview-mode="kitchen">👨‍🍳 ห้องครัว</button></div><div class="receipt-preview-wrap"><div id="receiptSettingsPreview" class="receipt-settings-preview"></div></div></div>
     </div>
   </section>
@@ -567,5 +607,5 @@
 
 <script>const DEFAULT_LANG = 'th';</script>
 <script src="/static/i18n.js"></script>
-<script src="/static/app.js?v=28.3"></script><script>(function(){const banner=document.getElementById('networkBanner'),txt=document.getElementById('networkBannerText');function net(){const online=navigator.onLine;banner.classList.toggle('hidden',online);document.documentElement.classList.toggle('is-offline',!online);if(!online)txt.textContent='ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้';}addEventListener('online',net);addEventListener('offline',net);net();if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{}));})();</script>
+<script src="/static/app.js?v=28.8"></script><script>(function(){const banner=document.getElementById('networkBanner'),txt=document.getElementById('networkBannerText');function net(){const online=navigator.onLine;banner.classList.toggle('hidden',online);document.documentElement.classList.toggle('is-offline',!online);if(!online)txt.textContent='ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้';}addEventListener('online',net);addEventListener('offline',net);net();if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{}));})();</script>
 </body></html>
