@@ -1115,3 +1115,50 @@ input:focus,select:focus,textarea:focus{outline:2px solid rgba(240,189,98,.16);b
 .theme-mode-seg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
 .theme-mode-seg button{padding:7px 4px!important;text-align:center!important;font-size:10px!important;border:1px solid var(--border)!important}
 .theme-mode-seg button.active{background:var(--primary-soft)!important;color:var(--primary)!important;border-color:var(--primary)!important}
+
+
+/* ===== Version E precision pass: match selected product mockup ===== */
+@media (min-width:761px){
+ #appRoot.premium-shell{grid-template-columns:152px minmax(0,1fr);grid-template-rows:58px minmax(0,1fr)}
+ #appRoot.premium-shell>main{grid-template-columns:152px minmax(0,1fr);grid-template-rows:58px minmax(0,1fr)}
+ #appRoot.premium-shell .tabs.pos-nav{padding:12px 8px}
+ #appRoot.premium-shell .tabs.pos-nav:before{height:48px;font-size:17px;padding:0 9px 10px}
+ #appRoot.premium-shell .tabs.pos-nav button{min-height:44px;padding:7px 9px;gap:9px}
+ #appRoot.premium-shell .tabs.pos-nav .tab-lb{font-size:11.5px}
+ #appRoot.premium-shell>header{padding:0 16px;background:#11141a}
+ #appRoot.premium-shell>header .head-right{margin-left:auto}
+ #appRoot.premium-shell main>.tab-panel{grid-column:2!important;grid-row:2!important;padding:16px 18px 28px!important;width:auto!important;max-width:none!important;min-width:0}
+ #appRoot.premium-shell main>.tab-panel>.panel{width:100%;max-width:none;margin:0}
+ #appRoot.premium-shell #tab-orders>.panel{background:transparent;border:0;box-shadow:none;padding:0}
+ #appRoot.premium-shell #tab-orders .panel-head{min-height:64px;margin:0 0 12px}
+ #appRoot.premium-shell #tab-orders .board-row{display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:12px;align-items:start}
+ #appRoot.premium-shell #tab-orders .board-panel{min-width:0}
+ #appRoot.premium-shell #tab-orders .table-board{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px}
+ #appRoot.premium-shell #tab-orders .board-tile{min-height:132px;padding:14px;border:1px solid #30343a;background:#15181e}
+ #appRoot.premium-shell #tab-orders .side-panel{position:sticky;top:74px;min-height:132px;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:14px}
+ #appRoot.premium-shell #tab-menu{display:block}
+ #appRoot.premium-shell #tab-menu.hidden{display:none!important}
+ #appRoot.premium-shell #tab-menu .menu-manager{grid-template-columns:190px minmax(0,1fr);gap:12px}
+ #appRoot.premium-shell #tab-menu .menu-manager-grid{grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px}
+ #appRoot.premium-shell #tab-menu .menu-manager-card{overflow:hidden}
+ #appRoot.premium-shell #tab-menu .menu-card-media{height:112px}
+ #appRoot.premium-shell #tab-history,#appRoot.premium-shell #tab-reports,#appRoot.premium-shell #tab-inventory,#appRoot.premium-shell #tab-operations,#appRoot.premium-shell #tab-tables{max-width:none}
+ #appRoot.premium-shell .report-summary-cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+ #appRoot.premium-shell .report-two-col{grid-template-columns:minmax(0,1.3fr) minmax(280px,.7fr)}
+}
+@media (min-width:1280px){
+ #appRoot.premium-shell #tab-orders .table-board{grid-template-columns:repeat(5,minmax(150px,1fr))}
+ #appRoot.premium-shell #tab-orders .board-row{grid-template-columns:minmax(0,1fr) 250px}
+}
+@media (min-width:1600px){
+ #appRoot.premium-shell #tab-orders .table-board{grid-template-columns:repeat(6,minmax(150px,1fr))}
+}
+@media (max-width:1000px) and (min-width:761px){
+ #appRoot.premium-shell{grid-template-columns:76px minmax(0,1fr)}
+ #appRoot.premium-shell>main{grid-template-columns:76px minmax(0,1fr)}
+ #appRoot.premium-shell .tabs.pos-nav:before{content:"Z";justify-content:center;padding-left:0;padding-right:0}
+ #appRoot.premium-shell .tabs.pos-nav button{justify-content:center;padding:8px 4px}
+ #appRoot.premium-shell .tabs.pos-nav .tab-lb{display:none}
+ #appRoot.premium-shell #tab-orders .table-board{grid-template-columns:repeat(3,minmax(135px,1fr))}
+ #appRoot.premium-shell #tab-orders .board-row{grid-template-columns:minmax(0,1fr) 210px}
+}
