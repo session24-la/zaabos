@@ -1,4 +1,4 @@
-<!doctype html><html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ZaabOS</title>
+<!doctype html><html lang="th" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ZaabOS</title>
 <link rel="icon" href="/favicon.ico?v=8" sizes="any">
 <link rel="icon" type="image/png" sizes="64x64" href="/static/favicon-64.png?v=8">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=8">
@@ -6,8 +6,8 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Prompt:wght@400;500;600;700;800&family=Noto+Sans+Lao:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=27.3"><link rel="stylesheet" href="/static/icons.css?v=1">
+
+<link rel="stylesheet" href="/static/style.css?v=27.3"><link rel="stylesheet" href="/static/icons.css?v=1"><link rel="stylesheet" href="/static/theme.css?v=1">
 <meta name="theme-color" content="#17151d"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="ZaabOS"><meta name="mobile-web-app-capable" content="yes">
 </head><body><div id="networkBanner" class="network-banner hidden" role="status"><span class="network-dot"></span><span id="networkBannerText">ออฟไลน์ — การเปลี่ยนแปลงที่ต้องใช้ Server จะยังใช้งานไม่ได้</span></div>
 
@@ -49,7 +49,7 @@
   <nav class="tabs pos-nav" id="mainTabs" aria-label="Main navigation">
     <button data-tab="orders" class="active nav-primary"><span class="tab-ic"><i class="ic ic-house" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_pos">POS</span></button>
     <button data-tab="menu" class="nav-primary"><span class="tab-ic"><i class="ic ic-clipboard-list" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_menu">เมนู</span></button>
-    <button data-tab="tables" class="nav-primary"><span class="tab-ic">▦</span><span class="tab-lb">โต๊ะ &amp; QR</span></button>
+    <button data-tab="tables" class="nav-primary"><span class="tab-ic"><i class="ic ic-layout-grid" aria-hidden="true"></i></span><span class="tab-lb">โต๊ะ &amp; QR</span></button>
     <button data-tab="history" class="nav-primary"><span class="tab-ic"><i class="ic ic-history" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_history">ประวัติ</span></button>
     <button data-tab="reports" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-chart-column" aria-hidden="true"></i></span><span class="tab-lb" data-i18n="tab_reports">รายงาน</span></button>
     <button data-tab="inventory" class="nav-primary nav-secondary"><span class="tab-ic"><i class="ic ic-package" aria-hidden="true"></i></span><span class="tab-lb">วัตถุดิบ</span></button>
@@ -471,6 +471,7 @@
 
 <!-- Staff take-order modal -->
 <div class="modal" id="takeOrderModal"><div class="sheet wide"><div class="sheet-head"><h2 data-i18n="modal_take_order_title">รับออเดอร์ลูกค้า</h2><button data-close>×</button></div>
+<div class="to-layout"><div class="to-main"><div class="to-details">
   <div class="type" id="takeOrderType">
     <button data-type="dine_in" class="active" data-i18n="order_type_dine_in"><i class="ic ic-utensils" aria-hidden="true"></i> ทานที่ร้าน</button>
     <button data-type="takeaway" data-i18n="order_type_takeaway"><i class="ic ic-shopping-bag" aria-hidden="true"></i> กลับบ้าน</button>
@@ -487,14 +488,17 @@
     <label><span data-i18n="label_delivery_address">ที่อยู่จัดส่ง</span><textarea id="takeOrderAddress"></textarea></label>
     <label><span>ค่าจัดส่ง</span><input id="takeOrderDeliveryFee" type="number" min="0" step="1" value="0" inputmode="decimal"></label>
   </div>
+  </div>
   <h3 data-i18n="label_choose_menu">เลือกเมนู</h3>
   <div class="cat-scroll" id="takeOrderCatScroll"></div>
   <div class="menu-grid" id="takeOrderMenuGrid"></div>
+  </div><aside class="to-cart">
   <h3 data-i18n="label_cart">ตะกร้า</h3>
   <div id="takeOrderCart"></div>
   <div class="cart-total-row"><span data-i18n="label_total">รวมทั้งหมด</span><span id="takeOrderTotal">0</span></div>
   <div class="login-error" id="takeOrderError"></div>
   <button class="save" id="takeOrderSubmit" data-i18n="btn_confirm_order"><i class="ic ic-circle-check" aria-hidden="true"></i> ยืนยันออเดอร์</button>
+  </aside></div>
 </div></div>
 
 <!-- Menu item option picker (used from take-order menu grid) -->
@@ -527,7 +531,8 @@
       <label><span>รหัสผ่านผู้อนุมัติ</span><input id="cpApprovalPass" type="password" autocomplete="current-password"></label>
     </div>
   </div></details>
-  <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash"><i class="ic ic-banknote" aria-hidden="true"></i> เงินสด</option><option value="qr"><i class="ic ic-smartphone" aria-hidden="true"></i> QR</option><option value="card"><i class="ic ic-credit-card" aria-hidden="true"></i> บัตร</option><option value="bank_transfer"><i class="ic ic-landmark" aria-hidden="true"></i> โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
+  <div class="pay-seg" id="cpMethodSeg"><button type="button" data-m="cash"><i class="ic ic-banknote" aria-hidden="true"></i>เงินสด</button><button type="button" data-m="qr"><i class="ic ic-qr-code" aria-hidden="true"></i>QR</button><button type="button" data-m="card"><i class="ic ic-credit-card" aria-hidden="true"></i>บัตร</button><button type="button" data-m="bank_transfer"><i class="ic ic-landmark" aria-hidden="true"></i>โอน</button></div>
+  <div class="payment-primary-grid"><label><span>วิธีชำระเงิน</span><select id="cpMethod"><option value="cash">เงินสด</option><option value="qr">QR</option><option value="card">บัตร</option><option value="bank_transfer">โอนธนาคาร</option><option value="other">อื่น ๆ</option></select></label><label><span>ยอดช่องทางนี้</span><input id="cpPrimaryAmount" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label></div>
   <label id="cpCashLabel"><span>รับเงินสดมา (บาท/กีบ)</span><input id="cpCash" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0"></label>
   <div class="payment-live-summary"><div><span>ชำระรวม</span><b id="cpPaidTotal">0</b></div><div><span>คงเหลือ</span><b id="cpRemaining">0</b></div><div><span>เงินทอน</span><b id="cpChange">0</b></div></div>
   <div class="payment-tax-note">ภาษีและค่าบริการคำนวณจากการตั้งค่าร้านอัตโนมัติ ไม่ใช่ยอด QR/ยอดโอน</div>

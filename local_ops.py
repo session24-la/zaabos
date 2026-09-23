@@ -18,7 +18,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = '2.3.1'
+APP_VERSION = '2.4.0'
 RELEASES_API = os.getenv('ZAABOS_UPDATE_FEED') or 'https://api.github.com/repos/session24-la/zaabos/releases?per_page=20'
 RELEASE_TAG_PREFIX = 'local-v'
 LAUNCH_AGENT_LABEL = 'com.zaabos.local'

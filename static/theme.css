@@ -1,0 +1,228 @@
+/* ===== ZaabOS UI — Round A design system =====
+   Clean, international POS look: neutral surfaces, one brand accent (orange) used only for
+   primary actions and selection, no gradients or glows, flat cards with hairline borders,
+   generous touch targets. Loaded after style.css; overrides tokens and key components.
+   Light by default (html[data-theme="light"]); dark via the user menu; the kitchen screen
+   is dark (html[data-theme="dark"]) for readability from a distance. */
+
+html:root[data-theme="light"],html:root:not([data-theme]){
+  --bg:#F4F5F7; --surface:#FFFFFF; --surface-2:#F7F8FA; --surface-3:#EEF0F3;
+  --text:#111827; --text-muted:#6B7280; --text-faint:#9CA3AF;
+  --border:#E5E7EB; --border-strong:#D1D5DB;
+  --primary:#E8590C; --primary-ink:#FFFFFF; --primary-soft:#FFF4EC; --primary-strong:#C2410C; --primary-text:#B8470A;
+  --grad-1:#E8590C; --grad-2:#E8590C;
+  --pos:#16A34A; --pos-soft:#ECFDF3; --neg:#DC2626; --neg-soft:#FEF2F2;
+  --blue:#2563EB; --blue-soft:#EFF4FF; --amber:#D97706; --amber-soft:#FFF7E6;
+  --status-received:#2563EB; --status-preparing:#D97706; --status-ready:#16A34A; --status-served:#7C3AED;
+  --status-completed:#16A34A; --status-cancelled:#9CA3AF;
+  --shadow-sm:0 1px 2px rgba(16,24,40,.05); --shadow-md:0 4px 12px rgba(16,24,40,.08); --shadow-lg:0 16px 40px rgba(16,24,40,.16);
+  --focus:0 0 0 3px rgba(232,89,12,.22);
+  color-scheme:light;
+}
+html:root[data-theme="dark"]{
+  --bg:#0B0D12; --surface:#151922; --surface-2:#1B202B; --surface-3:#232937;
+  --text:#F3F4F6; --text-muted:#9CA3AF; --text-faint:#6B7280;
+  --border:#252B38; --border-strong:#343B4A;
+  --primary:#F97316; --primary-ink:#FFFFFF; --primary-soft:#2A1A10; --primary-strong:#EA580C; --primary-text:#FDBA74;
+  --grad-1:#F97316; --grad-2:#F97316;
+  --pos:#22C55E; --pos-soft:#0F2A1B; --neg:#F87171; --neg-soft:#2C1414;
+  --blue:#60A5FA; --blue-soft:#132238; --amber:#FBBF24; --amber-soft:#2B2210;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4); --shadow-md:0 6px 16px rgba(0,0,0,.45); --shadow-lg:0 18px 44px rgba(0,0,0,.6);
+  --focus:0 0 0 3px rgba(249,115,22,.35);
+  color-scheme:dark;
+}
+:root{
+  --radius-sm:8px; --radius-md:12px; --radius-lg:14px; --radius-xl:16px;
+  --rail-w:84px;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Sukhumvit Set","Leelawadee UI","Noto Sans Thai","Noto Sans Lao",
+    "PingFang SC","Microsoft YaHei",sans-serif;
+  font-feature-settings:"tnum" 1;
+}
+body{background:var(--bg);color:var(--text);font-size:14.5px;line-height:1.45;letter-spacing:0}
+h1,h2,h3{letter-spacing:-.01em}
+::selection{background:var(--primary-soft)}
+
+/* ---------- no decorative gradients / glows anywhere ---------- */
+.avatar,.order-hero,.brand-mark,.login-card,.login-bg,.btn-primary,.save,.fab{background-image:none!important}
+.login-wrap,#loginView,.login-screen{background:var(--bg)!important;background-image:none!important}
+.login-card,.panel,.sheet,.board-tile,.menu-card,.kitchen-ticket,.list-card,.side-panel{box-shadow:none!important}
+*{text-shadow:none!important}
+
+/* ---------- controls ---------- */
+button,.ghost-btn,.save,.icon-btn{border-radius:10px}
+.save,button.primary,.ghost-btn.primary{background:var(--primary)!important;border:1px solid var(--primary)!important;color:var(--primary-ink)!important;
+  font-weight:650;min-height:48px;box-shadow:none!important;transition:background .12s}
+.save:hover,.ghost-btn.primary:hover{background:var(--primary-strong)!important}
+.save:disabled{opacity:.55}
+.ghost-btn{background:var(--surface);border:1px solid var(--border);color:var(--text);font-weight:600;min-height:40px;box-shadow:none}
+.ghost-btn:hover{background:var(--surface-2)}
+.icon-btn{border:1px solid var(--border);background:var(--surface)}
+.icon-btn.danger{color:var(--neg)}
+input,select,textarea{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:10px!important;min-height:44px;
+  color:var(--text)!important;box-shadow:none!important}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--primary)!important;box-shadow:var(--focus)!important}
+label>span{color:var(--text-muted);font-weight:600;font-size:12.5px}
+.muted,small{color:var(--text-muted)}
+
+/* ---------- app header ---------- */
+header{background:var(--surface)!important;border-bottom:1px solid var(--border)!important;box-shadow:none!important;backdrop-filter:none!important;
+  height:60px;padding:0 20px}
+.brand{font-size:18px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
+.brand b{color:var(--primary)}
+.avatar{background:var(--surface-3)!important;color:var(--text)!important;font-weight:700}
+.who{border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:3px 10px 3px 3px}
+.who-menu{border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-lg);background:var(--surface)}
+.who-menu button{display:flex;align-items:center;gap:8px}
+.lang-select,.header-branch select,#tenantSwitcher{border-radius:999px!important;min-height:36px!important;font-weight:600;font-size:13px!important}
+.header-branch{border:0;background:transparent}
+
+/* ---------- navigation: left icon rail on tablet/desktop ---------- */
+@media (min-width:900px){
+  main:has(.pos-nav){max-width:none!important;margin:0 0 0 var(--rail-w)!important;padding:18px 22px 28px!important}
+  .pos-nav{position:fixed!important;top:60px;left:0;bottom:0;width:var(--rail-w);margin:0!important;max-width:none!important;z-index:30;
+    display:flex!important;flex-direction:column;gap:4px;padding:12px 10px;background:var(--surface);border-right:1px solid var(--border);overflow:visible}
+  .pos-nav>button,.pos-nav>.nav-more-wrap>.nav-primary{width:100%;min-height:62px!important;padding:6px 2px!important;display:flex!important;
+    flex-direction:column;align-items:center;justify-content:center;gap:5px;border:0!important;background:transparent!important;border-radius:12px!important;
+    color:var(--text-muted)!important;font-size:11.5px!important;box-shadow:none!important}
+  .pos-nav>button .tab-ic{font-size:21px!important;line-height:1}
+  .pos-nav>button .tab-lb{font-weight:600;letter-spacing:0;text-align:center;line-height:1.15}
+  .pos-nav>button:hover{background:var(--surface-2)!important;color:var(--text)!important}
+  .pos-nav>button.active{background:var(--primary-soft)!important;color:var(--primary-text)!important}
+  .pos-nav .nav-more-wrap{margin-top:auto;width:100%}
+  .nav-more-menu{position:fixed!important;left:calc(var(--rail-w) + 8px)!important;bottom:14px!important;top:auto!important;width:240px;
+    border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);background:var(--surface);padding:6px}
+  .nav-more-menu button{justify-content:flex-start!important;gap:10px;min-height:42px;border-radius:9px;border:0!important;background:transparent!important}
+  .nav-more-menu button:hover{background:var(--surface-2)!important}
+}
+
+/* ---------- panels & cards ---------- */
+.panel{background:var(--surface);border:1px solid var(--border)!important;border-radius:14px!important}
+#tab-orders>.panel{background:transparent!important;border:0!important;padding:0!important}
+.panel-head h2{font-size:20px;font-weight:750}
+.eyebrow{color:var(--primary-text)!important;letter-spacing:.06em;font-size:11px}
+.empty-state{color:var(--text-faint)}
+.empty-state .es-ic{opacity:.5}
+
+/* ---------- floor: table board ---------- */
+.table-board{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))!important;gap:12px!important}
+.board-tile{background:var(--surface)!important;border:1px solid var(--border)!important;border-top:4px solid var(--border-strong)!important;
+  border-radius:14px!important;min-height:132px!important;padding:14px 16px!important;text-align:left;transition:border-color .12s,transform .06s}
+.board-tile:active{transform:scale(.99)}
+.board-tile.status-ready{border-top-color:var(--pos)!important}
+.board-tile.status-served{border-top-color:var(--primary)!important;background:var(--surface)!important}
+.board-tile .bt-name{font-size:17px!important;font-weight:750!important;color:var(--text)}
+.board-tile .bt-empty-lbl{color:var(--text-faint)!important}
+.board-tile .bt-badge{border-radius:6px!important;font-size:11px!important;font-weight:700!important;background:var(--neg-soft)!important;color:var(--neg)!important;box-shadow:none!important;animation:none!important}
+.side-panel{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:14px!important}
+.pill{border-radius:6px!important;font-weight:700;font-size:11.5px}
+
+/* ---------- modals ---------- */
+.modal{background:rgba(17,24,39,.45)!important;backdrop-filter:none!important}
+.sheet{background:var(--surface)!important;border:1px solid var(--border);border-radius:18px 18px 0 0!important;box-shadow:var(--shadow-lg)!important}
+@media (min-width:760px){.modal{align-items:center!important}.sheet{border-radius:18px!important}}
+.sheet-head{border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:14px}
+.sheet-head h2{font-size:18px;font-weight:750}
+.sheet-head [data-close]{width:36px;height:36px;border-radius:10px;border:1px solid var(--border);background:var(--surface)}
+
+/* ---------- take order: menu left, bill right ---------- */
+.type{background:var(--surface-3)!important;border-radius:12px!important;padding:4px!important;gap:4px!important;border:0!important}
+.type button{border:0!important;background:transparent!important;border-radius:9px!important;min-height:42px;font-weight:650;color:var(--text-muted)!important}
+.type button.active{background:var(--surface)!important;color:var(--text)!important;box-shadow:0 1px 2px rgba(16,24,40,.1)!important}
+.cat-scroll .cat-chip,.cat-chip{border:1px solid var(--border)!important;background:var(--surface)!important;border-radius:999px!important;min-height:38px;font-weight:600;color:var(--text)!important;box-shadow:none!important}
+.cat-chip.active{background:var(--text)!important;border-color:var(--text)!important;color:var(--surface)!important}
+.menu-card{border:1px solid var(--border)!important;border-radius:12px!important;padding:14px!important;background:var(--surface)!important;gap:6px!important;transition:border-color .12s}
+.menu-card .mc-name{font-size:15px;font-weight:650;line-height:1.3}
+.menu-card .mc-price{color:var(--text)!important;font-weight:750;font-size:15px}
+.menu-card .mc-photo{border-radius:8px;aspect-ratio:4/3;object-fit:cover;width:100%}
+.menu-card.in-cart{border-color:var(--primary)!important;box-shadow:0 0 0 1px var(--primary) inset!important}
+.menu-card .mc-qty{background:var(--primary)!important}
+.menu-card.sold-out{opacity:.5}
+.cart-line{border-bottom:1px solid var(--border)!important;padding:10px 0!important}
+.cart-total-row{font-size:15px}
+.cart-total-row span:last-child,#takeOrderTotal{font-size:24px;font-weight:800;letter-spacing:-.02em}
+@media (min-width:1000px){
+  #takeOrderModal .sheet.wide{width:min(1280px,96vw)!important;max-height:92vh!important;height:92vh;display:flex;flex-direction:column;padding:18px 20px!important;overflow:hidden}
+  #takeOrderModal .to-layout{display:grid;grid-template-columns:1fr 380px;gap:20px;flex:1;min-height:0}
+  #takeOrderModal .to-main{overflow:auto;padding-right:4px;min-height:0}
+  #takeOrderModal .to-details{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:10px;align-items:end}
+  #takeOrderModal .to-details .type{grid-column:1/-1}
+  #takeOrderModal .to-details #takeOrderDeliveryFields,#takeOrderModal .to-details #takeOrderScheduleRow{grid-column:1/-1}
+  #takeOrderModal .menu-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))!important;gap:10px!important}
+  #takeOrderModal .to-cart{display:flex;flex-direction:column;border-left:1px solid var(--border);padding-left:20px;min-height:0}
+  #takeOrderModal .to-cart #takeOrderCart{flex:1;overflow:auto;min-height:0}
+  #takeOrderModal .to-cart h3{margin-top:0}
+  #takeOrderModal #takeOrderSubmit{min-height:56px!important;font-size:16px}
+}
+
+/* ---------- payment ---------- */
+#confirmPaymentModal .sheet.small{width:min(560px,100%)!important}
+#cpTotal{font-size:34px!important;font-weight:800;letter-spacing:-.02em}
+.pay-seg{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:var(--surface-3);border-radius:12px;padding:4px;margin:14px 0 6px}
+.pay-seg button{min-height:46px;border:0;background:transparent;border-radius:9px;font-weight:650;color:var(--text-muted);display:flex;align-items:center;justify-content:center;gap:6px}
+.pay-seg button.on{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(16,24,40,.1)}
+.payment-primary-grid label:first-child{display:none}
+.cash-quick button{min-height:48px!important;border-radius:10px!important;font-size:15px!important}
+#cpChange{color:var(--pos)!important;font-size:22px;font-weight:800}
+#cpSubmit{min-height:58px!important;font-size:16.5px!important}
+
+/* ---------- bill detail sheet ---------- */
+.btn-confirm-pay{background:var(--primary)!important;border-color:var(--primary)!important;color:#fff!important}
+
+/* ---------- kitchen display (dark) ---------- */
+.kitchen-ticket{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:14px!important;border-left-width:1px!important}
+.kitchen-ticket.kt-wait-late{border-color:var(--neg)!important;box-shadow:none!important}
+.kitchen-ticket .kt-where{font-size:28px;font-weight:800}
+.kitchen-ticket .kt-wait{background:var(--surface-3)}
+.kitchen-ticket ul li{border-bottom:1px solid var(--border);padding:8px 0}
+.kitchen-ticket .kt-item-highlight{background:transparent!important;box-shadow:inset 3px 0 0 var(--primary)}
+.kitchen-ticket .kt-actions button{border-radius:12px!important;font-weight:800!important}
+
+/* ---------- customer QR ordering ---------- */
+.order-hero{background:var(--surface)!important;color:var(--text)!important;border-bottom:1px solid var(--border);border-radius:0!important;
+  text-align:left!important;padding:18px 18px 14px!important;box-shadow:none!important}
+.order-hero *{color:inherit}
+.order-hero .oh-icon{width:44px;height:44px;border-radius:12px;background:var(--primary)!important;color:#fff!important;display:grid;place-items:center;font-size:22px}
+.category-tiles>*{background:var(--surface)!important;border:1px solid var(--border)!important;border-radius:14px!important;box-shadow:none!important;color:var(--text)!important}
+.category-tiles>*.active,.category-tiles>*:first-child{border-color:var(--text)!important}
+.category-tiles .ct-icon{color:var(--primary)}
+.items-view-head .ivh-back{border-radius:999px}
+
+/* floor tiles (Round A markup) */
+.board-tile{display:flex!important;flex-direction:column;align-items:stretch!important;justify-content:flex-start!important;gap:0!important}
+.board-tile.bt-free{border-top-color:var(--border)!important}
+.board-tile.bt-busy{border-top-color:var(--blue)!important}
+.board-tile.bt-busy.status-ready{border-top-color:var(--pos)!important}
+.board-tile.bt-busy.status-served{border-top-color:var(--primary)!important}
+.bt-head{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%}
+.bt-tag{height:22px;padding:0 8px;border-radius:6px;font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;white-space:nowrap}
+.bt-tag-free{background:var(--surface-3);color:var(--text-faint)}
+.bt-tag-busy{background:var(--blue-soft);color:var(--blue)}
+.bt-tag-bill{background:var(--primary-soft);color:var(--primary-text)}
+.bt-open{margin-top:16px;color:var(--text-faint);font-size:13.5px;display:flex;align-items:center;gap:6px}
+.bt-amount{font-size:22px;font-weight:800;letter-spacing:-.02em;margin-top:14px;color:var(--text)}
+.bt-sub{color:var(--text-muted);font-size:12.5px;margin-top:3px}
+.bt-flags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;min-height:22px}
+.bt-flag{height:22px;padding:0 8px;border-radius:6px;font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:4px}
+.bt-flag-new{background:var(--neg-soft);color:var(--neg)}
+.bt-flag-ready{background:var(--pos-soft);color:var(--pos)}
+.board-tile .bt-badge{display:none!important}
+.header-branch select{min-width:150px!important;max-width:220px!important}
+.header-branch-icon{display:none!important}
+@media (min-width:900px){.board-row>.side-panel{flex:0 0 300px!important}}
+.side-row .sr-no{white-space:nowrap;font-size:13px}
+.side-panel h3{text-transform:none!important;letter-spacing:0!important;font-size:14px!important;color:var(--text)!important;font-weight:750!important}
+/* one primary action per surface: in the bill sheet that is "take payment" */
+.ghost-btn.primary[data-add-items]{background:var(--surface)!important;border:1px solid var(--border)!important;color:var(--text)!important}
+.ghost-btn.primary[data-add-items]:hover{background:var(--surface-2)!important}
+.payment-primary-grid{grid-template-columns:1fr!important}
+/* kitchen board: wide tickets, big buttons */
+#board{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))!important;gap:14px!important;padding:16px 18px!important;max-width:none!important}
+.kitchen-ticket{padding:0!important;overflow:hidden}
+.kitchen-ticket .kt-head{padding:14px 16px 4px}
+.kitchen-ticket .kt-table{padding:0 16px 10px;color:var(--text-muted)!important;border-bottom:1px solid var(--border)}
+.kitchen-ticket ul{margin:0!important;padding:0 16px!important}
+.kitchen-ticket .kt-actions{display:grid!important;grid-template-columns:2fr 1fr;gap:8px;padding:12px 16px 16px}
+.kitchen-ticket .kt-actions button{min-height:54px!important;font-size:16px!important}
+.kitchen-ticket .kt-actions button:first-child{background:var(--pos)!important;border-color:var(--pos)!important;color:#fff!important}
+.kitchen-ticket .kt-sent-badge{color:var(--text-faint)!important;font-size:12px!important;background:transparent!important}
+.kitchen-ticket .kt-item-highlight{box-shadow:inset 3px 0 0 var(--primary)!important;padding-left:10px!important;margin-left:-10px}

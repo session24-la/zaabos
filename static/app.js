@@ -1468,24 +1468,26 @@ function renderTableBoard() {
     if (!orders.length) {
       const local=offlineOutboxRows.filter(x=>x.status!=='conflict'&&x.payload.order_type==='dine_in'&&Number(x.payload.table_id)===Number(tb.id));
       if(local.length)return `<button type="button" class="board-tile offline-pending" data-board-table="${tb.id}" disabled><span class="bt-badge">OFFLINE</span><div class="bt-name">${escapeHtml(tb.name)}</div><div class="bt-empty-lbl">${local.length} ออเดอร์ · รอ Sync</div></button>`;
-      return `<button type="button" class="board-tile" data-board-table="${tb.id}">
-        <div class="bt-name">${escapeHtml(tb.name)}</div>
-        <div class="bt-empty-lbl">${escapeHtml(t('board_table_empty'))}</div>
+      return `<button type="button" class="board-tile bt-free" data-board-table="${tb.id}">
+        <div class="bt-head"><span class="bt-name">${escapeHtml(tb.name)}</span><span class="bt-tag bt-tag-free">${escapeHtml(t('board_table_empty'))}</span></div>
+        <div class="bt-open"><i class="ic ic-plus" aria-hidden="true"></i> เปิดโต๊ะ</div>
       </button>`;
     }
     const worst = orders.reduce((w, o) => (STATUS_PRIORITY[o.status] < STATUS_PRIORITY[w.status] ? o : w), orders[0]);
+    const hasNewQr = orders.some(o => o.status === 'received' && o.placed_by === 'customer');
     const hasNew = orders.some(o => o.status === 'received');
-    const hasUnpaid = orders.some(o => o.payment_status === 'unpaid');
-    const itemCount = orders.reduce((s, o) => s + o.items.reduce((s2, it) => s2 + it.quantity, 0), 0);
-    const total = orders.reduce((s, o) => s + o.total_amount, 0);
-    return `<button type="button" class="board-tile status-${worst.status}" data-board-table="${tb.id}">
-      ${hasNew ? `<span class="bt-badge">${escapeHtml(t('board_badge_new'))}</span>` : ''}
-      <div class="bt-name">${escapeHtml(tb.name)}</div>
-      <div class="bt-meta">
-        <span class="pill ${worst.status}" style="margin:0"><span class="pill-dot ${worst.status}"></span>${escapeHtml(statusLabel(worst.status))}</span><br>
-        ${itemCount} ${escapeHtml(t('label_qty_short'))} · ${fmtMoney(total)}
-        ${hasUnpaid ? `<br><span class="bt-pay-dot"></span>${escapeHtml(t('board_awaiting_payment'))}` : ''}
-      </div>
+    const ready = orders.some(o => o.status === 'ready');
+    const total = orders.reduce((s, o) => s + Number(o.total_amount || 0), 0);
+    const guests = orders.reduce((s, o) => s + Number(o.guest_count || 0), 0);
+    const since = Math.min(...orders.map(o => new Date(o.created_at).getTime()).filter(Boolean));
+    const mins = Math.max(0, Math.floor((Date.now() - since) / 60000));
+    const dur = mins >= 60 ? `${Math.floor(mins / 60)} ชม. ${String(mins % 60).padStart(2, '0')}` : `${mins} นาที`;
+    const billing = worst.status === 'served';
+    return `<button type="button" class="board-tile bt-busy status-${worst.status}" data-board-table="${tb.id}">
+      <div class="bt-head"><span class="bt-name">${escapeHtml(tb.name)}</span><span class="bt-tag ${billing ? 'bt-tag-bill' : 'bt-tag-busy'}">${escapeHtml(billing ? 'เรียกเก็บเงิน' : statusLabel(worst.status))}</span></div>
+      <div class="bt-amount">${fmtMoney(total)}</div>
+      <div class="bt-sub">${guests ? guests + ' คน · ' : ''}${dur}</div>
+      <div class="bt-flags">${hasNewQr ? `<span class="bt-flag bt-flag-new"><i class="ic ic-smartphone" aria-hidden="true"></i> QR ใหม่</span>` : hasNew ? `<span class="bt-flag bt-flag-new">${escapeHtml(t('board_badge_new'))}</span>` : ''}${ready ? `<span class="bt-flag bt-flag-ready"><i class="ic ic-bell" aria-hidden="true"></i> อาหารพร้อม</span>` : ''}</div>
     </button>`;
   }).join('');
 }
@@ -2026,3 +2028,18 @@ $('#lpHealthBtn').addEventListener('click',async()=>{const b=$('#lpHealthBtn');b
   const bad=r.checks.filter(c=>c.level!=='ok').length;
   $('#lpHealth').innerHTML=`<div class="np-row"><b>${bad?`ต้องดู ${bad} เรื่อง`:'ทุกอย่างปกติ <i class="ic ic-check" aria-hidden="true"></i> ปิดร้านได้'}</b></div>`+r.checks.map(c=>`<div class="np-row"><div><b>${icon[c.level]} ${escapeHtml(c.title)}</b>${c.detail?`<small>${escapeHtml(c.detail)}</small>`:''}</div></div>`).join('');
 }catch(e){toast(e.message,'err')}finally{b.disabled=false}});
+
+// ---------- Round A UI: payment method buttons + light/dark toggle ----------
+function syncPaySeg(){const v=$('#cpMethod').value;$$('#cpMethodSeg [data-m]').forEach(b=>b.classList.toggle('on',b.dataset.m===v));}
+$('#cpMethodSeg').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(!b)return;$('#cpMethod').value=b.dataset.m;$('#cpMethod').dispatchEvent(new Event('change'));syncPaySeg();});
+$('#cpMethod').addEventListener('change',syncPaySeg);
+new MutationObserver(()=>{if($('#confirmPaymentModal').classList.contains('show'))syncPaySeg();}).observe($('#confirmPaymentModal'),{attributes:true,attributeFilter:['class']});
+(function(){
+  const KEY='zaabos_theme',root=document.documentElement;
+  try{const saved=localStorage.getItem(KEY);if(saved==='dark'||saved==='light')root.dataset.theme=saved;}catch(e){}
+  const menu=$('#whoMenu');if(!menu)return;
+  const btn=document.createElement('button');btn.type='button';btn.id='themeToggleBtn';
+  const label=()=>{btn.innerHTML=root.dataset.theme==='dark'?'<i class="ic ic-sun" aria-hidden="true"></i> โหมดสว่าง':'<i class="ic ic-moon" aria-hidden="true"></i> โหมดมืด';};
+  label();menu.insertBefore(btn,menu.firstChild);
+  btn.addEventListener('click',()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';try{localStorage.setItem(KEY,root.dataset.theme)}catch(e){}label();});
+})();
