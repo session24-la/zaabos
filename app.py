@@ -3488,6 +3488,11 @@ def current_shift():
     if not sh: return jsonify(shift=None,movements=[],summary=None)
     moves=conn.execute('SELECT * FROM cash_movements WHERE tenant_id=? AND shift_id=? ORDER BY id DESC',(g.tenant_id,sh['id'])).fetchall()
     summary=_shift_live_summary(conn,sh,g.user['id'])
+    # Blind cash count: staff must count the drawer before seeing the system's expected cash.
+    # Owner/manager retain live reconciliation visibility for supervision.
+    if g.user['role']=='staff':
+        summary=dict(summary)
+        summary.pop('expected_cash',None)
     return jsonify(shift=dict(sh),movements=[dict(x) for x in moves],summary=summary)
 
 @app.post('/api/operations/shift/open')
@@ -3496,9 +3501,10 @@ def current_shift():
 def open_shift():
     d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id')
     if not conn.execute('SELECT id FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    try: opening=float(d.get('opening_cash',0) or 0)
+    try: opening=money_decimal(d.get('opening_cash',0) or 0)
     except: return jsonify(error='เงินเปิดกะไม่ถูกต้อง'),400
     if opening<0: return jsonify(error='เงินเปิดกะต้องไม่ติดลบ'),400
+    opening=money_float(opening)
     old=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open'",(g.tenant_id,branch_id,g.user['id'])).fetchone()
     if old: return jsonify(error='คุณมีกะที่ยังเปิดอยู่ในสาขานี้'),409
     try:
@@ -3514,10 +3520,11 @@ def open_shift():
 def add_cash_movement():
     d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id'); typ=d.get('movement_type')
     if typ not in ('cash_in','cash_out'): return jsonify(error='ประเภทเงินสดไม่ถูกต้อง'),400
-    try: amount=float(d.get('amount',0) or 0)
+    try: amount=money_decimal(d.get('amount',0) or 0)
     except: return jsonify(error='จำนวนเงินไม่ถูกต้อง'),400
     reason=(d.get('reason') or '').strip()[:300]
     if amount<=0 or not reason: return jsonify(error='กรุณาระบุจำนวนเงินและเหตุผล'),400
+    amount=money_float(amount)
     sh=conn.execute("SELECT id FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
     if not sh: return jsonify(error='กรุณาเปิดกะก่อนทำรายการเงินสด'),409
     conn.execute('INSERT INTO cash_movements(tenant_id,branch_id,shift_id,movement_type,amount,reason,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?)',(g.tenant_id,branch_id,sh['id'],typ,amount,reason,g.user['id'],now()))
@@ -3553,7 +3560,7 @@ def close_shift():
     d=request.get_json() or {}; conn=db(); branch_id=d.get('branch_id')
     sh=conn.execute("SELECT * FROM work_shifts WHERE tenant_id=? AND branch_id=? AND opened_by_user_id=? AND status='open' ORDER BY id DESC LIMIT 1",(g.tenant_id,branch_id,g.user['id'])).fetchone()
     if not sh: return jsonify(error='ไม่พบกะที่เปิดอยู่'),409
-    try: counted=float(d.get('counted_cash',0) or 0)
+    try: counted=money_decimal(d.get('counted_cash',0) or 0)
     except: return jsonify(error='ยอดเงินนับจริงไม่ถูกต้อง'),400
     if counted<0: return jsonify(error='ยอดเงินนับจริงต้องไม่ติดลบ'),400
     summary=_shift_live_summary(conn,sh,g.user['id'])
