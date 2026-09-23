@@ -35,11 +35,16 @@ jobs:
         run: |
           BIN=dist/ZaabOS/ZaabOS; [ -f "$BIN.exe" ] && BIN="$BIN.exe"
           "$BIN" --no-browser --port 18765 --data-dir "$RUNNER_TEMP/zaabos-data" > smoke.log 2>&1 &
+          SMOKE_PID=$!
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:18765/healthz && break; sleep 1; done
           curl -sf http://127.0.0.1:18765/healthz
           curl -sf http://127.0.0.1:18765/ | grep -q '<title>ZaabOS'
           test -f "$RUNNER_TEMP/zaabos-data/zaabos.db"
           ls "$RUNNER_TEMP/zaabos-data/backups" | grep -q zaabos_local_
+          # stop it: a running ZaabOS.exe keeps its files locked and the zip step fails
+          kill $SMOKE_PID 2>/dev/null || true
+          if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //IM ZaabOS.exe >/dev/null 2>&1 || true; else pkill -f dist/ZaabOS || true; fi
+          sleep 2
       # Zip it ourselves: upload-artifact drops the .app folder and its internal symlinks, which
       # leaves a Mac bundle that fails with "Failed to load Python shared library".
       - name: Package
@@ -47,7 +52,7 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then
             ditto -c -k --keepParent dist/ZaabOS.app ZaabOS-Local-macOS.zip
           else
-            powershell -NoProfile -Command "Compress-Archive -Path dist/ZaabOS -DestinationPath ZaabOS-Local-Windows.zip"
+            python -c "import shutil; shutil.make_archive('ZaabOS-Local-Windows', 'zip', 'dist', 'ZaabOS')"
           fi
       - name: Packaged zip still runs (macOS)
         if: runner.os == 'macOS'
@@ -60,6 +65,7 @@ jobs:
         with:
           name: ZaabOS-Local-${{ runner.os }}
           path: ZaabOS-Local-*.zip
+          if-no-files-found: error
           retention-days: 30
 
   # A local-v* tag publishes both zips as a GitHub Release; installed apps update from it.
