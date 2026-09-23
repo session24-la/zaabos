@@ -80,7 +80,18 @@ def open_shift(shop, who='staff', cash=100000):
 
 
 def live(shop, who='staff'):
-    return ok(call(shop, who, 'GET', f"/api/operations/shift?branch_id={shop['branch']}"))['summary']
+    """Full live summary of `who`'s open shift, read server-side.
+
+    Staff only get a blind summary from the API (they must count the drawer
+    first), so the reconciliation numbers are taken straight from the helper
+    the close endpoint uses."""
+    body = ok(call(shop, who, 'GET', f"/api/operations/shift?branch_id={shop['branch']}"))
+    if not body['shift']:
+        return None
+    with core.app.app_context():
+        c = core.db()
+        sh = c.execute('SELECT * FROM work_shifts WHERE id=?', (body['shift']['id'],)).fetchone()
+        return core._shift_live_summary(c, sh, sh['opened_by_user_id'])
 
 
 def close(shop, who='staff', counted=0):
@@ -666,3 +677,14 @@ def test_checkout_quote_equals_what_payment_charges(shop):
     body = ok(pay(shop, oid, promotion_code='q5', payments=[{'method': 'cash', 'amount': q['due'], 'cash_received': 70000}]))
     assert D(body['amount']) == D(q['due']) and D(body['change']) == D(70000 - 64965)
     assert_ledger(shop)
+
+
+def test_staff_gets_blind_shift_summary_until_close(shop):
+    open_shift(shop, cash=100000)
+    ok(pay(shop, order(shop), payment_method='cash', cash_received=65000))
+    staff = ok(call(shop, 'staff', 'GET', f"/api/operations/shift?branch_id={shop['branch']}"))['summary']
+    assert staff['blind_cash_count'] is True and staff['bill_count'] == 1
+    assert 'expected_cash' not in staff and 'gross_received' not in staff and 'cash_sales' not in staff
+    assert D(live(shop)['expected_cash']) == D(165000)
+    closed = close(shop, counted=165000)
+    assert D(closed['difference']) == 0

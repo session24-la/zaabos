@@ -16,6 +16,13 @@ let branches = [];
 let currentBranchId = null;
 let pollTimer = null;
 let lastOrders = [];
+let statusFilter = '';
+// Inside the POS (Version E sidebar → ครัว) the page runs framed: no own header/back link, branch from the POS.
+const KITCHEN_PARAMS = new URLSearchParams(location.search);
+const KITCHEN_EMBED = KITCHEN_PARAMS.get('embed') === '1';
+if (KITCHEN_EMBED) document.documentElement.classList.add('kitchen-embed');
+// The kitchen tablet is always dark; framed inside the POS it follows the POS screen mode.
+if (KITCHEN_EMBED) try { const m = localStorage.getItem('zaabos_theme_e'); if (m === 'light' || (m === 'system' && !matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.dataset.theme = 'light'; } catch (e) {}
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
@@ -66,7 +73,7 @@ onLangChange(() => {
   if (branches.length) {
     const sel = $('#branchSelect');
     const cur = sel.value;
-    sel.innerHTML = `<option value="">${escapeHtml(t('select_all_branches'))}</option>` + branches.map(b => `<option value="${b.id}">${escapeHtml(b.icon || '')} ${escapeHtml(b.name)}</option>`).join('');
+    sel.innerHTML = `<option value="">${escapeHtml(t('select_all_branches'))}</option>` + branches.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
     sel.value = cur;
   }
   renderBoard(lastOrders);
@@ -89,8 +96,11 @@ async function afterLogin() {
   const boot = await api('/api/bootstrap');
   branches = boot.branches;
   const sel = $('#branchSelect');
-  sel.innerHTML = `<option value="">${escapeHtml(t('select_all_branches'))}</option>` + branches.map(b => `<option value="${b.id}">${escapeHtml(b.icon || '')} ${escapeHtml(b.name)}</option>`).join('');
+  sel.innerHTML = `<option value="">${escapeHtml(t('select_all_branches'))}</option>` + branches.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
   sel.onchange = () => { currentBranchId = sel.value || null; loadKitchenStations(); loadBoard(); };
+  const wanted = KITCHEN_PARAMS.get('branch');
+  if (wanted && branches.some(b => String(b.id) === wanted)) { sel.value = wanted; currentBranchId = wanted; }
+  else if (KITCHEN_EMBED && branches.length === 1) { sel.value = String(branches[0].id); currentBranchId = sel.value; }
   await loadKitchenStations();
   loadBoard();
   if (pollTimer) clearInterval(pollTimer);
@@ -131,8 +141,15 @@ async function loadBoard() {
 
 const KITCHEN_HIGHLIGHT_MS = 3 * 60 * 1000; // how long a "sent to kitchen" flag stays pulsing before it fades to a plain timestamp
 
-function renderBoard(orders) {
-  lastOrders = orders;
+const KITCHEN_FILTERS = [['', 'ทั้งหมด'], ['received', 'ใหม่'], ['preparing', 'กำลังทำ'], ['ready', 'พร้อมเสิร์ฟ']];
+function renderFilterChips(all) {
+  const box = $('#kitchenFilters'); if (!box) return;
+  box.innerHTML = KITCHEN_FILTERS.map(([v, label]) => `<button type="button" class="chip ${v === statusFilter ? 'active' : ''}" data-kfilter="${v}">${escapeHtml(label)} <small>${all.filter(o => !v || o.status === v).length}</small></button>`).join('');
+}
+function renderBoard(allOrders) {
+  lastOrders = allOrders;
+  renderFilterChips(allOrders);
+  const orders = allOrders.filter(o => !statusFilter || o.status === statusFilter);
   const board = $('#board');
   if (!orders.length) { board.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="es-ic"><i class="ic ic-chef-hat" aria-hidden="true"></i></span>${escapeHtml(t('empty_kitchen_queue'))}</div>`; return; }
   board.innerHTML = orders.map(o => {
@@ -156,9 +173,10 @@ function renderBoard(orders) {
     const mins = Math.max(0, Math.floor((Date.now() - firstSent) / 60000));
     const waitCls = mins >= 20 ? 'kt-wait-late' : mins >= 10 ? 'kt-wait-slow' : '';
     const where = o.table_name_snapshot || orderTypeLabel(o.order_type);
+    const count = o.items.filter(it => it.kitchen_sent_at && Number(it.quantity || 0) > Number(it.cancelled_quantity || 0)).length;
     return `<div class="kitchen-ticket ${o.status} ${waitCls}">
-      <div class="kt-head"><span class="kt-where">${escapeHtml(where)}</span><span class="kt-wait" data-since="${firstSent}">${mins} นาที</span></div>
-      <div class="kt-table">#${escapeHtml(o.order_no)} · ${escapeHtml(orderTypeLabel(o.order_type))}${o.customer_name && o.customer_name !== 'ลูกค้า' ? ' · ' + escapeHtml(o.customer_name) : ''}</div>
+      <div class="kt-head"><span class="kt-no">#${escapeHtml(String(o.order_no).split('-').pop())}</span><span class="kt-where">${escapeHtml(where)}</span><span class="kt-wait" data-since="${firstSent}">${mins} นาที</span></div>
+      <div class="kt-table">${count} รายการ · ${escapeHtml(orderTypeLabel(o.order_type))} · ${zaabosTime(o.created_at)}${o.customer_name && o.customer_name !== 'ลูกค้า' ? ' · ' + escapeHtml(o.customer_name) : ''}</div>
       <ul>${itemsHtml}</ul>
       ${o.notes ? `<div class="kt-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(o.notes)}</div>` : ''}
       <div class="kt-actions">${actions}</div>
@@ -172,6 +190,7 @@ $('#board').addEventListener('click', (e) => {
   apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(loadBoard).catch(err => toast(err.message, 'err'));
 });
 $('#refreshBtn').addEventListener('click', loadBoard);
+$('#kitchenFilters').addEventListener('click', e => { const b = e.target.closest('[data-kfilter]'); if (!b) return; statusFilter = b.dataset.kfilter; renderBoard(lastOrders); });
 
 (async function initApp() {
   try { me = await api('/api/me'); await afterLogin(); } catch (e) { showLogin(); }

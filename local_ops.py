@@ -18,7 +18,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = '2.5.1'
+APP_VERSION = '2.6.0'
 RELEASES_API = os.getenv('ZAABOS_UPDATE_FEED') or 'https://api.github.com/repos/session24-la/zaabos/releases?per_page=20'
 RELEASE_TAG_PREFIX = 'local-v'
 LAUNCH_AGENT_LABEL = 'com.zaabos.local'
@@ -243,11 +243,31 @@ def default_mirror_dir():
     return None
 
 
+def install_data_dir():
+    """Where the installed shop app keeps its data (zaabos_local.default_data_dir without overrides —
+    zaabos_local exports ZAABOS_DATA_DIR for whatever --data-dir it was started with)."""
+    if sys.platform.startswith('win'):
+        return Path(os.getenv('APPDATA') or Path.home() / 'AppData' / 'Roaming') / 'ZaabOS'
+    if sys.platform == 'darwin':
+        return Path.home() / 'Library' / 'Application Support' / 'ZaabOS'
+    return Path(os.getenv('XDG_DATA_HOME') or Path.home() / '.local' / 'share') / 'ZaabOS'
+
+
 def mirror_dir(data_dir):
     cfg = load_config(data_dir)
     if cfg.get('mirror_dir') == '':
         return None                      # owner switched it off
-    return Path(cfg['mirror_dir']).expanduser() if cfg.get('mirror_dir') else default_mirror_dir()
+    if cfg.get('mirror_dir'):
+        return Path(cfg['mirror_dir']).expanduser()
+    # Only the real shop install copies to iCloud/OneDrive by default. Test runs and extra
+    # instances (--data-dir …) on the same computer must never push the shop's own copies
+    # out of the folder (it keeps the newest MIRROR_KEEP files only).
+    try:
+        if Path(data_dir).expanduser().resolve() != install_data_dir().resolve():
+            return None
+    except OSError:
+        return None
+    return default_mirror_dir()
 
 
 def mirror_backup(data_dir, backup_file):

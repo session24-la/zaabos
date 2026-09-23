@@ -115,8 +115,8 @@ def import_from_cloud(core, conn, tenant_id, branch_id, fetch, cloud_branch_id=N
     tables = 0
     for t in [t for t in boot.get('tables') or [] if t.get('branch_id') == sb]:
         # New QR tokens: the cloud tokens point at zaabos.com, these QR codes point at this PC.
-        conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,active,created_at) VALUES(?,?,?,?,1,?)',
-                     (tenant_id, branch_id, t['name'], core.gen_qr_token(), now))
+        conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,zone,qr_token,active,created_at) VALUES(?,?,?,?,?,1,?)',
+                     (tenant_id, branch_id, t['name'], core._clean_zone(t.get('zone')), core.gen_qr_token(), now))
         tables += 1
     if pricing and 'tax_rate' in pricing:
         conn.execute('DELETE FROM pricing_settings WHERE tenant_id=? AND branch_id=?', (tenant_id, branch_id))

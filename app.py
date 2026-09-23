@@ -114,10 +114,10 @@ app.config.update(
 @app.after_request
 def add_security_headers(response):
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
-    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')   # the POS shows the kitchen screen in a frame
     response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
     response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
-    response.headers.setdefault('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+    response.headers.setdefault('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'")
     if request.is_secure:
         response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return response
@@ -763,6 +763,13 @@ def ensure_schema_migrations(conn):
             conn.execute("ALTER TABLE order_items ADD COLUMN item_name2_snapshot TEXT NOT NULL DEFAULT ''")
     conn.commit()
     record_migration(conn, 31, 'menu_names_multilingual')
+    # Floor zones (โซน A / ในร้าน / ระเบียง …) so a big floor plan can be filtered on the POS.
+    if IS_POSTGRES:
+        conn.execute("ALTER TABLE dining_tables ADD COLUMN IF NOT EXISTS zone TEXT NOT NULL DEFAULT ''")
+    elif 'zone' not in {r['name'] for r in conn.execute('PRAGMA table_info(dining_tables)').fetchall()}:
+        conn.execute("ALTER TABLE dining_tables ADD COLUMN zone TEXT NOT NULL DEFAULT ''")
+    conn.commit()
+    record_migration(conn, 32, 'table_zones')
 
 
 
@@ -1360,6 +1367,9 @@ def archive_branch(bid):
 # Tables (dining tables) — each has a unique QR token
 # =====================================================================
 
+def _clean_zone(v):
+    return ' '.join(str(v or '').split())[:40]
+
 @app.get('/api/tables')
 @login_required
 def list_tables():
@@ -1388,8 +1398,8 @@ def add_table():
     branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'), 404
     token = gen_qr_token()
-    cur = conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,created_at) VALUES(?,?,?,?,?)',
-        (g.tenant_id, branch_id, name, token, now()))
+    cur = conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,zone,qr_token,created_at) VALUES(?,?,?,?,?,?)',
+        (g.tenant_id, branch_id, name, _clean_zone(d.get('zone')), token, now()))
     log_action('add_table', detail=name)
     conn.commit()
     return jsonify(ok=True, id=cur.lastrowid, qr_token=token)
@@ -1413,12 +1423,19 @@ def add_tables_bulk():
     conn = db()
     branch = conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?', (branch_id, g.tenant_id)).fetchone()
     if not branch: return jsonify(error='ไม่พบสาขา'), 404
-    existing = conn.execute('SELECT COUNT(*) AS c FROM dining_tables WHERE branch_id=?', (branch_id,)).fetchone()['c']
+    zone = _clean_zone(d.get('zone'))
+    prefix = (d.get('prefix') or '').strip()[:20]
+    if prefix:   # A1, A2 … continuing after the highest number already used with this prefix
+        used = [r['name'][len(prefix):] for r in conn.execute('SELECT name FROM dining_tables WHERE branch_id=? AND active=1', (branch_id,)).fetchall()
+                if r['name'].startswith(prefix)]
+        existing = max([int(x) for x in used if x.isdigit()] or [0])
+    else:
+        existing = conn.execute('SELECT COUNT(*) AS c FROM dining_tables WHERE branch_id=?', (branch_id,)).fetchone()['c']
     created = []
     for i in range(1, count + 1):
         token = gen_qr_token()
-        cur = conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,qr_token,created_at) VALUES(?,?,?,?,?)',
-            (g.tenant_id, branch_id, f'โต๊ะ {existing + i}', token, now()))
+        cur = conn.execute('INSERT INTO dining_tables(tenant_id,branch_id,name,zone,qr_token,created_at) VALUES(?,?,?,?,?,?)',
+            (g.tenant_id, branch_id, f'{prefix}{existing + i}' if prefix else f'โต๊ะ {existing + i}', zone, token, now()))
         created.append(cur.lastrowid)
     log_action('add_tables_bulk', detail=f'{count} tables')
     conn.commit()
@@ -1433,7 +1450,8 @@ def edit_table(tbid):
     if not old: return jsonify(error='ไม่พบโต๊ะ'), 404
     d = request.get_json() or {}
     name = (d.get('name') or old['name']).strip()
-    conn.execute('UPDATE dining_tables SET name=? WHERE id=?', (name, tbid))
+    zone = _clean_zone(d['zone']) if 'zone' in d else (old['zone'] if 'zone' in old.keys() else '')
+    conn.execute('UPDATE dining_tables SET name=?,zone=? WHERE id=?', (name, zone, tbid))
     log_action('edit_table', detail=str(tbid))
     conn.commit()
     return jsonify(ok=True)
@@ -2106,9 +2124,65 @@ def list_orders():
     args = [g.tenant_id]
     if status: q += ' AND orders.status=?'; args.append(status)
     if branch_id: q += ' AND orders.branch_id=?'; args.append(branch_id)
+    # History filters: restaurant-local dates, free-text search, one customer's orders.
+    date_from = (request.args.get('date_from') or '')[:10]; date_to = (request.args.get('date_to') or '')[:10]
+    if date_from or date_to:
+        a, b = sorted([date_from or date_to, date_to or date_from])
+        try:
+            start, end = local_range_bounds_utc(a, b)
+        except ValueError:
+            return jsonify(error='วันที่ไม่ถูกต้อง'), 400
+        q += ' AND orders.created_at>=? AND orders.created_at<?'; args += [start, end]
+    text = (request.args.get('q') or '').strip()[:60]
+    if text:
+        like = '%' + text.lower() + '%'
+        q += ''' AND (LOWER(orders.order_no) LIKE ? OR LOWER(COALESCE(orders.customer_name,'')) LIKE ?
+                  OR COALESCE(orders.customer_phone,'') LIKE ? OR LOWER(COALESCE(orders.table_name_snapshot,'')) LIKE ?)'''
+        args += [like, like, '%' + text + '%', like]
+    phone = (request.args.get('customer_phone') or '').strip()
+    cname = (request.args.get('customer_name') or '').strip()
+    if phone: q += ' AND orders.customer_phone=?'; args.append(phone)
+    elif cname: q += " AND LOWER(orders.customer_name)=? AND COALESCE(orders.customer_phone,'')=''"; args.append(cname.lower())
     q += ' ORDER BY orders.id DESC LIMIT 200'
     rows = conn.execute(q, args).fetchall()
     return jsonify(orders=[_order_with_items(conn, r) for r in rows])
+
+# Names the POS/QR page fill in when the guest gave none — not real customers.
+PLACEHOLDER_CUSTOMER_NAMES = {'', 'ลูกค้า', 'ລູກຄ້າ', 'customer', 'guest', '顾客', '客人', 'walk-in', 'ลูกค้าหน้าร้าน'}
+
+@app.get('/api/customers')
+@login_required
+@role_required('owner', 'manager', 'staff')
+def list_customers():
+    """Regular customers, derived from orders: grouped by phone (or by name when no phone was given)."""
+    err = require_tenant()
+    if err: return err
+    conn = db()
+    try: branch_id = _query_int_arg('branch_id')
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'), 400
+    q = '''SELECT customer_name, COALESCE(customer_phone,'') AS phone, payment_status, status, created_at,
+                  total_amount-discount_amount+service_charge_amount+tax_amount+delivery_fee AS due
+           FROM orders WHERE tenant_id=? AND status<>'cancelled' '''
+    args = [g.tenant_id]
+    if branch_id: q += ' AND branch_id=?'; args.append(branch_id)
+    groups = {}
+    for r in conn.execute(q + ' ORDER BY id DESC LIMIT 20000', args).fetchall():
+        name = (r['customer_name'] or '').strip(); phone = (r['phone'] or '').strip()
+        if not phone and name.lower() in PLACEHOLDER_CUSTOMER_NAMES: continue
+        key = 'p:' + phone if phone else 'n:' + name.lower()
+        c = groups.get(key)
+        if not c:
+            c = groups[key] = {'key': key, 'name': name if name.lower() not in PLACEHOLDER_CUSTOMER_NAMES else '', 'phone': phone,
+                               'visits': 0, 'total_spent': 0.0, 'last_visit': r['created_at'], 'first_visit': r['created_at']}
+        c['visits'] += 1
+        if r['payment_status'] == 'paid': c['total_spent'] += float(r['due'] or 0)
+        c['first_visit'] = r['created_at']
+        if not c['name'] and name.lower() not in PLACEHOLDER_CUSTOMER_NAMES: c['name'] = name
+    text = (request.args.get('q') or '').strip().lower()
+    rows = [c for c in groups.values() if not text or text in c['name'].lower() or text in c['phone']]
+    rows.sort(key=lambda c: (-c['total_spent'], -c['visits']))
+    for c in rows: c['total_spent'] = money_float(c['total_spent'])
+    return jsonify(customers=rows[:300], total=len(rows))
 
 @app.get('/api/kitchen/orders')
 @login_required
@@ -3371,6 +3445,22 @@ def reports_summary():
     guests = row['guests'] or 0
     total_sales = subtotal - discount + service + tax + delivery
 
+    # Sales per restaurant-local hour (dashboard chart).
+    h_q = '''SELECT COALESCE(paid_at,created_at) AS t, total_amount-discount_amount+service_charge_amount+tax_amount+delivery_fee AS due
+             FROM orders WHERE tenant_id=? AND payment_status='paid' AND status!='cancelled' AND COALESCE(paid_at,created_at)>=? AND COALESCE(paid_at,created_at)<?'''
+    h_args = [g.tenant_id, range_start, range_end]
+    if branch_id: h_q += ' AND branch_id=?'; h_args.append(branch_id)
+    hourly = [{'hour': h, 'total': 0.0, 'orders': 0} for h in range(24)]
+    for hr in conn.execute(h_q, h_args).fetchall():
+        try:
+            ts = datetime.fromisoformat(str(hr['t']).replace('Z', '+00:00'))
+            if ts.tzinfo is None: ts = ts.replace(tzinfo=timezone.utc)
+            b = hourly[ts.astimezone(RESTAURANT_TZ).hour]
+        except (TypeError, ValueError):
+            continue
+        b['total'] += float(hr['due'] or 0); b['orders'] += 1
+    for b in hourly: b['total'] = money_float(b['total'])
+
     ti_q = '''SELECT oi.item_name_snapshot AS name,
                      SUM(oi.quantity-COALESCE(oi.cancelled_quantity,0)) AS qty,
                      SUM((oi.quantity-COALESCE(oi.cancelled_quantity,0))*oi.unit_price) AS revenue
@@ -3443,7 +3533,7 @@ def reports_summary():
         refund_total=refund_total, refund_count=refund_row['count'] or 0, net_sales=total_sales-refund_total,
         open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
         average_bill=(total_sales / order_count) if order_count else 0,
-        cancellations=cancellation_analytics,
+        cancellations=cancellation_analytics, hourly=hourly,
     )
 
 @app.get('/api/daily-closing')
