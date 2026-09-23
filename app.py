@@ -2351,7 +2351,7 @@ def _active_promotion(conn, code, branch_id, subtotal):
     starts,ends=local_datetime_input_to_utc(promo['starts_at']),local_datetime_input_to_utc(promo['ends_at'])
     if starts and ts < starts: raise ValueError('โปรโมชั่นนี้ยังไม่เริ่ม')
     if ends and ts > ends: raise ValueError('โปรโมชั่นนี้หมดอายุแล้ว')
-    if subtotal < float(promo['min_spend'] or 0): raise ValueError('ยอดสั่งซื้อยังไม่ถึงขั้นต่ำของโปรโมชั่น')
+    if money_decimal(subtotal) < money_decimal(promo['min_spend'] or 0): raise ValueError('ยอดสั่งซื้อยังไม่ถึงขั้นต่ำของโปรโมชั่น')
     return promo
 
 @app.get('/api/pricing/settings')
