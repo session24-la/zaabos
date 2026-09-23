@@ -1540,8 +1540,9 @@ def _parse_stock_fields(d, old):
     def _get(key, default):
         return d.get(key, old[key] if old is not None else default)
     try:
-        cost_price = float(_get('cost_price', 0) or 0)
+        cost_price = money_decimal(_get('cost_price', 0) or 0)
         if cost_price < 0: raise ValueError()
+        cost_price = money_float(cost_price)
     except (TypeError, ValueError):
         raise ValueError('ต้นทุนไม่ถูกต้อง')
     track_stock = 1 if _get('track_stock', False) else 0
@@ -2350,7 +2351,7 @@ def _active_promotion(conn, code, branch_id, subtotal):
     starts,ends=local_datetime_input_to_utc(promo['starts_at']),local_datetime_input_to_utc(promo['ends_at'])
     if starts and ts < starts: raise ValueError('โปรโมชั่นนี้ยังไม่เริ่ม')
     if ends and ts > ends: raise ValueError('โปรโมชั่นนี้หมดอายุแล้ว')
-    if subtotal < float(promo['min_spend'] or 0): raise ValueError('ยอดสั่งซื้อยังไม่ถึงขั้นต่ำของโปรโมชั่น')
+    if money_decimal(subtotal) < money_decimal(promo['min_spend'] or 0): raise ValueError('ยอดสั่งซื้อยังไม่ถึงขั้นต่ำของโปรโมชั่น')
     return promo
 
 @app.get('/api/pricing/settings')
@@ -3236,8 +3237,9 @@ def print_jobs_list():
 @role_required('owner','manager','staff')
 def print_job_retry(jid):
     """Controlled reprint: the same ticket (same items) goes back into the queue once."""
-    conn=db(); row=conn.execute('SELECT id FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
+    conn=db(); row=conn.execute('SELECT id,status FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
     if not row: return jsonify(error='ไม่พบงานพิมพ์'),404
+    if row['status'] not in ('failed','cancelled'): return jsonify(error='งานนี้ไม่ได้อยู่ในสถานะที่อนุญาตให้ลองพิมพ์ใหม่'),409
     conn.execute("UPDATE kitchen_print_jobs SET status='pending',attempts=0,last_error='',next_attempt_at=NULL WHERE id=?",(jid,))
     log_action('print_job_retry',detail=str(jid)); conn.commit(); _wake_printer()
     return jsonify(ok=True)
@@ -3250,8 +3252,8 @@ def print_job_cancel(jid):
     conn=db()
     row=conn.execute('SELECT id,status FROM kitchen_print_jobs WHERE id=? AND tenant_id=?',(jid,g.tenant_id)).fetchone()
     if not row: return jsonify(error='ไม่พบงานพิมพ์'),404
-    if row['status']=='printed': return jsonify(error='งานนี้พิมพ์สำเร็จแล้ว ไม่สามารถยกเลิกย้อนหลังได้'),409
-    conn.execute("UPDATE kitchen_print_jobs SET status='cancelled',last_error='' WHERE id=?",(jid,))
+    if row['status'] not in ('pending','failed'): return jsonify(error='งานนี้ไม่อยู่ในคิวที่สามารถยกเลิกได้'),409
+    conn.execute("UPDATE kitchen_print_jobs SET status='cancelled',last_error='',next_attempt_at=NULL WHERE id=?",(jid,))
     log_action('print_job_cancel',detail=str(jid)); conn.commit()
     return jsonify(ok=True)
 
@@ -3752,4 +3754,4 @@ with app.app_context():
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5300))
-    app.run(host='0.0.0.0', port=port, debug=not IS_POSTGRES)
+    app.run(host='0.0.0.0', port=port, debug=(not IS_POSTGRES and os.getenv('FLASK_DEBUG','').strip()=='1'))
