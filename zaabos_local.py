@@ -114,6 +114,57 @@ def backup_loop(core, stop):
             return
 
 
+def open_url(url):
+    """webbrowser.open needs Apple Events permission inside a .app bundle and silently does
+    nothing; `open` always works on macOS."""
+    if sys.platform == 'darwin':
+        import subprocess
+        subprocess.Popen(['open', url])
+    else:
+        webbrowser.open(url)
+
+
+def run_mac_menu_bar(local_url, public_url, data_dir, core):
+    """macOS: a menu-bar icon instead of a Dock icon that bounces forever. The server runs in a
+    background thread; this menu is how staff reopen the POS or quit it."""
+    import rumps
+
+    class ZaabOSMenu(rumps.App):
+        def __init__(self):
+            super().__init__('ZaabOS', title='🍜', quit_button=None)
+            self.menu = ['เปิด ZaabOS', f'แท็บเล็ต/มือถือ: {public_url}', None,
+                         'สำรองข้อมูลตอนนี้', 'เปิดโฟลเดอร์ข้อมูล', None, 'ปิด ZaabOS']
+
+        @rumps.clicked('เปิด ZaabOS')
+        def open_pos(self, _):
+            open_url(local_url)
+
+        @rumps.clicked(f'แท็บเล็ต/มือถือ: {public_url}')
+        def copy_public(self, _):
+            import subprocess
+            subprocess.run(['pbcopy'], input=public_url.encode(), check=False)
+            rumps.notification('ZaabOS', 'คัดลอกที่อยู่แล้ว', public_url)
+
+        @rumps.clicked('สำรองข้อมูลตอนนี้')
+        def backup_now(self, _):
+            try:
+                meta = core.backup_db('local')
+                rumps.notification('ZaabOS', 'สำรองข้อมูลแล้ว', meta['file'])
+            except Exception as exc:
+                rumps.alert('สำรองข้อมูลไม่สำเร็จ', str(exc))
+
+        @rumps.clicked('เปิดโฟลเดอร์ข้อมูล')
+        def open_data(self, _):
+            open_url(str(data_dir))
+
+        @rumps.clicked('ปิด ZaabOS')
+        def quit_app(self, _):
+            if rumps.alert('ปิด ZaabOS?', 'แท็บเล็ตและ QR จะสั่งอาหารไม่ได้จนกว่าจะเปิดใหม่', ok='ปิด', cancel='ยกเลิก'):
+                rumps.quit_application()
+
+    ZaabOSMenu().run()
+
+
 def main(argv=None):
     # Windows consoles are cp1252/cp874: never let a Thai/Lao log line crash the POS.
     for stream in (sys.stdout, sys.stderr):
@@ -130,7 +181,7 @@ def main(argv=None):
         # Already running (double-clicked twice): just bring the POS up.
         print(f'[ZaabOS] already running at {local_url}', flush=True)
         if not args.no_browser:
-            webbrowser.open(local_url)
+            open_url(local_url)
         return 0
 
     data_dir = Path(args.data_dir).expanduser() if args.data_dir else default_data_dir()
@@ -155,13 +206,24 @@ def main(argv=None):
     print('=' * 60, flush=True)
 
     if not args.no_browser:
-        threading.Timer(1.5, lambda: webbrowser.open(local_url)).start()
+        threading.Timer(1.5, lambda: open_url(local_url)).start()
         if note.exists():
-            threading.Timer(2.0, lambda: webbrowser.open(note.as_uri())).start()
+            threading.Timer(2.0, lambda: open_url(note.as_uri())).start()
 
     from waitress import serve
+    server = lambda: serve(wsgi.app, host='0.0.0.0', port=args.port, threads=12, ident=APP_NAME)
+    use_menu_bar = sys.platform == 'darwin' and not args.no_browser
+    if use_menu_bar:
+        try:
+            import rumps  # noqa: F401
+        except ImportError:
+            use_menu_bar = False
     try:
-        serve(wsgi.app, host='0.0.0.0', port=args.port, threads=12, ident=APP_NAME)
+        if use_menu_bar:
+            threading.Thread(target=server, name='zaabos-http', daemon=True).start()
+            run_mac_menu_bar(local_url, os.environ['ZAABOS_PUBLIC_URL'], data_dir, core)
+        else:
+            server()
     finally:
         stop.set()
         print_stop.set()

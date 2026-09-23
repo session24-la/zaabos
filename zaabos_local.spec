@@ -4,7 +4,7 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files
 datas = [('templates', 'templates'), ('static', 'static'), ('schema.sql', '.'), ('schema_postgres.sql', '.')]
 datas += collect_data_files('tzdata')   # Windows has no system timezone database
-hidden = ['wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata', 'printing', 'PIL.ImageDraw', 'PIL.ImageFont']
+hidden = ['wsgi', 'customer_history', 'table_open_bill', 'waitress', 'tzdata', 'printing', 'PIL.ImageDraw', 'PIL.ImageFont'] + (['rumps'] if sys.platform == 'darwin' else [])
 icon = 'static/zaabos-icon-512.png'
 
 a = Analysis(['zaabos_local.py'], pathex=['.'], datas=datas, hiddenimports=hidden,
@@ -15,4 +15,5 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name='ZaabOS', icon=icon,
 coll = COLLECT(exe, a.binaries, a.datas, name='ZaabOS')
 if sys.platform == 'darwin':
     app = BUNDLE(coll, name='ZaabOS.app', icon=icon, bundle_identifier='com.zaabos.local',
-                 info_plist={'CFBundleShortVersionString': '2.0.0', 'LSBackgroundOnly': False})
+                 info_plist={'CFBundleShortVersionString': '2.0.0',
+                            'LSUIElement': True})   # menu-bar app: no Dock icon bouncing forever
