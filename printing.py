@@ -136,7 +136,22 @@ def _wrap(text, width, size, bold=False):
 SIZES = {'small': 22, 'normal': 26, 'large': 34, 'xlarge': 44}
 
 
-def render(lines, paper='80'):
+def _seg_width(segs, size):
+    return sum(_text_width(t, size, b) for t, b in segs)
+
+
+def _draw_segs(draw, x, y, segs, size):
+    for t, b in segs:
+        _draw_text(draw, x, y, t, size, b)
+        x += _text_width(t, size, b)
+
+
+def _segs(v, bold):
+    """A cell is plain text or a list of (text, bold) pieces, e.g. [('โต๊ะ  ', False), ('โต๊ะ 2', True)]."""
+    return [(str(t), bool(b)) for t, b in v] if isinstance(v, (list, tuple)) else [(str(v or ''), bold)]
+
+
+def render(lines, paper='80', scale=1.0):
     """lines: list of dicts
          {'text': str, 'size': 'normal', 'align': 'left|center|right', 'bold': bool}
          {'left': str, 'right': str, 'size': ..., 'bold': ...}   two columns (item ... price)
@@ -152,13 +167,39 @@ def render(lines, paper='80'):
         if ln.get('space'):
             y += int(ln['space'])
             continue
-        size = SIZES.get(ln.get('size') or 'normal', 26)
+        size = int(SIZES.get(ln.get('size') or 'normal', 26) * scale)
         step = int(size * 1.45)
-        if ln.get('rule'):
-            ops.append(('rule', y + step // 2))
+        if ln.get('rule') or ln.get('hline'):
+            ops.append(('hline' if ln.get('hline') else 'rule', y + step // 2))
             y += step
             continue
         bold = bool(ln.get('bold'))
+        if 'qty' in ln:
+            # Item row like the web receipt: qty column | name (wraps) | price right-aligned.
+            qty_w = int(size * 2.4)
+            price = str(ln.get('right') or '')
+            pw = _text_width(price, size, bold)
+            name_x = margin + qty_w
+            parts = _wrap(ln.get('left') or '', width - margin - pw - 14 - name_x, size, bold)
+            ops.append(('text', margin, y, str(ln['qty']), size, True))
+            for i, part in enumerate(parts):
+                ops.append(('text', name_x, y, part, size, bold))
+                if i == 0 and price:
+                    ops.append(('text', width - margin - pw, y, price, size, bold))
+                y += step
+            sub_size = int(size * 0.82)
+            for sub in ln.get('subs') or []:
+                for part in _wrap(sub, width - margin - name_x, sub_size):
+                    ops.append(('text', name_x, y, part, sub_size, False))
+                    y += int(sub_size * 1.4)
+            continue
+        if isinstance(ln.get('left'), (list, tuple)) or isinstance(ln.get('right'), (list, tuple)):
+            ls, rs_ = _segs(ln.get('left'), bold), _segs(ln.get('right'), bold)
+            ops.append(('segs', margin, y, ls, size))
+            if rs_:
+                ops.append(('segs', width - margin - _seg_width(rs_, size), y, rs_, size))
+            y += step
+            continue
         if 'left' in ln:
             right = str(ln.get('right') or '')
             rw = _text_width(right, size, bold)
@@ -169,7 +210,10 @@ def render(lines, paper='80'):
                     ops.append(('text', width - margin - rw, y, right, size, bold))
                 y += step
             continue
-        for part in _wrap(ln.get('text') or '', inner, size, bold):
+        text = ln.get('text') or ''
+        if ln.get('spaced'):   # letter-spaced subtitle, like the web receipt's "R E S T A U R A N T"
+            text = ' '.join(text)
+        for part in _wrap(text, inner, size, bold):
             w = _text_width(part, size, bold)
             align = ln.get('align') or 'left'
             x = margin if align == 'left' else (width - margin - w if align == 'right' else (width - w) / 2)
@@ -181,6 +225,10 @@ def render(lines, paper='80'):
         if op[0] == 'rule':
             for x in range(margin, width - margin, 12):
                 draw.line((x, op[1], x + 6, op[1]), fill=0, width=2)
+        elif op[0] == 'hline':
+            draw.line((margin, op[1], width - margin, op[1]), fill=0, width=3)
+        elif op[0] == 'segs':
+            _draw_segs(draw, op[1], op[2], op[3], op[4])
         else:
             _draw_text(draw, op[1], op[2], op[3], op[4], op[5])
     return img
@@ -290,58 +338,99 @@ def kitchen_lines(order, items, station_name, tz):
     return lines
 
 
-def receipt_lines(order, items, payments, rs, tz, cashier=''):
+CURRENCY_SYMBOLS = {'LAK': '₭', 'THB': '฿', 'USD': '$', 'CNY': '¥'}
+PAYMENT_NAMES = {'cash': 'Cash / ເງິນສົດ', 'qr': 'QR', 'card': 'Card', 'bank_transfer': 'Bank transfer', 'other': 'Other'}
+# Same words the browser receipt uses (static/i18n.js); the cashier's screen language is sent with the job.
+RECEIPT_LABELS = {
+    'th': dict(table='โต๊ะ', guests='ลูกค้า', subtotal='ยอดก่อนภาษี', total='รวม', tax='ภาษี (ถ้ามี)', cash='รับเงินมา', change='เงินทอน', thanks='ขอบคุณที่ใช้บริการ', discount='ส่วนลด', delivery='ค่าส่ง'),
+    'lo': dict(table='ໂຕະ', guests='ລູກຄ້າ', subtotal='ຍອດກ່ອນອາກອນ', total='ລວມ', tax='ອາກອນ (ຖ້າມີ)', cash='ຮັບເງິນມາ', change='ເງິນທອນ', thanks='ຂອບໃຈທີ່ໃຊ້ບໍລິການ', discount='ສ່ວນຫຼຸດ', delivery='ຄ່າສົ່ງ'),
+    'en': dict(table='Table', guests='Guests', subtotal='Subtotal', total='Total', tax='Tax', cash='Cash received', change='Change', thanks='Thank you for your order', discount='Discount', delivery='Delivery'),
+    'zh': dict(table='桌号', guests='人数', subtotal='小计', total='合计', tax='税额', cash='实收金额', change='找零', thanks='感谢您的光临', discount='折扣', delivery='配送费'),
+}
+
+
+def _fmt_money(v, currency='LAK'):
+    return CURRENCY_SYMBOLS.get(currency or 'LAK', '') + f'{round(float(v or 0)):,}'
+
+
+def _fmt_time(ts, tz, lang):
+    if not ts:
+        return ''
+    try:
+        d = datetime.fromisoformat(str(ts).replace('Z', '+00:00')).astimezone(tz)
+    except ValueError:
+        return str(ts)[:16]
+    year = d.year + 543 if lang == 'th' else d.year     # th-TH shows the Buddhist year, as on screen
+    return f'{d:%d/%m}/{year} {d:%H:%M}'
+
+
+def receipt_lines(order, items, payments, rs, tz, cashier='', lang='th', currency='LAK', order_type_label=''):
+    """Mirror of the browser receipt (static/app.js printReceipt) so both look the same."""
+    L = dict(RECEIPT_LABELS['th'], **RECEIPT_LABELS.get(lang, {}))
+    m = lambda v: _fmt_money(v, currency)
     subtotal = float(order['total_amount'] or 0)
     discount = float(order['discount_amount'] or 0)
     service = float(order['service_charge_amount'] or 0)
     tax = float(order['tax_amount'] or 0)
     delivery = float(order['delivery_fee'] or 0)
     total = max(0.0, subtotal - discount) + service + tax + delivery
-    align = rs.get('header_align') or 'center'
-    lines = [{'text': rs.get('shop_name') or 'ZaabOS', 'size': 'large', 'align': align, 'bold': True}]
-    for key in ('subtitle', 'address', 'phone'):
-        if rs.get(key):
-            lines.append({'text': rs[key], 'size': 'small', 'align': align})
+    align = 'left' if rs.get('header_align') == 'left' else 'center'
+    lines = [{'text': rs.get('shop_name') or 'ZaabOS', 'size': 'xlarge', 'align': align, 'bold': True}]
+    if rs.get('subtitle', 'RESTAURANT · POS') != '':
+        lines.append({'text': rs.get('subtitle') or 'RESTAURANT · POS', 'size': 'small', 'align': align, 'spaced': True})
     if rs.get('show_branch', True) and rs.get('branch_name'):
-        lines.append({'text': rs['branch_name'], 'size': 'small', 'align': align})
-    if rs.get('tax_id'):
-        lines.append({'text': 'TAX ID ' + rs['tax_id'], 'size': 'small', 'align': align})
+        lines.append({'text': rs['branch_name'], 'align': align, 'bold': True})
+    for key, prefix in (('address', ''), ('phone', ''), ('tax_id', 'Tax ID: ')):
+        if rs.get(key):
+            lines.append({'text': prefix + rs[key], 'size': 'small', 'align': align})
     lines.append({'rule': True})
-    lines.append({'left': f"#{order['order_no']}", 'right': order['table_name_snapshot'] or '', 'size': 'small'})
-    if rs.get('show_paid_time', True) and order['paid_at']:
-        lines.append({'left': 'ชำระ / Paid', 'right': _local_time(order['paid_at'], tz), 'size': 'small'})
-    if rs.get('show_cashier', True) and cashier:
-        lines.append({'left': 'แคชเชียร์', 'right': cashier, 'size': 'small'})
+    guest = order['guest_count'] if order['guest_count'] is not None else '-'
+    lines.append({'left': [(L['table'] + '  ', False), (order['table_name_snapshot'] or order_type_label, True)],
+                  'right': [(L['guests'] + '  ', False), (str(guest), True)] if rs.get('show_guest', True) else []})
+    lines.append({'left': [('Order  ', False), ('#' + order['order_no'], True)], 'right': []})
     lines.append({'rule': True})
     for it in items:
-        lines.append({'left': f"{it['qty']} × {it['name']}", 'right': _money(it['qty'] * it['unit_price'])})
-        if it.get('options'):
-            lines.append({'text': '   + ' + ', '.join(it['options']), 'size': 'small'})
+        subs = ([' / '.join(it['options'])] if it.get('options') else []) + ([it['notes']] if it.get('notes') else [])
+        lines.append({'qty': it['qty'], 'left': it['name'], 'right': m(it['qty'] * it['unit_price']), 'subs': subs})
     lines.append({'rule': True})
-    lines.append({'left': 'รวม / Subtotal', 'right': _money(subtotal)})
-    if discount:
-        lines.append({'left': 'ส่วนลด ' + (order['discount_label'] or ''), 'right': '-' + _money(discount)})
-    if service:
-        lines.append({'left': 'ค่าบริการ / Service', 'right': _money(service)})
-    if tax:
-        lines.append({'left': 'ภาษี / Tax', 'right': _money(tax)})
-    if delivery:
-        lines.append({'left': 'ค่าส่ง / Delivery', 'right': _money(delivery)})
-    lines.append({'left': 'ยอดสุทธิ / TOTAL', 'right': _money(total), 'size': 'large', 'bold': True})
-    if rs.get('show_payment_breakdown', True) and payments:
-        names = {'cash': 'เงินสด / Cash', 'qr': 'QR', 'card': 'บัตร / Card', 'bank_transfer': 'โอน / Transfer', 'other': 'อื่นๆ'}
-        change = 0.0
+    lines.append({'left': L['subtotal'], 'right': m(subtotal)})
+    if discount > 0:
+        lines.append({'left': L['discount'] + (' · ' + order['discount_label'] if order['discount_label'] else ''), 'right': '−' + m(discount)})
+    if service > 0:
+        lines.append({'left': 'Service charge', 'right': m(service)})
+    if tax > 0:
+        lines.append({'left': L['tax'], 'right': m(tax)})
+    if delivery > 0:
+        lines.append({'left': L['delivery'], 'right': m(delivery)})
+    lines.append({'hline': True, 'size': 'small'})
+    lines.append({'left': L['total'], 'right': m(total), 'size': 'xlarge', 'bold': True})
+    if order['payment_status'] == 'paid':
+        lines.append({'text': '[ PAID · ຊຳລະແລ້ວ ]', 'align': 'center', 'bold': True})
+    cash_rows = [p for p in payments if p['payment_method'] == 'cash']
+    if rs.get('show_payment_breakdown', True):
         for p in payments:
-            lines.append({'left': names.get(p['payment_method'], p['payment_method']), 'right': _money(p['amount']), 'size': 'small'})
-            if p['payment_method'] == 'cash' and p['cash_received']:
-                change += max(0.0, float(p['cash_received']) - float(p['amount']))
-        if change:
-            lines.append({'left': 'เงินทอน / Change', 'right': _money(change), 'size': 'small'})
-    if order['payment_status'] != 'paid':
-        lines += [{'rule': True}, {'text': 'ใบแจ้งยอด — ยังไม่ชำระ', 'align': 'center', 'bold': True}]
-    if rs.get('footer'):
-        lines += [{'rule': True}, {'text': rs['footer'], 'align': 'center', 'size': 'small'}]
+            lines.append({'left': PAYMENT_NAMES.get(p['payment_method'], p['payment_method']), 'right': m(p['amount'])})
+    elif order['payment_method']:
+        lines.append({'left': 'Payment', 'right': PAYMENT_NAMES.get(order['payment_method'], order['payment_method'])})
+    if cash_rows:
+        received = sum(float(p['cash_received'] if p['cash_received'] is not None else p['amount']) for p in cash_rows)
+        change = max(0.0, received - sum(float(p['amount']) for p in cash_rows))
+        lines.append({'left': L['cash'], 'right': m(received)})
+        lines.append({'left': L['change'], 'right': m(change)})
+    lines.append({'rule': True})
+    if rs.get('show_order_time', True):
+        lines.append({'left': 'Order time', 'right': _fmt_time(order['created_at'], tz, lang), 'size': 'small'})
+    if order['paid_at'] and rs.get('show_paid_time', True):
+        lines.append({'left': 'Paid time', 'right': _fmt_time(order['paid_at'], tz, lang), 'size': 'small'})
+    if cashier and rs.get('show_cashier', True):
+        lines.append({'left': 'Cashier', 'right': cashier, 'size': 'small'})
+    lines.append({'space': 10})
+    lines.append({'text': rs.get('footer') or L['thanks'], 'align': 'center', 'bold': True})
+    lines.append({'text': 'ZaabOS', 'size': 'small', 'align': 'center', 'spaced': True})
     return lines
+
+
+FONT_SCALE = {'small': 0.85, 'normal': 1.0, 'large': 1.15}
 
 
 def test_lines(printer_name, public_url=''):
@@ -398,11 +487,15 @@ def build_job(core, conn, job, printer):
     if job['job_type'] == 'receipt':
         rs = core.receipt_settings_for(conn, order['tenant_id'], order['branch_id'])
         pays = conn.execute('SELECT * FROM payments WHERE order_id=? AND reversed_at IS NULL ORDER BY id', (order['id'],)).fetchall()
-        cashier = ''
-        if pays:
-            u = conn.execute('SELECT display_name FROM users WHERE id=?', (pays[0]['paid_by_user_id'],)).fetchone()
-            cashier = u['display_name'] if u else ''
-        return render(receipt_lines(order, _items_for(conn, order['id']), pays, rs, tz, cashier), paper)
+        # Same fields as the browser receipt: cashier = who opened the order, shop currency, screen language.
+        u = conn.execute('SELECT display_name FROM users WHERE id=?', (order['created_by_user_id'],)).fetchone() if order['created_by_user_id'] else None
+        tenant = conn.execute('SELECT currency FROM tenants WHERE id=?', (order['tenant_id'],)).fetchone()
+        opts = json.loads(job['payload'] or '{}') if 'payload' in job.keys() else {}
+        lang = opts.get('lang') if opts.get('lang') in RECEIPT_LABELS else 'th'
+        paper = str(rs.get('paper_width') or paper)
+        lines = receipt_lines(order, _items_for(conn, order['id']), pays, rs, tz, u['display_name'] if u else '', lang,
+                              (tenant['currency'] if tenant else None) or 'LAK', opts.get('order_type_label') or '')
+        return render(lines, paper, FONT_SCALE.get(rs.get('font_scale') or 'normal', 1.0))
     item_ids = set(json.loads(job['item_ids'])) if job['item_ids'] else None
     items = _items_for(conn, order['id'], item_ids)
     if job['station_id'] and item_ids is None:

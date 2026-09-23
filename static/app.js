@@ -1317,7 +1317,7 @@ async function printReceipt(orderId) {
   const o = findOrderById(orderId);
   if (!o) return;
   // Wi-Fi receipt printer on the shop PC: queue it there instead of the browser print dialog.
-  try { const q = await apiJson('/api/orders/' + orderId + '/print-receipt', 'POST', {}); if (q.queued) { toast('ส่งใบเสร็จไปเครื่องพิมพ์แล้ว', 'ok'); setTimeout(refreshPrintStatus, 2500); return; } } catch (e) {}
+  try { const q = await apiJson('/api/orders/' + orderId + '/print-receipt', 'POST', {lang: currentLang, order_type_label: orderTypeLabel(o.order_type)}); if (q.queued) { toast('ส่งใบเสร็จไปเครื่องพิมพ์แล้ว', 'ok'); setTimeout(refreshPrintStatus, 2500); return; } } catch (e) {}
   const branch = (boot && boot.branches && boot.branches.find(b => Number(b.id) === Number(o.branch_id))) || null;
   let rs={}; try{rs=await api('/api/settings/receipt?branch_id='+encodeURIComponent(o.branch_id))}catch(e){}
   const shopName = rs.shop_name || ((me && me.tenant && me.tenant.name) || 'ZaabOS');
@@ -1327,7 +1327,8 @@ async function printReceipt(orderId) {
   const subtotal = Number(o.total_amount || 0);
   const discount = Number(o.discount_amount || 0);
   const service = Number(o.service_charge_amount || 0);
-  const grandTotal = Math.max(0, subtotal - discount) + service + tax;
+  const delivery = Number(o.delivery_fee || 0);
+  const grandTotal = Math.max(0, subtotal - discount) + service + tax + delivery;
   const paymentNames = {cash:'Cash / ເງິນສົດ',qr:'QR',card:'Card',bank_transfer:'Bank transfer',other:'Other'};
   const paymentRows = Array.isArray(o.payments) ? o.payments : [];
   const activeCashRows = paymentRows.filter(p => p.payment_method === 'cash');
@@ -1368,6 +1369,7 @@ async function printReceipt(orderId) {
     ${discount > 0 ? `<div class="rp-row"><span>ส่วนลด${o.discount_label?' · '+escapeHtml(o.discount_label):''}</span><span>−${fmtMoney(discount)}</span></div>` : ''}
     ${service > 0 ? `<div class="rp-row"><span>Service charge</span><span>${fmtMoney(service)}</span></div>` : ''}
     ${tax > 0 ? `<div class="rp-row"><span>${escapeHtml(t('label_tax_amount'))}</span><span>${fmtMoney(tax)}</span></div>` : ''}
+    ${delivery > 0 ? `<div class="rp-row"><span>ค่าส่ง / Delivery</span><span>${fmtMoney(delivery)}</span></div>` : ''}
     <div class="rp-total"><span>${escapeHtml(t('label_total_short'))}</span><span>${fmtMoney(grandTotal)}</span></div>
     ${o.payment_status === 'paid' ? `<div class="rp-paid">【 PAID · ຊຳລະແລ້ວ 】</div>` : ''}
     ${rs.show_payment_breakdown!==false ? paymentBreakdown : (o.payment_method ? `<div class="rp-row"><span>Payment</span><span>${escapeHtml(paymentNames[o.payment_method] || o.payment_method)}</span></div>` : '')}

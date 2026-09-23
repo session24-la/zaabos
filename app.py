@@ -734,7 +734,7 @@ def ensure_schema_migrations(conn):
             "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='kitchen_print_jobs'").fetchall()}
     else:
         pj_cols = {r['name'] for r in conn.execute('PRAGMA table_info(kitchen_print_jobs)').fetchall()}
-    for col, ddl in (('job_type', "TEXT NOT NULL DEFAULT 'kitchen'"), ('printer_id', 'INTEGER'), ('item_ids', 'TEXT'), ('next_attempt_at', 'TEXT')):
+    for col, ddl in (('job_type', "TEXT NOT NULL DEFAULT 'kitchen'"), ('printer_id', 'INTEGER'), ('item_ids', 'TEXT'), ('next_attempt_at', 'TEXT'), ('payload', 'TEXT')):
         if col not in pj_cols:
             conn.execute(f'ALTER TABLE kitchen_print_jobs ADD COLUMN {col} {ddl}')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_print_jobs_due ON kitchen_print_jobs(status,next_attempt_at)')
@@ -3075,8 +3075,11 @@ def print_receipt_job(oid):
     conn=db(); o=conn.execute('SELECT id,branch_id FROM orders WHERE id=? AND tenant_id=?',(oid,g.tenant_id)).fetchone()
     if not o: return jsonify(error='ไม่พบออเดอร์'),404
     if not _network_printing(conn,o['branch_id'],'receipt'): return jsonify(ok=True,queued=False)
-    conn.execute("""INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type)
-                    VALUES(?,?,?,?,?,?,?,?,?)""",(g.tenant_id,o['branch_id'],oid,None,'pending',0,'',now(),'receipt'))
+    d=request.get_json(silent=True) or {}
+    # The cashier's screen language decides the receipt words, exactly like the browser receipt.
+    payload=json.dumps({'lang':str(d.get('lang') or 'th')[:5],'order_type_label':str(d.get('order_type_label') or '')[:40]},ensure_ascii=False)
+    conn.execute("""INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,payload)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",(g.tenant_id,o['branch_id'],oid,None,'pending',0,'',now(),'receipt',payload))
     conn.commit(); return jsonify(ok=True,queued=True)
 
 @app.get('/api/print/jobs')

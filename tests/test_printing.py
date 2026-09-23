@@ -241,3 +241,22 @@ def test_usb_printer_offline_cancels_job_so_it_never_prints_late(shop, local_pri
     assert (fake_cups / 'cancelled').exists(), 'a job the printer did not take must be cancelled in the OS queue'
     job = _jobs(shop)[-1]
     assert job['status'] == 'pending' and 'USB' in job['last_error']
+
+
+def test_receipt_matches_web_receipt_fields(shop, local_print):
+    """Printed receipt uses the same settings and words as the browser receipt: shop name,
+    subtitle, table/guest row, currency symbol, Buddhist year in Thai, screen language, delivery."""
+    from zoneinfo import ZoneInfo
+    order_row = {'total_amount': 50000, 'discount_amount': 0, 'service_charge_amount': 0, 'tax_amount': 0, 'delivery_fee': 10000,
+                 'order_no': 'Z-1', 'table_name_snapshot': 'โต๊ะ 2', 'guest_count': 3, 'payment_status': 'paid', 'payment_method': 'cash',
+                 'discount_label': '', 'created_at': '2026-09-23T05:42:00+00:00', 'paid_at': '2026-09-23T05:42:00+00:00'}
+    items = [{'qty': 2, 'name': 'น้ำเปล่า', 'unit_price': 5000, 'options': [], 'notes': ''}]
+    pays = [{'payment_method': 'cash', 'amount': 60000, 'cash_received': 100000}]
+    rs = {'shop_name': 'ร้านของฉัน', 'footer': 'ขอบใจ', 'show_guest': True}
+    th = printing.receipt_lines(order_row, items, pays, rs, ZoneInfo('Asia/Vientiane'), 'Kot', 'th', 'LAK')
+    flat = json.dumps(th, ensure_ascii=False)
+    for want in ('ร้านของฉัน', 'ยอดก่อนภาษี', '₭60,000', '₭40,000', 'ค่าส่ง', '23/09/2569 12:42', 'ลูกค้า', 'Kot', 'ขอบใจ'):
+        assert want in flat, want
+    lo = json.dumps(printing.receipt_lines(order_row, items, pays, rs, ZoneInfo('Asia/Vientiane'), '', 'lo', 'LAK'), ensure_ascii=False)
+    assert 'ລວມ' in lo and '23/09/2026' in lo
+    printing.render(th, '80', printing.FONT_SCALE['large'])   # renders without error at every scale
