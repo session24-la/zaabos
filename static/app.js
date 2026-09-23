@@ -316,7 +316,7 @@ function refreshCurrentTab(tab) {
   else if (tab === 'pricing') loadPricing();
   else if (tab === 'inventory') loadInventory();
   else if (tab === 'operations') loadOperations();
-  else if (tab === 'receiptsettings') { loadReceiptSettings(); loadNetPrinters(); }
+  else if (tab === 'receiptsettings') { loadReceiptSettings(); loadNetPrinters(); loadLocalPanel(); }
   else if (tab === 'reports') loadReports();
   else if (tab === 'branches') renderBranches();
   else if (tab === 'users') loadUsers();
@@ -1934,3 +1934,35 @@ $('#printFailBanner').addEventListener('click',async()=>{
   }catch(e){toast(e.message,'err')}
 });
 setInterval(refreshPrintStatus,15000);
+
+// ---------- Shop-PC program: update, auto-start, QR address, backups, import (local app only) ----------
+async function loadLocalPanel(){
+  let st;try{st=await api('/api/local/status')}catch(e){$('#localPanel').classList.add('hidden');return}
+  $('#localPanel').classList.remove('hidden');
+  $('#lpVersion').textContent=`ZaabOS เวอร์ชัน ${st.version} · ข้อมูลอยู่ที่ ${st.data_dir}`;
+  $('#lpUpdateText').textContent=st.update?`มีเวอร์ชันใหม่ ${st.update.version}`:`เวอร์ชัน ${st.version}`;
+  $('#lpUpdateBtn').textContent=st.update?`⬆️ อัปเดตเป็น ${st.update.version}`:'ตรวจหาอัปเดต';
+  $('#lpUpdateBtn').dataset.ready=st.update?'1':'';
+  $('#lpAutostart').checked=!!st.autostart;
+  $('#lpAddress').value=st.address_mode||'ip';
+  $('#lpAddressHelp').innerHTML=`ตอนนี้: <b>${escapeHtml(st.public_url||'')}</b>${st.address_warning?'<br>⚠️ '+escapeHtml(st.address_warning):''}<br>ชื่อเครื่อง = ${escapeHtml(st.hostname)} (ไม่เปลี่ยนแม้ IP เปลี่ยน แต่มือถือ Android บางรุ่นอาจเปิดไม่ได้) · แนะนำ: ใช้ IP แล้วล็อก IP ที่เราเตอร์ (DHCP reservation)`;
+  $('#lpMirror').textContent=st.mirror_dir?`สำรองอัตโนมัติทุก 2 ชั่วโมง และคัดลอกไปที่ ${st.mirror_dir} (อยู่รอดแม้เครื่องเสีย)`:'สำรองอัตโนมัติทุก 2 ชั่วโมง (ยังไม่มีที่เก็บนอกเครื่อง — เปิด iCloud Drive / OneDrive เพื่อให้คัดลอกอัตโนมัติ)';
+  $('#lpBackups').innerHTML=(st.backups||[]).slice(0,10).map(b=>`<div class="np-row"><div><b>${escapeHtml(new Date(b.mtime*1000).toLocaleString(localeFor(currentLang)))}</b><small>${escapeHtml(b.where)} · ${(b.bytes/1024).toFixed(0)} KB · ${escapeHtml(b.file)}</small></div><div class="np-actions"><button class="ghost-btn" data-lp-restore="${escapeHtml(b.file)}">กู้คืน</button></div></div>`).join('');
+}
+$('#lpUpdateBtn').addEventListener('click',async()=>{const b=$('#lpUpdateBtn');b.disabled=true;try{
+  if(!b.dataset.ready){const r=await apiJson('/api/local/check-update','POST',{});if(!r.update){toast('ใช้เวอร์ชันล่าสุดแล้ว','ok');return}loadLocalPanel();return}
+  if(!confirm('อัปเดตตอนนี้? ข้อมูลร้านไม่หาย (สำรองให้ก่อนอัตโนมัติ) ZaabOS จะปิดและเปิดใหม่ใน ~10 วินาที'))return;
+  b.textContent='กำลังดาวน์โหลด…';await apiJson('/api/local/update','POST',{});toast('กำลังติดตั้ง — หน้านี้จะรีโหลดเอง','ok');setTimeout(()=>location.reload(),15000)
+}catch(e){toast(e.message,'err')}finally{b.disabled=false}});
+$('#lpAutostart').addEventListener('change',async e=>{try{await apiJson('/api/local/autostart','PUT',{enabled:e.target.checked});toast('บันทึกแล้ว','ok')}catch(err){toast(err.message,'err');e.target.checked=!e.target.checked}});
+$('#lpAddress').addEventListener('change',async e=>{try{await apiJson('/api/local/address-mode','PUT',{mode:e.target.value});alert('บันทึกแล้ว — ปิดแล้วเปิด ZaabOS ใหม่ จากนั้นพิมพ์ QR โต๊ะใหม่')}catch(err){toast(err.message,'err')}});
+$('#lpBackupBtn').addEventListener('click',async()=>{try{const r=await apiJson('/api/local/backup','POST',{});toast('สำรองแล้ว'+(r.mirrored?' + คัดลอกนอกเครื่องแล้ว':''),'ok');loadLocalPanel()}catch(e){toast(e.message,'err')}});
+$('#lpBackups').addEventListener('click',async e=>{const b=e.target.closest('[data-lp-restore]');if(!b)return;
+  if(!confirm(`กู้ข้อมูลจาก ${b.dataset.lpRestore}?\nข้อมูลปัจจุบันจะถูกสำรองไว้ก่อน แล้ว ZaabOS จะเปิดใหม่`))return;
+  try{const r=await apiJson('/api/local/restore','POST',{file:b.dataset.lpRestore});toast(`กำลังกู้ข้อมูล (${r.orders} ออเดอร์) — หน้านี้จะรีโหลดเอง`,'ok');setTimeout(()=>location.reload(),12000)}catch(err){toast(err.message,'err')}});
+$('#lpImportBtn').addEventListener('click',async()=>{const b=$('#lpImportBtn');
+  if(!confirm('ดึงเมนู/โต๊ะ/ตั้งค่า จาก zaabos.com มาแทนของเดิมในเครื่องนี้?\n(ของเดิมถูกเก็บเข้าคลัง ไม่ลบ · สำรองข้อมูลให้ก่อน)'))return;
+  b.disabled=true;b.textContent='กำลังดึงข้อมูล…';
+  try{const r=await apiJson('/api/local/import-cloud','POST',{branch_id:currentBranchId,username:$('#lpCloudUser').value.trim(),password:$('#lpCloudPass').value});
+    $('#lpCloudPass').value='';alert(`ดึงข้อมูลจากสาขา "${r.branch}" แล้ว: ${r.categories} หมวด · ${r.items} เมนู · ${r.tables} โต๊ะ · ${r.stations} สถานีครัว\nพิมพ์ QR โต๊ะใหม่ก่อนใช้งาน`);location.reload();
+  }catch(e){toast(e.message,'err')}finally{b.disabled=false;b.textContent='ดึงข้อมูลมาใส่เครื่องนี้'}});

@@ -1,7 +1,8 @@
 name: Build ZaabOS Local (Windows + macOS)
 on:
   push:
-    branches: [step2-local-shop-pos]
+    branches: [step2-local-shop-pos, main]
+    tags: ['local-v*']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,11 +22,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
+      - name: Tag must match the app version (the updater compares them)
+        if: startsWith(github.ref, 'refs/tags/local-v')
+        run: test "local-v$(python -c 'import local_ops; print(local_ops.APP_VERSION)')" = "${GITHUB_REF_NAME}"
       - run: python -m pip install -r requirements-local.txt pytest pyinstaller pillow
       - if: runner.os == 'macOS'
         run: python -m pip install rumps
       - name: Shop-PC end-to-end (sell, restart, data kept, backup)
-        run: python -m pytest tests/test_local_mode.py tests/test_money_reconciliation.py tests/test_printing.py -q
+        run: python -m pytest tests/test_local_mode.py tests/test_money_reconciliation.py tests/test_printing.py tests/test_local_ops.py -q
       - run: pyinstaller zaabos_local.spec --noconfirm
       - name: Smoke-test the packaged app
         run: |
@@ -57,3 +61,23 @@ jobs:
           name: ZaabOS-Local-${{ runner.os }}
           path: ZaabOS-Local-*.zip
           retention-days: 30
+
+  # A local-v* tag publishes both zips as a GitHub Release; installed apps update from it.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/local-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release create "$GITHUB_REF_NAME" dist/ZaabOS-Local-macOS.zip dist/ZaabOS-Local-Windows.zip \
+            --repo "$GITHUB_REPOSITORY" --title "ZaabOS Local ${GITHUB_REF_NAME#local-v}" \
+            --notes "ZaabOS Local ${GITHUB_REF_NAME#local-v} — อัปเดตจากเมนู 🍜 หรือ ตั้งค่าร้าน → โปรแกรมในเครื่องร้าน"

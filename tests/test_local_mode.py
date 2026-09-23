@@ -123,3 +123,35 @@ def test_second_launch_does_not_start_a_second_server(tmp_path):
         assert again.returncode == 0 and 'already running' in again.stdout
     finally:
         stop(proc)
+
+
+def test_shop_pc_imports_menu_from_cloud_and_reports_status(tmp_path):
+    """Two real servers: A plays zaabos.com (fresh install: 10 dishes, 6 tables), B is the shop PC."""
+    cloud_dir, shop_dir = tmp_path / 'cloud', tmp_path / 'shop'
+    cp, sp = free_port(), free_port()
+    cloud, shop_proc = start(cloud_dir, cp), start(shop_dir, sp)
+    try:
+        cloud_pw = (cloud_dir / 'first-login.txt').read_text(encoding='utf-8').split('password: ', 1)[1].split()[0]
+        shop_pw = (shop_dir / 'first-login.txt').read_text(encoding='utf-8').split('password: ', 1)[1].split()[0]
+        b = login(sp, shop_pw)
+        st = b.ok('GET', '/api/local/status')
+        assert st['version'] and st['public_url'].endswith(f':{sp}') and st['autostart'] in (True, False)
+        branch = b.ok('GET', '/api/bootstrap')['branches'][0]['id']
+        # a dish from the cloud must arrive on the shop PC
+        cb = login(cp, cloud_pw)
+        dish = cb.ok('GET', '/api/bootstrap')['items'][0]
+        code, _ = b.call('POST', '/api/local/import-cloud', {'branch_id': branch, 'url': f'http://127.0.0.1:{cp}', 'username': 'admin', 'password': 'wrong'})
+        assert code == 502
+        r = b.ok('POST', '/api/local/import-cloud', {'branch_id': branch, 'url': f'http://127.0.0.1:{cp}', 'username': 'admin', 'password': cloud_pw})
+        assert r['items'] == 10 and r['tables'] == 6
+        boot = b.ok('GET', '/api/bootstrap')
+        assert len(boot['items']) == 10 and dish['name'] in [i['name'] for i in boot['items']]
+        assert len(boot['tables']) == 6
+        # still sells after import
+        oid = b.ok('POST', '/api/orders', {'branch_id': branch, 'order_type': 'dine_in', 'table_id': boot['tables'][0]['id'],
+                                           'cart': [{'menu_item_id': boot['items'][0]['id'], 'quantity': 1}]})['order_id']
+        assert oid
+        backup = b.ok('POST', '/api/local/backup')
+        assert backup['file'].startswith('zaabos_local_')
+    finally:
+        stop(cloud); stop(shop_proc)

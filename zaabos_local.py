@@ -21,6 +21,8 @@ import threading
 import webbrowser
 from pathlib import Path
 
+import local_ops
+
 APP_NAME = 'ZaabOS'
 DEFAULT_PORT = 8080
 BACKUP_EVERY_SECONDS = 2 * 60 * 60
@@ -35,18 +37,6 @@ def default_data_dir():
     if sys.platform == 'darwin':
         return Path.home() / 'Library' / 'Application Support' / APP_NAME
     return Path(os.getenv('XDG_DATA_HOME') or Path.home() / '.local' / 'share') / APP_NAME
-
-
-def lan_ip():
-    """Address other devices on the shop Wi-Fi use to reach this PC (no packet is sent)."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(('10.255.255.255', 1))
-        return s.getsockname()[0]
-    except OSError:
-        return '127.0.0.1'
-    finally:
-        s.close()
 
 
 def port_in_use(port):
@@ -79,8 +69,13 @@ def prepare_environment(data_dir, port):
     data_dir.mkdir(parents=True, exist_ok=True)
     os.environ['ZAABOS_DATA_DIR'] = str(data_dir)
     os.environ.pop('DATABASE_URL', None)          # local mode is always SQLite on this PC
-    os.environ.setdefault('ZAABOS_PUBLIC_URL', f'http://{lan_ip()}:{port}')
+    local_ops.apply_pending_restore(data_dir)       # before anything opens the database
+    url, warning = local_ops.resolve_public_url(data_dir, port)
+    os.environ.setdefault('ZAABOS_PUBLIC_URL', url)
+    if warning:
+        os.environ['ZAABOS_ADDRESS_WARNING'] = warning
     os.environ['ZAABOS_LOCAL_PRINT'] = '1'           # this PC sends tickets to the Wi-Fi printers
+    os.environ['ZAABOS_LOCAL_DATA_DIR'] = str(data_dir)
     note = data_dir / 'first-login.txt'
     if note.exists() and first_password_changed(data_dir / 'zaabos.db'):
         note.unlink(missing_ok=True)   # the one-time password is dead; don't leave it lying around
@@ -102,12 +97,18 @@ def prune_backups(backup_dir, keep=KEEP_BACKUPS):
         Path(str(old) + '.json').unlink(missing_ok=True)
 
 
-def backup_loop(core, stop):
+def backup_loop(core, stop, data_dir):
     while True:
         try:
             meta = core.backup_db('local')
             prune_backups(core.BACKUP_DIR)
             print(f'[ZaabOS] backup ok: {meta["file"]}', flush=True)
+            try:
+                mirrored = local_ops.mirror_backup(data_dir, core.BACKUP_DIR / meta['file'])
+                if mirrored:
+                    print(f'[ZaabOS] backup copied to {mirrored.parent}', flush=True)
+            except Exception as exc:
+                print(f'[ZaabOS] off-machine backup FAILED: {exc}', flush=True)
         except Exception as exc:  # never stop the POS because a backup failed
             print(f'[ZaabOS] backup FAILED: {exc}', flush=True)
         if stop.wait(BACKUP_EVERY_SECONDS):
@@ -126,38 +127,116 @@ def open_url(url):
 
 def run_mac_menu_bar(local_url, public_url, data_dir, core):
     """macOS: a menu-bar icon instead of a Dock icon that bounces forever. The server runs in a
-    background thread; this menu is how staff reopen the POS or quit it."""
+    background thread; this menu is how staff reopen the POS, back up, restore, update or quit."""
     import rumps
+
+    def notify(title, msg=''):
+        try:
+            rumps.notification('ZaabOS', title, msg)
+        except Exception:
+            pass
 
     class ZaabOSMenu(rumps.App):
         def __init__(self):
             super().__init__('ZaabOS', title='🍜', quit_button=None)
-            self.menu = ['เปิด ZaabOS', f'แท็บเล็ต/มือถือ: {public_url}', None,
-                         'สำรองข้อมูลตอนนี้', 'เปิดโฟลเดอร์ข้อมูล', None, 'ปิด ZaabOS']
+            self.update_info = None
+            self.autostart_item = rumps.MenuItem('เปิดอัตโนมัติเมื่อเปิดเครื่อง', callback=self.toggle_autostart)
+            self.autostart_item.state = local_ops.autostart_enabled()
+            self.hostname_item = rumps.MenuItem('QR ใช้ชื่อเครื่องแทน IP', callback=self.toggle_hostname)
+            self.hostname_item.state = local_ops.load_config(data_dir).get('address_mode') == 'hostname'
+            self.update_item = rumps.MenuItem(f'เวอร์ชัน {local_ops.APP_VERSION} — ตรวจหาอัปเดต', callback=self.update)
+            self.menu = [rumps.MenuItem('เปิด ZaabOS', callback=self.open_pos),
+                         rumps.MenuItem(f'แท็บเล็ต/มือถือ: {public_url}', callback=self.copy_public), None,
+                         rumps.MenuItem('สำรองข้อมูลตอนนี้', callback=self.backup_now),
+                         rumps.MenuItem('กู้ข้อมูลจากไฟล์สำรอง…', callback=self.restore),
+                         rumps.MenuItem('เปิดโฟลเดอร์ข้อมูล', callback=self.open_data), None,
+                         self.autostart_item, self.hostname_item, self.update_item, None,
+                         rumps.MenuItem('ปิด ZaabOS', callback=self.quit_app)]
+            if os.getenv('ZAABOS_ADDRESS_WARNING'):
+                notify('ที่อยู่เครื่องเปลี่ยน', os.environ['ZAABOS_ADDRESS_WARNING'])
+            local_ops.check_update_async(self.found_update)
 
-        @rumps.clicked('เปิด ZaabOS')
+        def found_update(self, info):
+            self.update_info = info
+            self.update_item.title = f'⬆️ อัปเดตเป็นเวอร์ชัน {info["version"]}'
+            self.title = '🍜•'
+            notify('มีเวอร์ชันใหม่', f'กด 🍜 → อัปเดตเป็นเวอร์ชัน {info["version"]}')
+
         def open_pos(self, _):
             open_url(local_url)
 
-        @rumps.clicked(f'แท็บเล็ต/มือถือ: {public_url}')
         def copy_public(self, _):
             import subprocess
             subprocess.run(['pbcopy'], input=public_url.encode(), check=False)
-            rumps.notification('ZaabOS', 'คัดลอกที่อยู่แล้ว', public_url)
+            notify('คัดลอกที่อยู่แล้ว', public_url)
 
-        @rumps.clicked('สำรองข้อมูลตอนนี้')
         def backup_now(self, _):
             try:
                 meta = core.backup_db('local')
-                rumps.notification('ZaabOS', 'สำรองข้อมูลแล้ว', meta['file'])
+                where = local_ops.mirror_backup(data_dir, core.BACKUP_DIR / meta['file'])
+                notify('สำรองข้อมูลแล้ว', f'{meta["file"]}' + (f' · สำเนาใน {where.parent.name}' if where else ''))
             except Exception as exc:
                 rumps.alert('สำรองข้อมูลไม่สำเร็จ', str(exc))
 
-        @rumps.clicked('เปิดโฟลเดอร์ข้อมูล')
+        def restore(self, _):
+            import subprocess
+            start = local_ops.mirror_dir(data_dir) or (Path(data_dir) / 'backups')
+            script = (f'POSIX path of (choose file with prompt "เลือกไฟล์สำรอง ZaabOS (.db)" '
+                      f'default location (POSIX file "{start if Path(start).exists() else Path(data_dir) / "backups"}"))')
+            r = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+            path = r.stdout.strip()
+            if not path:
+                return
+            try:
+                orders = local_ops.validate_backup(path)
+            except ValueError as exc:
+                rumps.alert('ใช้ไฟล์นี้ไม่ได้', str(exc))
+                return
+            if not rumps.alert('กู้ข้อมูลจากไฟล์นี้?', f'{Path(path).name}\nมี {orders} ออเดอร์\n\n'
+                               'ข้อมูลปัจจุบันจะถูกเก็บสำรองไว้ก่อน แล้ว ZaabOS จะเปิดใหม่', ok='กู้ข้อมูล', cancel='ยกเลิก'):
+                return
+            local_ops.stage_restore(data_dir, path)
+            local_ops.relaunch_after_exit()
+            rumps.quit_application()
+
         def open_data(self, _):
             open_url(str(data_dir))
 
-        @rumps.clicked('ปิด ZaabOS')
+        def toggle_autostart(self, item):
+            try:
+                item.state = local_ops.set_autostart(not item.state)
+            except Exception as exc:
+                rumps.alert('ตั้งค่าไม่สำเร็จ', str(exc))
+
+        def toggle_hostname(self, item):
+            mode = 'ip' if item.state else 'hostname'
+            local_ops.set_address_mode(data_dir, mode)
+            item.state = mode == 'hostname'
+            rumps.alert('เปลี่ยนที่อยู่สำหรับ QR แล้ว', 'ปิดแล้วเปิด ZaabOS ใหม่ จากนั้นพิมพ์ QR โต๊ะใหม่\n'
+                        + ('ชื่อเครื่อง: ' + local_ops.local_hostname() if mode == 'hostname' else 'ใช้ IP ของเครื่อง'))
+
+        def update(self, _):
+            info = self.update_info
+            if not info:
+                try:
+                    info = local_ops.check_update()
+                except Exception as exc:
+                    rumps.alert('ตรวจอัปเดตไม่ได้', f'ต้องต่ออินเทอร์เน็ต ({exc})')
+                    return
+            if not info:
+                rumps.alert('ใช้เวอร์ชันล่าสุดแล้ว', f'ZaabOS {local_ops.APP_VERSION}')
+                return
+            if not rumps.alert(f'อัปเดตเป็นเวอร์ชัน {info["version"]}?', (info.get('notes') or '') +
+                               '\n\nข้อมูลร้านไม่หาย (สำรองให้ก่อนอัตโนมัติ) · ZaabOS จะปิดและเปิดใหม่ประมาณ 10 วินาที',
+                               ok='อัปเดต', cancel='ภายหลัง'):
+                return
+            try:
+                local_ops.install_update(info, core)
+            except Exception as exc:
+                rumps.alert('อัปเดตไม่สำเร็จ', str(exc))
+                return
+            rumps.quit_application()
+
         def quit_app(self, _):
             if rumps.alert('ปิด ZaabOS?', 'แท็บเล็ตและ QR จะสั่งอาหารไม่ได้จนกว่าจะเปิดใหม่', ok='ปิด', cancel='ยกเลิก'):
                 rumps.quit_application()
@@ -192,16 +271,30 @@ def main(argv=None):
 
     import printing      # noqa: E402
     stop = threading.Event()
-    threading.Thread(target=backup_loop, args=(core, stop), daemon=True).start()
+    threading.Thread(target=backup_loop, args=(core, stop, data_dir), daemon=True).start()
+    import local_api     # noqa: E402  shop-PC settings/update/restore/import API for the web UI
+    local_api.register(core, data_dir, args.port)
+    local_ops.keep_awake()
+    cfg = local_ops.load_config(data_dir)
+    if getattr(sys, 'frozen', False) and not cfg.get('autostart_initialized'):
+        # First run of the installed app: start with the computer by default (owner can turn it off).
+        try:
+            local_ops.set_autostart(True)
+        except Exception as exc:
+            print(f'[ZaabOS] auto-start not set: {exc}', flush=True)
+        cfg['autostart_initialized'] = True
+        local_ops.save_config(data_dir, cfg)
     print_stop = printing.start_worker(core)
 
     print('=' * 60)
-    print(f'  ZaabOS is running on this computer')
+    print(f'  ZaabOS {local_ops.APP_VERSION} is running on this computer')
     print(f'  Cashier (this PC):  {local_url}')
     print(f'  Tablets / phones:   {os.environ["ZAABOS_PUBLIC_URL"]}')
     print(f'  Data folder:        {data_dir}')
     if note.exists():
         print(f'  First login:        see {note}')
+    if os.getenv('ZAABOS_ADDRESS_WARNING'):
+        print('  !! ' + os.environ['ZAABOS_ADDRESS_WARNING'])
     print('  Keep this window open while the shop is selling.')
     print('=' * 60, flush=True)
 
