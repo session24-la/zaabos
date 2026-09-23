@@ -1990,6 +1990,23 @@ $('#printFailBanner').addEventListener('click',async()=>{
     toast('ส่งพิมพ์ซ้ำแล้ว','ok');setTimeout(refreshPrintStatus,4000);
   }catch(e){toast(e.message,'err')}
 });
+async function openPrintCenter(){
+  if(!currentBranchId)return;
+  const box=$('#printCenterList'); box.innerHTML='<div class="muted">กำลังโหลด…</div>'; openModal('#printCenterModal');
+  try{
+    const jobs=await api('/api/print/jobs?status=active&branch_id='+currentBranchId);
+    box.innerHTML=jobs.length?jobs.map(j=>`<div class="list-row"><div><b>${escapeHtml(j.job_type==='receipt'?'ใบเสร็จ':'ครัว')} #${escapeHtml(j.order_no||'')}</b><div class="muted">${escapeHtml(j.status)} · ${escapeHtml(j.printer_name||'')} ${j.last_error?'· '+escapeHtml(j.last_error):''}</div></div><div class="row-actions">${j.status==='failed'||j.status==='cancelled'?'<button class="ghost-btn" data-pj-retry="'+j.id+'">พิมพ์ซ้ำ</button>':''}${j.status==='pending'||j.status==='failed'?'<button class="danger-btn" data-pj-cancel="'+j.id+'">ยกเลิก</button>':''}</div></div>`).join(''):'<div class="muted">ไม่มีงานพิมพ์ที่รอดำเนินการ</div>';
+  }catch(e){box.innerHTML='<div class="error-text">'+escapeHtml(e.message)+'</div>'}
+}
+$('#printCenterList')?.addEventListener('click',async e=>{
+  const retry=e.target.closest('[data-pj-retry]'), cancel=e.target.closest('[data-pj-cancel]');
+  try{
+    if(retry)await apiJson('/api/print/jobs/'+retry.dataset.pjRetry+'/retry','POST',{});
+    if(cancel&&confirm('ยกเลิกงานพิมพ์นี้?'))await apiJson('/api/print/jobs/'+cancel.dataset.pjCancel+'/cancel','POST',{});
+    if(retry||cancel){await openPrintCenter();refreshPrintStatus()}
+  }catch(err){toast(err.message,'err')}
+});
+$('#printCenterBtn')?.addEventListener('click',openPrintCenter);
 setInterval(refreshPrintStatus,15000);
 
 // ---------- Shop-PC program: update, auto-start, QR address, backups, import (local app only) ----------
