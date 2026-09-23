@@ -1969,7 +1969,7 @@ $('#npScanBtn').addEventListener('click',async()=>{const b=$('#npScanBtn');b.dis
 $('#npAddIpBtn').addEventListener('click',async()=>{const host=$('#npHost').value.trim();try{await npAdd({connection:'network',host,port:Number($('#npPort').value||9100),name:'Wi‑Fi '+host});$('#npHost').value=''}catch(e){toast(e.message,'err')}});
 $('#npList').addEventListener('click',async e=>{
   const tb=e.target.closest('[data-np-test]');
-  if(tb){tb.disabled=true;const old=tb.textContent;tb.textContent='กำลังพิมพ์…';try{await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast('พิมพ์ทดสอบแล้ว ','ok')}catch(err){toast(err.message,'err')}finally{tb.disabled=false;tb.textContent=old}return;}
+  if(tb){tb.disabled=true;const old=tb.textContent;tb.textContent='กำลังพิมพ์…';try{const r=await apiJson('/api/printers/'+tb.dataset.npTest+'/test','POST',{});toast(r.switched_to?`เครื่องเดิมไม่ได้เสียบอยู่ — เปลี่ยนไปใช้ "${r.switched_to}" และพิมพ์ทดสอบแล้ว`:'พิมพ์ทดสอบแล้ว','ok');loadNetPrinters()}catch(err){toast(err.message,'err')}finally{tb.disabled=false;tb.textContent=old}return;}
   const db=e.target.closest('[data-np-del]');
   if(db&&confirm('ลบเครื่องพิมพ์นี้?')){try{await apiJson('/api/printers/'+db.dataset.npDel,'DELETE');loadNetPrinters()}catch(err){toast(err.message,'err')}}
 });

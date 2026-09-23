@@ -386,6 +386,70 @@ def scan_network(own_ip, port=9100, timeout=0.35):
         return [h for h in ex.map(probe, range(1, 255)) if h]
 
 
+# Names that mark a queue as a receipt/kitchen printer (not an office, photo or label printer).
+import re as _re
+RECEIPT_HINT = _re.compile(r'receipt|thermal|\bpos\b|pos-?\d|80 ?mm|58 ?mm|80series|58series|rongta|xprinter|\bxp-|epson.*tm|tm-[tmu]|'
+                           r'sunmi|star.*tsp|bixolon|gprinter|hprt|sewoo|citizen.*ct|zjiang|goojprt|munbyn|rp3\d\d', _re.I)
+
+
+def printer_inventory():
+    """{queue: {'label', 'uri', 'connected' (True/False/None=unknown), 'receipt_like'}} for this PC."""
+    import subprocess
+    inv = {p['queue']: {'label': p['label'], 'uri': '', 'connected': None} for p in system_printers()}
+    if not sys.platform.startswith('win'):
+        try:
+            for line in subprocess.run(['lpstat', '-v'], capture_output=True, text=True, timeout=5).stdout.splitlines():
+                m = _re.match(r'device for (\S+?):\s*(\S+)', line)
+                if m and m.group(1) in inv:
+                    inv[m.group(1)]['uri'] = m.group(2)
+            plugged = {ln.split(None, 1)[1].strip() for ln in subprocess.run(['lpinfo', '--include-schemes', 'usb', '-v'], capture_output=True, text=True, timeout=20).stdout.splitlines()
+                       if ln.startswith('direct ') and len(ln.split(None, 1)) == 2}
+            for q in inv.values():
+                if q['uri'].startswith('usb:'):
+                    q['connected'] = q['uri'] in plugged
+        except (OSError, subprocess.SubprocessError):
+            pass
+    for q, info in inv.items():
+        info['receipt_like'] = bool(RECEIPT_HINT.search(q) or RECEIPT_HINT.search(info['label']) or RECEIPT_HINT.search(info['uri']))
+    return inv
+
+
+def find_replacement(current, taken=()):
+    """The shop swapped the receipt printer: if the saved USB printer is not plugged in and exactly
+    one other receipt printer is, use that one. Never guesses between several, never picks an
+    office/photo/label printer, never takes one another ZaabOS route already uses."""
+    inv = printer_inventory()
+    if inv.get(current, {}).get('connected') is True:
+        return None                                   # the saved printer is there; the problem is elsewhere
+    pool = [q for q, i in inv.items() if q != current and q not in taken and i['receipt_like'] and i['connected'] is not False]
+    plugged = [q for q in pool if inv[q]['connected'] is True]
+    pick = plugged if plugged else pool
+    return (pick[0], inv[pick[0]]['label']) if len(pick) == 1 else None
+
+
+def deliver_or_switch(conn, printer, data, sender=None):
+    """Deliver; if a USB printer fails because it was replaced, move this route to the new printer
+    (updates the saved printer) and print there. Returns the printer row actually used."""
+    try:
+        deliver(printer, data, sender)
+        return printer
+    except Exception:
+        if printer['connection'] != 'system':
+            raise
+        taken = {r['host'] for r in conn.execute("SELECT host FROM printers WHERE tenant_id=? AND active=1 AND connection='system' AND id<>?",
+                                                   (printer['tenant_id'], printer['id'])).fetchall()}
+        repl = find_replacement(printer['host'], taken)
+        if not repl:
+            raise
+        queue, label = repl
+        conn.execute('UPDATE printers SET host=?, name=? WHERE id=?', (queue, label, printer['id']))
+        conn.commit()
+        print(f'[ZaabOS] printer "{printer["host"]}" not connected — switched to "{queue}"', flush=True)
+        switched = conn.execute('SELECT * FROM printers WHERE id=?', (printer['id'],)).fetchone()
+        deliver(switched, data, sender)
+        return switched
+
+
 def deliver(printer, data, sender=None):
     """Send one ticket to a printer row: Wi-Fi (host:port) or USB/system queue."""
     if (printer['connection'] if 'connection' in printer.keys() else 'network') == 'system':
@@ -608,7 +672,7 @@ def process_once(core, sender=send):
             try:
                 img = build_job(core, conn, job, printer)
                 if img is not None:
-                    deliver(printer, escpos(img), sender)
+                    printer = deliver_or_switch(conn, printer, escpos(img), sender)
                 conn.execute("UPDATE kitchen_print_jobs SET status='printed',attempts=attempts+1,last_error='',printed_at=?,printer_id=? WHERE id=?",
                              (core.now(), printer['id'], job['id']))
             except Exception as exc:

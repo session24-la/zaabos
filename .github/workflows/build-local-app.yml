@@ -1,7 +1,7 @@
 name: Build ZaabOS Local (Windows + macOS)
 on:
   push:
-    branches: [ux/icons-windows-parity, main]
+    branches: [main]
     tags: ['local-v*']
   pull_request:
     branches: [main]
