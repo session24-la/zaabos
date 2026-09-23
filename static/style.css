@@ -1007,3 +1007,25 @@ main{max-width:1180px;padding-top:14px}
 #printCenterList .list-row{gap:12px;align-items:center}
 #printCenterList .row-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
 @media(max-width:760px){.print-center-fab{right:12px;bottom:12px;padding:9px 12px;font-size:12px}}
+
+/* Final acceptance — phone UI must behave like an app, never a squeezed desktop. */
+@media (max-width:640px){
+html,body{width:100%;max-width:100%;overflow-x:hidden}body{min-width:0!important}
+header{position:sticky;top:0;z-index:29;min-width:0;width:100%;box-sizing:border-box;background:var(--bg)}
+main{width:100%;max-width:100%;min-width:0;box-sizing:border-box;padding:12px 10px calc(88px + env(safe-area-inset-bottom))}
+main>*{min-width:0;max-width:100%}
+.tabs.pos-nav{display:grid!important;grid-template-columns:repeat(5,minmax(0,1fr))!important;width:100%!important;max-width:none!important;box-sizing:border-box;gap:2px!important}
+.tabs.pos-nav>button,.tabs.pos-nav>.nav-more-wrap,.tabs.pos-nav>.nav-more-wrap>.nav-primary{min-width:0!important;width:100%!important}
+.tabs.pos-nav .tab-lb{font-size:9.5px!important}
+.cards,.manage-grid,.form-grid,.report-grid{grid-template-columns:1fr!important}
+.panel,.hero{width:100%;max-width:100%;min-width:0;box-sizing:border-box;border-radius:16px}.panel{padding:12px!important}
+.panel-head,.head-actions,.row,.row-right{min-width:0;max-width:100%}.head-actions{flex-wrap:wrap}.head-actions>*,.row-right>*{max-width:100%}
+.table-board{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.menu-manager{display:block!important}.menu-category-sidebar{position:static!important;padding:10px!important;margin-bottom:10px}
+.menu-category-list{display:flex!important;overflow-x:auto!important;gap:7px;padding:2px 0 7px}.menu-category-row{min-width:132px!important;max-width:78vw}
+.menu-manager-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important}.menu-manager-card{min-width:0}.menu-card-media{height:105px!important}
+.modal{padding-top:env(safe-area-inset-top)}.modal .sheet{width:100%!important;max-width:100%!important;max-height:94dvh!important;border-radius:20px 20px 0 0!important;box-sizing:border-box;overflow-x:hidden}
+input,select,textarea,button{max-width:100%}input,select,textarea{font-size:16px}
+.print-center-fab{bottom:calc(78px + env(safe-area-inset-bottom));right:10px}
+}
+@media (max-width:390px){main{padding-left:8px;padding-right:8px}.tabs.pos-nav .tab-lb{font-size:9px!important}}
