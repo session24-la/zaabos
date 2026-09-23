@@ -196,3 +196,48 @@ def test_printer_input_is_validated(shop):
 def _items(oid):
     with core.app.app_context():
         return [dict(r) for r in core.db().execute('SELECT * FROM order_items WHERE order_id=? ORDER BY id', (oid,)).fetchall()]
+
+
+@pytest.fixture
+def fake_cups(tmp_path, monkeypatch):
+    """Stand-in lp/lpstat/cancel on PATH. `offline` file present = printer never takes the job."""
+    import os, stat
+    bindir = tmp_path / 'bin'; bindir.mkdir()
+    state = tmp_path / 'cups'; state.mkdir()
+    scripts = {
+        'lp': f'#!/bin/sh\ncat > "{state}/job.bin"\necho "request id is RP331-7 (1 file(s))"\n',
+        'lpstat': f'#!/bin/sh\nif [ "$1" = "-e" ]; then echo _RP331; exit 0; fi\n'
+                  f'if [ -f "{state}/offline" ] && [ ! -f "{state}/cancelled" ]; then echo "RP331-7 kot 100 now"; fi\n',
+        'cancel': f'#!/bin/sh\ntouch "{state}/cancelled"\n',
+    }
+    for name, body in scripts.items():
+        f = bindir / name; f.write_text(body); f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv('PATH', f'{bindir}{os.pathsep}{os.environ["PATH"]}')
+    monkeypatch.setattr(printing, 'SYSTEM_WAIT_SECONDS', 1)
+    return state
+
+
+def test_usb_printer_prints_through_os_queue(shop, local_print, fake_cups):
+    _only_this_shop(shop)
+    queues = ok(call(shop, 'owner', 'GET', '/api/printers/system'))['queues']
+    assert queues == ['_RP331']
+    pid = ok(call(shop, 'owner', 'POST', '/api/printers', {'branch_id': shop['branch'], 'name': 'RP331', 'role': 'receipt',
+                                                           'connection': 'system', 'host': '_RP331'}))['id']
+    ok(call(shop, 'owner', 'POST', f'/api/printers/{pid}/test'))
+    assert (fake_cups / 'job.bin').read_bytes().startswith(b'\x1b@')
+    code, _ = call(shop, 'owner', 'POST', '/api/printers', {'branch_id': shop['branch'], 'name': 'X', 'connection': 'system', 'host': '_Nope'})
+    assert code == 400
+
+
+def test_usb_printer_offline_cancels_job_so_it_never_prints_late(shop, local_print, fake_cups, monkeypatch):
+    _only_this_shop(shop)
+    (fake_cups / 'offline').touch()
+    monkeypatch.setattr(printing, 'RETRY_SECONDS', 0)
+    ok(call(shop, 'owner', 'POST', '/api/printers', {'branch_id': shop['branch'], 'name': 'RP331', 'role': 'kitchen',
+                                                     'connection': 'system', 'host': '_RP331'}))
+    oid = order(shop)
+    ok(call(shop, 'staff', 'PUT', f'/api/orders/{oid}/send-to-kitchen', {'item_ids': [r['id'] for r in _items(oid)]}))
+    printing.process_once(core)
+    assert (fake_cups / 'cancelled').exists(), 'a job the printer did not take must be cancelled in the OS queue'
+    job = _jobs(shop)[-1]
+    assert job['status'] == 'pending' and 'USB' in job['last_error']

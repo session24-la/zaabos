@@ -213,6 +213,51 @@ def send(host, port, data, timeout=6):
         s.sendall(data)
 
 
+# --- USB printers plugged into this Mac/PC, through the OS print queue (CUPS on macOS) ---
+SYSTEM_WAIT_SECONDS = 15
+
+
+def system_queues():
+    """Print queues this computer knows (macOS/Linux CUPS). Empty where CUPS is unavailable."""
+    import subprocess
+    try:
+        out = subprocess.run(['lpstat', '-e'], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [q.strip() for q in out.splitlines() if q.strip()]
+
+
+def send_system(queue, data, wait=None):
+    """Raw ESC/POS through the OS queue, then wait until the printer really took it. If it did
+    not (unplugged, off, paper out), cancel the job so it can never print by surprise later —
+    the reprint button is the only way it prints again."""
+    import re
+    import subprocess
+    wait = SYSTEM_WAIT_SECONDS if wait is None else wait
+    r = subprocess.run(['lp', '-d', queue, '-o', 'raw', '-t', 'ZaabOS'], input=data, capture_output=True, timeout=15)
+    if r.returncode != 0:
+        raise OSError((r.stderr or r.stdout).decode(errors='replace').strip() or 'lp failed')
+    m = re.search(rb'request id is (\S+)', r.stdout)
+    job = m.group(1).decode() if m else None
+    if not job:
+        return
+    end = time.time() + wait
+    while time.time() < end:
+        pending = subprocess.run(['lpstat', '-o', queue], capture_output=True, text=True, timeout=5).stdout
+        if job not in pending:
+            return
+        time.sleep(0.5)
+    subprocess.run(['cancel', job], capture_output=True, timeout=5)
+    raise OSError('เครื่องพิมพ์ USB ไม่ตอบ (ตรวจสาย/เปิดเครื่อง/กระดาษ)')
+
+
+def deliver(printer, data, sender=None):
+    """Send one ticket to a printer row: Wi-Fi (host:port) or USB/system queue."""
+    if (printer['connection'] if 'connection' in printer.keys() else 'network') == 'system':
+        return send_system(printer['host'], data)
+    return (sender or send)(printer['host'], printer['port'], data)
+
+
 # ---------------------------------------------------------------- tickets ---
 def _money(v):
     v = float(v or 0)
@@ -383,7 +428,7 @@ def process_once(core, sender=send):
             try:
                 img = build_job(core, conn, job, printer)
                 if img is not None:
-                    sender(printer['host'], printer['port'], escpos(img))
+                    deliver(printer, escpos(img), sender)
                 conn.execute("UPDATE kitchen_print_jobs SET status='printed',attempts=attempts+1,last_error='',printed_at=?,printer_id=? WHERE id=?",
                              (core.now(), printer['id'], job['id']))
             except Exception as exc:

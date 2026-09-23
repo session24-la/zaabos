@@ -738,6 +738,10 @@ def ensure_schema_migrations(conn):
         if col not in pj_cols:
             conn.execute(f'ALTER TABLE kitchen_print_jobs ADD COLUMN {col} {ddl}')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_print_jobs_due ON kitchen_print_jobs(status,next_attempt_at)')
+    if IS_POSTGRES:
+        conn.execute("ALTER TABLE printers ADD COLUMN IF NOT EXISTS connection TEXT NOT NULL DEFAULT 'network'")
+    elif 'connection' not in {r['name'] for r in conn.execute('PRAGMA table_info(printers)').fetchall()}:
+        conn.execute("ALTER TABLE printers ADD COLUMN connection TEXT NOT NULL DEFAULT 'network'")   # 'network' Wi-Fi/LAN | 'system' USB queue
     conn.commit()
     record_migration(conn, 29, 'network_printers')
 
@@ -2983,9 +2987,14 @@ def _network_printing(conn, branch_id, role):
 
 def _printer_payload(conn, d, branch_id):
     name=(d.get('name') or '').strip()[:60]; host=(d.get('host') or '').strip()[:100]; role=(d.get('role') or 'receipt').strip()
-    if not name or not host: raise ValueError('กรุณาใส่ชื่อและ IP ของเครื่องพิมพ์')
+    connection=(d.get('connection') or 'network').strip()
+    if connection not in ('network','system'): raise ValueError('การเชื่อมต่อไม่ถูกต้อง')
+    if not name or not host: raise ValueError('กรุณาใส่ชื่อและ IP ของเครื่องพิมพ์' if connection=='network' else 'กรุณาเลือกเครื่องพิมพ์ USB')
     if role not in ('receipt','kitchen'): raise ValueError('ประเภทเครื่องพิมพ์ไม่ถูกต้อง')
-    if any(ch.isspace() or ch in '/:@' for ch in host): raise ValueError('IP เครื่องพิมพ์ไม่ถูกต้อง (เช่น 192.168.1.50)')
+    if connection=='system':
+        import printing
+        if host not in printing.system_queues(): raise ValueError('ไม่พบเครื่องพิมพ์ USB นี้บนเครื่อง')
+    elif any(ch.isspace() or ch in '/:@' for ch in host): raise ValueError('IP เครื่องพิมพ์ไม่ถูกต้อง (เช่น 192.168.1.50)')
     try: port=int(d.get('port') or 9100)
     except (TypeError,ValueError): raise ValueError('พอร์ตไม่ถูกต้อง')
     if not 1<=port<=65535: raise ValueError('พอร์ตไม่ถูกต้อง')
@@ -2996,7 +3005,7 @@ def _printer_payload(conn, d, branch_id):
         try: station=int(station)
         except (TypeError,ValueError): raise ValueError('สถานีครัวไม่ถูกต้อง')
         if not conn.execute('SELECT 1 FROM kitchen_stations WHERE id=? AND tenant_id=?',(station,g.tenant_id)).fetchone(): raise ValueError('ไม่พบสถานีครัว')
-    return name,role,(station if role=='kitchen' else None),host,port,paper
+    return name,role,(station if role=='kitchen' else None),host,port,paper,connection
 
 @app.get('/api/printers')
 @login_required
@@ -3017,12 +3026,22 @@ def printer_create():
     try: bid=int(d.get('branch_id'))
     except (TypeError,ValueError): return jsonify(error='กรุณาเลือกสาขา'),400
     if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(bid,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    try: name,role,station,host,port,paper=_printer_payload(conn,d,bid)
+    if (d.get('connection') or 'network')=='system' and not _local_printing(): return jsonify(error='เครื่องพิมพ์ USB ใช้ได้เฉพาะโปรแกรม ZaabOS บนเครื่องในร้าน'),409
+    try: name,role,station,host,port,paper,connection=_printer_payload(conn,d,bid)
     except ValueError as e: return jsonify(error=str(e)),400
-    cur=conn.execute('INSERT INTO printers(tenant_id,branch_id,name,role,station_id,host,port,paper_width,active,created_at) VALUES(?,?,?,?,?,?,?,?,1,?)',
-                     (g.tenant_id,bid,name,role,station,host,port,paper,now()))
+    cur=conn.execute('INSERT INTO printers(tenant_id,branch_id,name,role,station_id,host,port,paper_width,active,created_at,connection) VALUES(?,?,?,?,?,?,?,?,1,?,?)',
+                     (g.tenant_id,bid,name,role,station,host,port,paper,now(),connection))
     log_action('printer_created',detail=f'{name} {role} {host}:{port}'); conn.commit()
     return jsonify(ok=True,id=cur.lastrowid)
+
+@app.get('/api/printers/system')
+@login_required
+@role_required('owner','manager')
+def printers_system():
+    """USB printers plugged into the shop PC (its OS print queues)."""
+    if not _local_printing(): return jsonify(queues=[])
+    import printing
+    return jsonify(queues=printing.system_queues())
 
 @app.delete('/api/printers/<int:pid>')
 @login_required
@@ -3043,9 +3062,10 @@ def printer_test(pid):
     # Test prints go straight out and report the real result, so setup gets an immediate answer.
     import printing
     try:
-        printing.send(p['host'],p['port'],printing.escpos(printing.render(printing.test_lines(p['name'],os.getenv('ZAABOS_PUBLIC_URL') or ''),p['paper_width'])),timeout=5)
+        printing.deliver(p,printing.escpos(printing.render(printing.test_lines(p['name'],os.getenv('ZAABOS_PUBLIC_URL') or ''),p['paper_width'])))
     except Exception as e:
-        return jsonify(error=f'เชื่อมต่อเครื่องพิมพ์ {p["host"]}:{p["port"]} ไม่ได้ — ตรวจว่าเปิดเครื่องและอยู่ Wi-Fi เดียวกัน ({e})'),502
+        where=f'USB "{p["host"]}"' if p['connection']=='system' else f'{p["host"]}:{p["port"]} — ตรวจว่าเปิดเครื่องและอยู่ Wi-Fi เดียวกัน'
+        return jsonify(error=f'พิมพ์ทดสอบไม่สำเร็จ: {where} ({e})'),502
     return jsonify(ok=True)
 
 @app.post('/api/orders/<int:oid>/print-receipt')
