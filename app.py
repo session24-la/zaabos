@@ -3222,9 +3222,13 @@ def print_receipt_job(oid):
 def print_jobs_list():
     bid=request.args.get('branch_id',type=int); status=request.args.get('status') or 'failed'
     if not bid: return jsonify(error='กรุณาเลือกสาขา'),400
-    rows=db().execute("""SELECT j.id,j.job_type,j.status,j.attempts,j.last_error,j.created_at,j.printed_at,o.order_no,o.table_name_snapshot,s.name AS station_name
+    allowed={'pending','failed','printed','cancelled','active'}
+    if status not in allowed: return jsonify(error='สถานะงานพิมพ์ไม่ถูกต้อง'),400
+    status_sql="j.status IN ('pending','failed')" if status=='active' else 'j.status=?'
+    args=(g.tenant_id,bid) if status=='active' else (g.tenant_id,bid,status)
+    rows=db().execute(f"""SELECT j.id,j.job_type,j.status,j.attempts,j.last_error,j.created_at,j.printed_at,o.order_no,o.table_name_snapshot,s.name AS station_name
         FROM kitchen_print_jobs j JOIN orders o ON o.id=j.order_id LEFT JOIN kitchen_stations s ON s.id=j.station_id
-        WHERE j.tenant_id=? AND j.branch_id=? AND j.status=? ORDER BY j.id DESC LIMIT 50""",(g.tenant_id,bid,status)).fetchall()
+        WHERE j.tenant_id=? AND j.branch_id=? AND {status_sql} ORDER BY j.id DESC LIMIT 100""",args).fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.post('/api/print/jobs/<int:jid>/retry')
