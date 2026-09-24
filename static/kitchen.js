@@ -21,8 +21,8 @@ let statusFilter = '';
 const KITCHEN_PARAMS = new URLSearchParams(location.search);
 const KITCHEN_EMBED = KITCHEN_PARAMS.get('embed') === '1';
 if (KITCHEN_EMBED) document.documentElement.classList.add('kitchen-embed');
-// The kitchen tablet is always dark; framed inside the POS it follows the POS screen mode.
-if (KITCHEN_EMBED) try { const m = localStorage.getItem('zaabos_theme_e'); if (m === 'light' || (m === 'system' && !matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.dataset.theme = 'light'; } catch (e) {}
+// Inside the POS the kitchen follows the POS screen mode (blue-white unless dark was picked); the stand-alone KDS stays dark.
+if (KITCHEN_EMBED) try { const m = localStorage.getItem('zaabos_theme_f'); if (m !== 'dark' && !(m === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.dataset.theme = 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }
 
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
@@ -97,12 +97,12 @@ async function afterLogin() {
   branches = boot.branches;
   const sel = $('#branchSelect');
   sel.innerHTML = `<option value="">${escapeHtml(t('select_all_branches'))}</option>` + branches.map(b => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('');
-  sel.onchange = () => { currentBranchId = sel.value || null; loadKitchenStations(); loadBoard(); };
+  sel.onchange = () => { currentBranchId = sel.value || null; loadKitchenStations(); loadBoard(); soUpdateCount(); };
   const wanted = KITCHEN_PARAMS.get('branch');
   if (wanted && branches.some(b => String(b.id) === wanted)) { sel.value = wanted; currentBranchId = wanted; }
   else if (KITCHEN_EMBED && branches.length === 1) { sel.value = String(branches[0].id); currentBranchId = sel.value; }
   await loadKitchenStations();
-  loadBoard();
+  loadBoard(); soRefresh();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadBoard, 2500);
 }
@@ -190,6 +190,42 @@ $('#board').addEventListener('click', (e) => {
   apiJson('/api/orders/' + id + '/status', 'PUT', { status }).then(loadBoard).catch(err => toast(err.message, 'err'));
 });
 $('#refreshBtn').addEventListener('click', loadBoard);
+
+// ---- Sold out from the kitchen: one tap, every POS / tablet / QR page follows ----
+let soItems = [], soCats = [];
+function soBranchItems() { return soItems.filter(it => !currentBranchId || String(it.branch_id) === String(currentBranchId)); }
+function soUpdateCount() {
+  const n = soBranchItems().filter(it => it.sold_out).length, el = $('#soldOutCount');
+  el.textContent = n; el.classList.toggle('hidden', !n);
+}
+async function soRefresh() {
+  try { const b = await api('/api/bootstrap', { silent: true }); soItems = b.items || []; soCats = b.categories || []; soUpdateCount(); } catch (e) {}
+}
+function soRender() {
+  const q = ($('#soldOutSearch').value || '').trim().toLowerCase();
+  const catName = id => (soCats.find(c => c.id === id) || {}).name || '';
+  const multi = !currentBranchId && branches.length > 1;
+  const rows = soBranchItems().filter(it => !q || (it.name + ' ' + (it.name_i18n || '')).toLowerCase().includes(q))
+    .sort((a, b) => (b.sold_out ? 1 : 0) - (a.sold_out ? 1 : 0) || catName(a.category_id).localeCompare(catName(b.category_id)) || a.name.localeCompare(b.name));
+  $('#soldOutList').innerHTML = rows.length ? rows.map(it => `<div class="so-row ${it.sold_out ? 'is-out' : ''}">
+      <span class="so-name"><b>${escapeHtml(it.name)}</b><small>${escapeHtml(catName(it.category_id))}${multi ? ' · ' + escapeHtml((branches.find(b => b.id === it.branch_id) || {}).name || '') : ''}</small></span>
+      <button type="button" class="so-toggle" data-so="${it.id}">${it.sold_out ? '<i class="ic ic-undo-2" aria-hidden="true"></i> มีของ' : '<i class="ic ic-ban" aria-hidden="true"></i> หมด'}</button>
+    </div>`).join('') : `<div class="empty-state">ไม่พบเมนู</div>`;
+}
+$('#soldOutBtn').addEventListener('click', async () => { $('#soldOutSearch').value = ''; $('#soldOutModal').classList.add('show'); soRender(); await soRefresh(); soRender(); });
+$('#soldOutSearch').addEventListener('input', soRender);
+$('#soldOutList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-so]'); if (!b) return;
+  const it = soItems.find(x => x.id === Number(b.dataset.so)); if (!it) return;
+  const flag = !it.sold_out; b.disabled = true;
+  try { await apiJson('/api/menu-items/' + it.id + '/sold-out', 'PUT', { sold_out: flag }); it.sold_out = flag; toast(`${it.name} · ${flag ? 'หมดแล้ว' : 'กลับมาขายแล้ว'}`, 'ok'); }
+  catch (err) { toast(err.message, 'err'); }
+  soUpdateCount(); soRender();
+});
+document.addEventListener('click', e => {
+  if (e.target.closest('[data-close]') || e.target.classList.contains('modal')) (e.target.closest('.modal') || e.target).classList.remove('show');
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $$('.modal.show').forEach(m => m.classList.remove('show')); });
 $('#kitchenFilters').addEventListener('click', e => { const b = e.target.closest('[data-kfilter]'); if (!b) return; statusFilter = b.dataset.kfilter; renderBoard(lastOrders); });
 
 (async function initApp() {

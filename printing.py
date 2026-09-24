@@ -491,6 +491,31 @@ def kitchen_lines(order, items, station_name, tz):
     return lines
 
 
+def void_lines(order, slip, tz):
+    """Cancelled food the kitchen was already making — must stand out from a normal ticket."""
+    where = order['table_name_snapshot'] or {'takeaway': 'กลับบ้าน / ກັບບ້ານ', 'delivery': 'เดลิเวอรี่ / Delivery'}.get(order['order_type'], '')
+    lines = [{'text': '*** ยกเลิก / ຍົກເລີກ ***', 'size': 'xlarge', 'align': 'center', 'bold': True},
+             {'text': where, 'size': 'xlarge', 'align': 'center', 'bold': True},
+             {'text': f"#{order['order_no']}  ·  {_local_time(datetime.now(timezone.utc).isoformat(), tz)}", 'size': 'small', 'align': 'center'},
+             {'rule': True}]
+    for it in slip.get('items') or []:
+        lines.append({'text': f"− {it.get('qty', 1)} × {it.get('name', '')}", 'size': 'large', 'bold': True})
+        if it.get('name2'):
+            lines.append({'text': '      ' + it['name2'], 'size': 'normal'})
+    if slip.get('reason'):
+        lines += [{'rule': True}, {'text': 'เหตุผล: ' + slip['reason'], 'size': 'normal', 'bold': True}]
+    return lines
+
+
+def move_lines(order, slip, tz):
+    """The table moved: food still coming out of the kitchen goes to the new table."""
+    return [{'text': '*** ย้ายโต๊ะ / ຍ້າຍໂຕະ ***', 'size': 'xlarge', 'align': 'center', 'bold': True},
+            {'text': f"{slip.get('from') or '-'}  →  {slip.get('to') or '-'}", 'size': 'xlarge', 'align': 'center', 'bold': True},
+            {'text': f"#{order['order_no']}  ·  {_local_time(datetime.now(timezone.utc).isoformat(), tz)}", 'size': 'small', 'align': 'center'},
+            {'rule': True},
+            {'text': 'อาหารที่ยังไม่เสิร์ฟ ส่งโต๊ะใหม่', 'size': 'normal', 'align': 'center', 'bold': True}]
+
+
 CURRENCY_SYMBOLS = {'LAK': '₭', 'THB': '฿', 'USD': '$', 'CNY': '¥'}
 PAYMENT_NAMES = {'cash': 'Cash / ເງິນສົດ', 'qr': 'QR', 'card': 'Card', 'bank_transfer': 'Bank transfer', 'other': 'Other'}
 # Same words the browser receipt uses (static/i18n.js); the cashier's screen language is sent with the job.
@@ -650,6 +675,9 @@ def build_job(core, conn, job, printer):
         lines = receipt_lines(order, _items_for(conn, order['id']), pays, rs, tz, u['display_name'] if u else '', lang,
                               (tenant['currency'] if tenant else None) or 'LAK', opts.get('order_type_label') or '')
         return render(lines, paper, FONT_SCALE.get(rs.get('font_scale') or 'normal', 1.0))
+    if job['job_type'] in ('void', 'move'):
+        slip = json.loads(job['payload'] or '{}') if 'payload' in job.keys() else {}
+        return render((void_lines if job['job_type'] == 'void' else move_lines)(order, slip, tz), paper)
     item_ids = set(json.loads(job['item_ids'])) if job['item_ids'] else None
     items = _items_for(conn, order['id'], item_ids)
     if job['station_id'] and item_ids is None:

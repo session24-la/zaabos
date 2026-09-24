@@ -18,7 +18,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-APP_VERSION = '2.6.0'
+APP_VERSION = '2.7.0'
 RELEASES_API = os.getenv('ZAABOS_UPDATE_FEED') or 'https://api.github.com/repos/session24-la/zaabos/releases?per_page=20'
 RELEASE_TAG_PREFIX = 'local-v'
 LAUNCH_AGENT_LABEL = 'com.zaabos.local'
@@ -130,6 +130,61 @@ def supervise(cmd, env=None, max_quick_crashes=5, window=60, backoff=2.0, sleep=
             crashes = []
         else:
             sleep(backoff if now_t - started < 5 else 0.5)
+
+
+# --------------------------------------------------------------- watchdog ---
+def health_ok(url, timeout=10):
+    try:
+        with closing(urllib.request.urlopen(url, timeout=timeout)) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _hang_exit():
+    os._exit(3)   # non-zero: launchd (KeepAlive) / the Windows supervisor start a fresh copy
+
+
+def watchdog(url, stop, interval=30, grace=120, failures=3, check=None, on_hang=None, clock=None, wait=None, log_file=None):
+    """Crash-restart only helps when the POS dies. This catches the other case: the app is still
+    running but no longer answers (stuck request, locked database). After `failures` missed health
+    checks in a row it logs and exits non-zero so a fresh copy starts in a few seconds.
+    A computer waking from sleep resets the count instead of counting as a hang."""
+    import time as _time
+    check = check or health_ok
+    clock = clock or _time.monotonic
+    wait = wait or stop.wait
+    if wait(grace):
+        return
+    missed, last = 0, clock()
+    while True:
+        ok = check(url)
+        t = clock()
+        if t - last > interval * 4 + 30:
+            missed = 0
+        last = t
+        missed = 0 if ok else missed + 1
+        if missed >= failures:
+            msg = f'POS not answering ({failures} health checks in a row) — restarting'
+            _log(msg)
+            if log_file:
+                try:
+                    with open(log_file, 'a', encoding='utf-8') as f:
+                        f.write(f'{datetime.now().isoformat(timespec="seconds")} {msg}\n')
+                except OSError:
+                    pass
+            (on_hang or _hang_exit)()
+            return
+        if wait(interval):
+            return
+
+
+def start_watchdog(port, data_dir=None, **kw):
+    stop = threading.Event()
+    log_file = str(Path(data_dir) / 'restarts.log') if data_dir else None
+    threading.Thread(target=watchdog, args=(f'http://127.0.0.1:{port}/readyz', stop), kwargs=dict(kw, log_file=log_file),
+                     name='zaabos-watchdog', daemon=True).start()
+    return stop
 
 
 def launchd_handoff():

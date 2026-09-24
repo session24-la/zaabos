@@ -651,13 +651,18 @@ def test_report_today_is_lao_date_before_7am():
         pytest.skip('node not installed')
     src = (ROOT / 'static' / 'app.js').read_text(encoding='utf-8')
     helpers = re.search(r'^function isoDate.*?^function presetRange.*?^}$', src, re.S | re.M).group(0)
-    script = ("const ZAABOS_RESTAURANT_TZ='Asia/Vientiane';\n" + helpers +
-              "\nconst RealDate=Date; Date=class extends RealDate{constructor(...a){super(...(a.length?a:['2026-09-22T22:55:00Z']))}"
-              " static UTC(...a){return RealDate.UTC(...a)}};"
-              "\nconsole.log(JSON.stringify([presetRange('today'),presetRange('yesterday'),presetRange('month')]))")
-    out = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=30)
-    assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout) == [['2026-09-23', '2026-09-23'], ['2026-09-22', '2026-09-22'], ['2026-09-01', '2026-09-23']]
+    def run(now_utc, cutoff=0):
+        script = (f"const ZAABOS_RESTAURANT_TZ='Asia/Vientiane'; let currentBranchId=1, boot={{day_cutoff:{{'1':{cutoff}}}}};\n" + helpers +
+                  "\nconst RealDate=Date; Date=class extends RealDate{constructor(...a){super(...(a.length?a:['" + now_utc + "']))}"
+                  " static UTC(...a){return RealDate.UTC(...a)}};"
+                  "\nconsole.log(JSON.stringify([presetRange('today'),presetRange('yesterday'),presetRange('month')]))")
+        out = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=30)
+        assert out.returncode == 0, out.stderr
+        return json.loads(out.stdout)
+    assert run('2026-09-22T22:55:00Z') == [['2026-09-23', '2026-09-23'], ['2026-09-22', '2026-09-22'], ['2026-09-01', '2026-09-23']]
+    # 02:30 on 23 Sep in Vientiane: a shop whose sales day starts at 04:00 is still selling "22 Sep"
+    assert run('2026-09-22T19:30:00Z', cutoff=4)[0] == ['2026-09-22', '2026-09-22']
+    assert run('2026-09-22T19:30:00Z', cutoff=0)[0] == ['2026-09-23', '2026-09-23']
 
 
 def test_checkout_quote_equals_what_payment_charges(shop):

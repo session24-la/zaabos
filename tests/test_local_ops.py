@@ -249,3 +249,45 @@ def test_windows_supervisor_slows_down_on_a_crash_loop(tmp_path):
     naps = []
     local_ops.supervise([sys.executable, '-c', script, str(counter)], sleep=naps.append, max_quick_crashes=5)
     assert 30 in naps, 'five quick crashes must trigger the long pause'
+
+
+class _Clock:
+    def __init__(self): self.t = 0.0
+    def __call__(self): return self.t
+
+
+def _run_watchdog(results, jumps=None):
+    """Drive the watchdog with fake health results; returns (hang_called, checks_made)."""
+    import threading
+    clock, calls, hung = _Clock(), [], []
+    jumps = jumps or {}
+    def check(url):
+        calls.append(url); return results[min(len(calls), len(results)) - 1]
+    def wait(sec):
+        clock.t += sec + jumps.get(len(calls), 0)
+        return len(calls) >= len(results) and not hung   # stop after the scripted checks
+    local_ops.watchdog('http://x/readyz', threading.Event(), check=check, on_hang=lambda: hung.append(1), clock=clock, wait=wait)
+    return bool(hung), len(calls)
+
+
+def test_watchdog_restarts_a_pos_that_stops_answering(tmp_path):
+    assert _run_watchdog([True, True, False, False, False]) == (True, 5)
+
+
+def test_watchdog_ignores_a_single_slow_moment():
+    assert _run_watchdog([True, False, False, True, False, False, True]) == (False, 7)
+
+
+def test_watchdog_does_not_count_sleep_as_a_hang():
+    # two misses, then the computer sleeps for an hour: the count starts again after waking
+    hung, _ = _run_watchdog([False, False, False, True], jumps={2: 3600})
+    assert not hung
+
+
+def test_watchdog_logs_the_restart(tmp_path):
+    import threading
+    hung = []
+    log = tmp_path / 'restarts.log'
+    local_ops.watchdog('u', threading.Event(), grace=0, check=lambda u: False, on_hang=lambda: hung.append(1),
+                       clock=_Clock(), wait=lambda s: False, log_file=str(log))
+    assert hung and 'not answering' in log.read_text(encoding='utf-8')
