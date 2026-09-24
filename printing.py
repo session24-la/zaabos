@@ -486,8 +486,25 @@ def kitchen_lines(order, items, station_name, tz):
             lines.append({'text': '   + ' + ', '.join(it['options']), 'size': 'normal'})
         if it.get('notes'):
             lines.append({'text': '   * ' + it['notes'], 'size': 'normal', 'bold': True})
+        if it.get('takeaway'):
+            lines.append({'text': '   >> ห่อกลับ / ຫໍ່ກັບ', 'size': 'large', 'bold': True})
     if order['notes']:
         lines += [{'rule': True}, {'text': '* ' + order['notes'], 'size': 'normal', 'bold': True}]
+    return lines
+
+
+def notice_lines(order, slip, tz):
+    """'rush' (guest is waiting) or 'takeaway' (pack this dish) for food the kitchen already has."""
+    where = order['table_name_snapshot'] or {'takeaway': 'กลับบ้าน / ກັບບ້ານ', 'delivery': 'เดลิเวอรี่ / Delivery'}.get(order['order_type'], '')
+    title = slip.get('title') or ('เร่ง / ເລັ່ງ' if slip.get('kind') == 'rush' else 'แจ้งครัว')
+    lines = [{'text': f'*** {title} ***', 'size': 'xlarge', 'align': 'center', 'bold': True},
+             {'text': where, 'size': 'xlarge', 'align': 'center', 'bold': True},
+             {'text': f"#{order['order_no']}  ·  {_local_time(datetime.now(timezone.utc).isoformat(), tz)}", 'size': 'small', 'align': 'center'},
+             {'rule': True}]
+    for it in slip.get('items') or []:
+        lines.append({'text': f"{it.get('qty', 1)} × {it.get('name', '')}", 'size': 'large', 'bold': True})
+        if it.get('name2'):
+            lines.append({'text': '      ' + it['name2'], 'size': 'normal'})
     return lines
 
 
@@ -520,10 +537,10 @@ CURRENCY_SYMBOLS = {'LAK': '₭', 'THB': '฿', 'USD': '$', 'CNY': '¥'}
 PAYMENT_NAMES = {'cash': 'Cash / ເງິນສົດ', 'qr': 'QR', 'card': 'Card', 'bank_transfer': 'Bank transfer', 'other': 'Other'}
 # Same words the browser receipt uses (static/i18n.js); the cashier's screen language is sent with the job.
 RECEIPT_LABELS = {
-    'th': dict(table='โต๊ะ', guests='ลูกค้า', subtotal='ยอดก่อนภาษี', total='รวม', tax='ภาษี (ถ้ามี)', cash='รับเงินมา', change='เงินทอน', thanks='ขอบคุณที่ใช้บริการ', discount='ส่วนลด', delivery='ค่าส่ง'),
-    'lo': dict(table='ໂຕະ', guests='ລູກຄ້າ', subtotal='ຍອດກ່ອນອາກອນ', total='ລວມ', tax='ອາກອນ (ຖ້າມີ)', cash='ຮັບເງິນມາ', change='ເງິນທອນ', thanks='ຂອບໃຈທີ່ໃຊ້ບໍລິການ', discount='ສ່ວນຫຼຸດ', delivery='ຄ່າສົ່ງ'),
-    'en': dict(table='Table', guests='Guests', subtotal='Subtotal', total='Total', tax='Tax', cash='Cash received', change='Change', thanks='Thank you for your order', discount='Discount', delivery='Delivery'),
-    'zh': dict(table='桌号', guests='人数', subtotal='小计', total='合计', tax='税额', cash='实收金额', change='找零', thanks='感谢您的光临', discount='折扣', delivery='配送费'),
+    'th': dict(table='โต๊ะ', guests='ลูกค้า', subtotal='ยอดก่อนภาษี', total='รวม', tax='ภาษี (ถ้ามี)', cash='รับเงินมา', change='เงินทอน', thanks='ขอบคุณที่ใช้บริการ', discount='ส่วนลด', delivery='ค่าส่ง', free='แถม'),
+    'lo': dict(table='ໂຕະ', guests='ລູກຄ້າ', subtotal='ຍອດກ່ອນອາກອນ', total='ລວມ', tax='ອາກອນ (ຖ້າມີ)', cash='ຮັບເງິນມາ', change='ເງິນທອນ', thanks='ຂອບໃຈທີ່ໃຊ້ບໍລິການ', discount='ສ່ວນຫຼຸດ', delivery='ຄ່າສົ່ງ', free='ແຖມ'),
+    'en': dict(table='Table', guests='Guests', subtotal='Subtotal', total='Total', tax='Tax', cash='Cash received', change='Change', thanks='Thank you for your order', discount='Discount', delivery='Delivery', free='Free'),
+    'zh': dict(table='桌号', guests='人数', subtotal='小计', total='合计', tax='税额', cash='实收金额', change='找零', thanks='感谢您的光临', discount='折扣', delivery='配送费', free='赠送'),
 }
 
 
@@ -569,7 +586,8 @@ def receipt_lines(order, items, payments, rs, tz, cashier='', lang='th', currenc
     lines.append({'rule': True})
     for it in items:
         subs = ([it['name2']] if it.get('name2') else []) + ([' / '.join(it['options'])] if it.get('options') else []) + ([it['notes']] if it.get('notes') else [])
-        lines.append({'qty': it['qty'], 'left': it['name'], 'right': m(it['qty'] * it['unit_price']), 'subs': subs})
+        free = not it['unit_price'] and it.get('price_reason')
+        lines.append({'qty': it['qty'], 'left': it['name'], 'right': L.get('free', 'Free') if free else m(it['qty'] * it['unit_price']), 'subs': subs})
     lines.append({'rule': True})
     lines.append({'left': L['subtotal'], 'right': m(subtotal)})
     if discount > 0:
@@ -634,7 +652,9 @@ def _items_for(conn, order_id, item_ids=None):
         opts = [o['option_name_snapshot'] for o in conn.execute('SELECT option_name_snapshot FROM order_item_options WHERE order_item_id=? ORDER BY id', (r['id'],)).fetchall()]
         out.append({'id': r['id'], 'qty': qty, 'name': r['item_name_snapshot'], 'unit_price': float(r['unit_price'] or 0),
                     'name2': (r['item_name2_snapshot'] if 'item_name2_snapshot' in r.keys() else '') or '',
-                    'options': opts, 'notes': r['notes'] or ''})
+                    'options': opts, 'notes': r['notes'] or '',
+                    'takeaway': bool(r['takeaway']) if 'takeaway' in r.keys() else False,
+                    'price_reason': (r['price_reason'] if 'price_reason' in r.keys() else '') or ''})
     return out
 
 
@@ -675,9 +695,11 @@ def build_job(core, conn, job, printer):
         lines = receipt_lines(order, _items_for(conn, order['id']), pays, rs, tz, u['display_name'] if u else '', lang,
                               (tenant['currency'] if tenant else None) or 'LAK', opts.get('order_type_label') or '')
         return render(lines, paper, FONT_SCALE.get(rs.get('font_scale') or 'normal', 1.0))
-    if job['job_type'] in ('void', 'move'):
+    if job['job_type'] in ('void', 'move', 'rush', 'takeaway'):
         slip = json.loads(job['payload'] or '{}') if 'payload' in job.keys() else {}
-        return render((void_lines if job['job_type'] == 'void' else move_lines)(order, slip, tz), paper)
+        slip.setdefault('kind', job['job_type'])
+        build = {'void': void_lines, 'move': move_lines}.get(job['job_type'], notice_lines)
+        return render(build(order, slip, tz), paper)
     item_ids = set(json.loads(job['item_ids'])) if job['item_ids'] else None
     items = _items_for(conn, order['id'], item_ids)
     if job['station_id'] and item_ids is None:

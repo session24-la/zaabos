@@ -134,11 +134,13 @@ async function loadBoard() {
   try {
     const r = await api('/api/kitchen/orders?' + qs.toString(), { silent: true });
     const all = r.orders || [];
-    all.sort((a, b) => a.id - b.id);
+    // Tables the floor asked to rush come first; otherwise first come, first served.
+    all.sort((a, b) => (isRushed(b) - isRushed(a)) || a.id - b.id);
     renderBoard(all);
   } catch (e) { return; }
 }
 
+function isRushed(o) { return (o.items || []).some(it => it.rush_at && it.kitchen_sent_at && Number(it.quantity || 0) > Number(it.cancelled_quantity || 0)) ? 1 : 0; }
 const KITCHEN_HIGHLIGHT_MS = 3 * 60 * 1000; // how long a "sent to kitchen" flag stays pulsing before it fades to a plain timestamp
 
 const KITCHEN_FILTERS = [['', 'ทั้งหมด'], ['received', 'ใหม่'], ['preparing', 'กำลังทำ'], ['ready', 'พร้อมเสิร์ฟ']];
@@ -165,7 +167,8 @@ function renderBoard(allOrders) {
       const active = (activeQty > 0 ? `<b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}` : `<s>${escapeHtml(it.item_name_snapshot)}</s>`) + (it.item_name2_snapshot ? `<div class="kt-name2">${escapeHtml(it.item_name2_snapshot)}</div>` : '');
       return `<li class="${liClass}${activeQty === 0 ? ' kt-item-cancelled' : ''}">${active} ${sentBadge}
       ${it.options.length ? `<div class="kt-opts">${it.options.map(op => escapeHtml(op.option_name_snapshot)).join(', ')}</div>` : ''}
-      ${it.notes ? `<div class="kt-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}</li>`;
+      ${it.notes ? `<div class="kt-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : ''}${cancelNote}
+      ${activeQty > 0 && (Number(it.takeaway) || it.rush_at) ? `<div class="kt-tags">${it.rush_at ? '<span class="kt-tag kt-tag-rush"><i class="ic ic-flame" aria-hidden="true"></i> เร่ง / ເລັ່ງ</span>' : ''}${Number(it.takeaway) ? '<span class="kt-tag kt-tag-take"><i class="ic ic-shopping-bag" aria-hidden="true"></i> ห่อกลับ / ຫໍ່ກັບ</span>' : ''}</div>` : ''}</li>`;
     }).join('');
     const actions = (STATUS_ACTIONS[o.status] || []).map(a => `<button class="${a.cls}" data-set="${o.id}:${a.to}">${escapeHtml(t(a.labelKey))}</button>`).join('');
     // Kitchen reads from a distance: the table is the headline, and the wait time turns orange/red.
@@ -174,7 +177,7 @@ function renderBoard(allOrders) {
     const waitCls = mins >= 20 ? 'kt-wait-late' : mins >= 10 ? 'kt-wait-slow' : '';
     const where = o.table_name_snapshot || orderTypeLabel(o.order_type);
     const count = o.items.filter(it => it.kitchen_sent_at && Number(it.quantity || 0) > Number(it.cancelled_quantity || 0)).length;
-    return `<div class="kitchen-ticket ${o.status} ${waitCls}">
+    return `<div class="kitchen-ticket ${o.status} ${waitCls}${isRushed(o) ? ' kt-rushed' : ''}">
       <div class="kt-head"><span class="kt-no">#${escapeHtml(String(o.order_no).split('-').pop())}</span><span class="kt-where">${escapeHtml(where)}</span><span class="kt-wait" data-since="${firstSent}">${mins} นาที</span></div>
       <div class="kt-table">${count} รายการ · ${escapeHtml(orderTypeLabel(o.order_type))} · ${zaabosTime(o.created_at)}${o.customer_name && o.customer_name !== 'ลูกค้า' ? ' · ' + escapeHtml(o.customer_name) : ''}</div>
       <ul>${itemsHtml}</ul>

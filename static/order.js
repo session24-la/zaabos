@@ -186,19 +186,19 @@ function renderMenuGrid() {
   const grid = $('#menuGrid');
   if (!items.length) { grid.innerHTML = `<div class="empty-state"><span class="es-ic"><i class="ic ic-clipboard-list" aria-hidden="true"></i></span>${escapeHtml(t('empty_menu_category'))}</div>`; return; }
   grid.innerHTML = items.map(it => `
-    <div class="menu-card ${it.sold_out ? 'sold-out' : ''}" data-pick="${it.id}" style="cursor:${it.sold_out ? 'default' : 'pointer'}">
+    <div class="menu-card ${it.sold_out || it.open_price ? 'sold-out' : ''}" data-pick="${it.id}" style="cursor:${it.sold_out || it.open_price ? 'default' : 'pointer'}">
       ${it.sold_out ? `<span class="mc-badge">${escapeHtml(t('badge_sold_out'))}</span>` : ''}
       ${it.image_url ? `<img class="mc-photo" src="${it.image_url}" alt="">` : ''}
       <span class="mc-name">${escapeHtml(qrNames(it).main)}</span>${qrNames(it).sub ? `<span class="mc-sub">${escapeHtml(qrNames(it).sub)}</span>` : ''}
       ${it.description ? `<div class="mc-desc">${escapeHtml(it.description)}</div>` : ''}
-      <div class="mc-price">${fmtMoney(it.base_price)}</div>
+      <div class="mc-price">${it.open_price ? escapeHtml(t('badge_order_with_staff')) : fmtMoney(it.base_price)}</div>
     </div>`).join('');
 }
 $('#menuGrid').addEventListener('click', (e) => {
   const box = e.target.closest('[data-pick]');
   if (!box) return;
   const item = menuData.items.find(x => x.id === parseInt(box.dataset.pick, 10));
-  if (item.sold_out) return;
+  if (item.sold_out || item.open_price) return;   // priced when ordered (seafood by weight…): order with the staff
   openItemModal(item);
 });
 

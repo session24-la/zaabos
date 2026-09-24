@@ -132,6 +132,7 @@ const I18N = {
   btn_mark_sold_out: { th: 'แจ้งของหมด', lo: 'ແຈ້ງໝົດ', zh: '标记售罄', en: 'Mark sold out' },
   btn_mark_available: { th: 'กลับมามีของ', lo: 'ກັບມາມີແລ້ວ', zh: '恢复供应', en: 'Back in stock' },
   badge_sold_out: { th: 'หมด', lo: 'ໝົດ', zh: '售罄', en: 'Sold out' },
+  badge_order_with_staff: { th: 'สั่งกับพนักงาน', lo: 'ສັ່ງກັບພະນັກງານ', zh: '请向服务员点', en: 'Order with staff' },
   label_options_prefix: { th: 'ตัวเลือก', lo: 'ຕົວເລືອກ', zh: '选项', en: 'Options' },
 
   branches_title: { th: 'สาขาทั้งหมด', lo: 'ສາຂາທັງໝົດ', zh: '所有分店', en: 'All branches' },
