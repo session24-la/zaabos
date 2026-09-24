@@ -92,6 +92,28 @@ function showMenu() {
   renderCategoryTiles();
   renderCategories();
   showCategoriesStage();
+  startSoldOutWatch();
+}
+
+// Dishes that run out while the customer is browsing: the shop taps "หมด" and this page follows (~30 s),
+// so nobody orders what the kitchen can't make.
+let soldOutTimer = null;
+function isSoldOut(id) { const it = menuData && menuData.items.find(x => x.id === id); return !!(it && it.sold_out); }
+async function refreshSoldOut() {
+  if (!menuData || !menuData.branch_id || document.hidden) return;
+  try {
+    const r = await fetch('/api/public/sold-out?branch_id=' + encodeURIComponent(menuData.branch_id), { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const ids = new Set(((await r.json()).ids) || []);
+    let changed = false;
+    menuData.items.forEach(it => { const f = ids.has(it.id); if (!!it.sold_out !== f) { it.sold_out = f; changed = true; } });
+    if (changed) { renderMenuGrid(); if ($('#cartModal').classList.contains('show')) renderCartLines(); }
+  } catch (e) {}
+}
+function startSoldOutWatch() {
+  if (soldOutTimer) clearInterval(soldOutTimer);
+  soldOutTimer = setInterval(refreshSoldOut, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshSoldOut(); });
 }
 
 // ===== Category drill-down: scan in -> shop name -> category tiles -> items =====
@@ -266,7 +288,7 @@ function renderCartLines() {
   if (!cart.length) { el.innerHTML = `<p class="hint">${escapeHtml(t('empty_cart_customer'))}</p>`; $('#cartTotal').textContent = fmtMoney(0); return; }
   el.innerHTML = cart.map((c, idx) => `
     <div class="cart-line">
-      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
+      <div><div class="cl-name">${c.qty}× ${escapeHtml(c.name)}${isSoldOut(c.menu_item_id) ? ` <span class="cl-out">${escapeHtml(t('badge_sold_out'))}</span>` : ''}</div>${c.optionLabels.length ? `<div class="cl-opts">${c.optionLabels.map(escapeHtml).join(', ')}</div>` : ''}${c.notes ? `<div class="cl-opts">${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</div>` : ''}</div>
       <div style="text-align:right"><div class="cl-price">${fmtMoney(c.unit_price * c.qty)}</div><button class="icon-btn danger" data-remove="${idx}"><i class="ic ic-x" aria-hidden="true"></i></button></div>
     </div>`).join('');
   $('#cartTotal').textContent = fmtMoney(cartTotal());

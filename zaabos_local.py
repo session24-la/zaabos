@@ -327,6 +327,9 @@ def main(argv=None):
     local_api.register(core, data_dir, args.port)
     local_ops.keep_awake()
     print_stop = printing.start_worker(core)
+    # Something restarts us (launchd / the Windows supervisor): also restart when stuck, not only when crashed.
+    restarter = args.from_launchd or args.worker or os.getenv('ZAABOS_WATCHDOG') == '1'
+    watchdog_stop = local_ops.start_watchdog(args.port, data_dir) if restarter else threading.Event()
 
     print('=' * 60)
     print(f'  ZaabOS {local_ops.APP_VERSION} is running on this computer')
@@ -362,6 +365,7 @@ def main(argv=None):
     finally:
         stop.set()
         print_stop.set()
+        watchdog_stop.set()
     return 0
 
 

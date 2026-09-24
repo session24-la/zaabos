@@ -266,23 +266,39 @@ def now():
 def restaurant_now():
     return datetime.now(RESTAURANT_TZ)
 
-def restaurant_today():
-    return restaurant_now().date().isoformat()
+def restaurant_today(cutoff_hour=0):
+    """Business date. With a cut-off hour (e.g. 4) 02:00 still belongs to yesterday's sales day."""
+    return (restaurant_now() - timedelta(hours=cutoff_hour or 0)).date().isoformat()
 
-def local_date_bounds_utc(day_text):
-    """Return [start,end) UTC ISO timestamps for one restaurant-local date."""
+def local_date_bounds_utc(day_text, cutoff_hour=0):
+    """Return [start,end) UTC ISO timestamps for one restaurant business day (starts at the cut-off hour)."""
     d = datetime.strptime(day_text[:10], '%Y-%m-%d').date()
-    start_local = datetime.combine(d, datetime.min.time(), tzinfo=RESTAURANT_TZ)
+    start_local = datetime.combine(d, datetime.min.time(), tzinfo=RESTAURANT_TZ) + timedelta(hours=cutoff_hour or 0)
     end_local = start_local + timedelta(days=1)
     return (
         start_local.astimezone(timezone.utc).isoformat(timespec='seconds'),
         end_local.astimezone(timezone.utc).isoformat(timespec='seconds'),
     )
 
-def local_range_bounds_utc(frm, to):
-    start, _ = local_date_bounds_utc(frm)
-    _, end = local_date_bounds_utc(to)
+def local_range_bounds_utc(frm, to, cutoff_hour=0):
+    start, _ = local_date_bounds_utc(frm, cutoff_hour)
+    _, end = local_date_bounds_utc(to, cutoff_hour)
     return start, end
+
+MAX_DAY_CUTOFF_HOUR = 6
+
+def day_cutoff_hour(conn, tenant_id, branch_id=None):
+    """Hour the sales day starts (0 = midnight), from the branch's shop settings.
+    Shop-wide views without a branch use the first branch's setting."""
+    if not branch_id:
+        row = conn.execute('SELECT id FROM branches WHERE tenant_id=? AND active=1 ORDER BY id LIMIT 1', (tenant_id,)).fetchone()
+        if not row: return 0
+        branch_id = row['id']
+    try:
+        h = int(receipt_settings_for(conn, tenant_id, branch_id).get('day_cutoff_hour') or 0)
+    except (TypeError, ValueError):
+        h = 0
+    return min(MAX_DAY_CUTOFF_HOUR, max(0, h))
 
 def local_datetime_input_to_utc(value):
     """Convert HTML datetime-local / naive local input into explicit UTC ISO."""
@@ -1735,9 +1751,23 @@ def toggle_sold_out(mid):
     old = conn.execute('SELECT * FROM menu_items WHERE id=? AND tenant_id=?', (mid, g.tenant_id)).fetchone()
     if not old: return jsonify(error='ไม่พบเมนู'), 404
     d = request.get_json() or {}
-    conn.execute('UPDATE menu_items SET sold_out=? WHERE id=?', (1 if d.get('sold_out') else 0, mid))
+    flag = 1 if d.get('sold_out') else 0
+    conn.execute('UPDATE menu_items SET sold_out=? WHERE id=?', (flag, mid))
+    log_action('mark_sold_out' if flag else 'mark_available', detail=str(mid))
     conn.commit()
-    return jsonify(ok=True)
+    return jsonify(ok=True, sold_out=bool(flag))
+
+def _sold_out_ids(conn, tenant_id, branch_id):
+    return [r['id'] for r in conn.execute('SELECT id FROM menu_items WHERE tenant_id=? AND branch_id=? AND active=1 AND sold_out=1', (tenant_id, branch_id)).fetchall()]
+
+@app.get('/api/public/sold-out')
+def public_sold_out():
+    """Which dishes just ran out — the customer QR page checks this so nobody orders what the kitchen can't make."""
+    try: branch_id = _query_int_arg('branch_id', required=True)
+    except ValueError: return jsonify(error='branch_id ไม่ถูกต้อง'), 400
+    conn = db(); branch = conn.execute('SELECT tenant_id FROM branches WHERE id=? AND active=1', (branch_id,)).fetchone()
+    if not branch: return jsonify(error='ไม่พบสาขานี้'), 404
+    return jsonify(ids=_sold_out_ids(conn, branch['tenant_id'], branch_id))
 
 @app.delete('/api/menu-items/<int:mid>')
 @login_required
@@ -1766,7 +1796,8 @@ def bootstrap():
     items = [_menu_item_with_options(conn, r) for r in items_rows]
     # Local shop server: QR codes must point at the shop PC's network address, not localhost.
     langs = {b['id']: dict(zip(('primary', 'secondary'), menu_langs(conn, g.tenant_id, b['id']))) for b in branches}
-    return jsonify(branches=branches, tables=tables, categories=categories, items=items, menu_langs=langs,
+    cutoffs = {b['id']: day_cutoff_hour(conn, g.tenant_id, b['id']) for b in branches}
+    return jsonify(branches=branches, tables=tables, categories=categories, items=items, menu_langs=langs, day_cutoff=cutoffs,
                    public_url=(os.getenv('ZAABOS_PUBLIC_URL') or '').rstrip('/') or None)
 
 # =====================================================================
@@ -2129,7 +2160,7 @@ def list_orders():
     if date_from or date_to:
         a, b = sorted([date_from or date_to, date_to or date_from])
         try:
-            start, end = local_range_bounds_utc(a, b)
+            start, end = local_range_bounds_utc(a, b, day_cutoff_hour(conn, g.tenant_id, branch_id))
         except ValueError:
             return jsonify(error='วันที่ไม่ถูกต้อง'), 400
         q += ' AND orders.created_at>=? AND orders.created_at<?'; args += [start, end]
@@ -2145,7 +2176,9 @@ def list_orders():
     elif cname: q += " AND LOWER(orders.customer_name)=? AND COALESCE(orders.customer_phone,'')=''"; args.append(cname.lower())
     q += ' ORDER BY orders.id DESC LIMIT 200'
     rows = conn.execute(q, args).fetchall()
-    return jsonify(orders=[_order_with_items(conn, r) for r in rows])
+    # The floor board polls this every few seconds: it also carries what just ran out.
+    extra = {'sold_out_ids': _sold_out_ids(conn, g.tenant_id, branch_id)} if branch_id else {}
+    return jsonify(orders=[_order_with_items(conn, r) for r in rows], **extra)
 
 # Names the POS/QR page fill in when the guest gave none — not real customers.
 PLACEHOLDER_CUSTOMER_NAMES = {'', 'ลูกค้า', 'ລູກຄ້າ', 'customer', 'guest', '顾客', '客人', 'walk-in', 'ลูกค้าหน้าร้าน'}
@@ -2674,6 +2707,30 @@ def add_order_items(oid):
     if sent: _wake_printer()
     return jsonify(ok=True,item_ids=ids,total_amount=total,sent_to_kitchen=sent,printed_by_server=sent and _network_printing(conn,order['branch_id'],'kitchen'))
 
+def _item_station(conn, menu_item_id):
+    row = conn.execute('SELECT kitchen_station_id FROM menu_items WHERE id=?', (menu_item_id,)).fetchone() if menu_item_id else None
+    return row['kitchen_station_id'] if row else None
+
+def _queue_kitchen_slip(conn, order, kind, station_id, payload):
+    """A 'void' or 'move' note for the kitchen, printed by the station that made the food."""
+    conn.execute('''INSERT INTO kitchen_print_jobs(tenant_id,branch_id,order_id,station_id,status,attempts,last_error,created_at,job_type,payload)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)''', (order['tenant_id'], order['branch_id'], order['id'], station_id, 'pending', 0, '', now(), kind,
+                                            json.dumps(payload, ensure_ascii=False)))
+
+def _void_slip_for(conn, order, it, qty, reason):
+    """Tell the kitchen when food it was asked to make is cancelled. Returns what the browser prints
+    when this shop has no direct kitchen printer."""
+    slip = {'items': [{'name': it['item_name_snapshot'], 'name2': (it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else '') or '',
+                       'qty': int(qty)}], 'reason': reason}
+    _queue_kitchen_slip(conn, order, 'void', _item_station(conn, it['menu_item_id']), slip)
+    return dict(slip, kind='void', order_no=order['order_no'], where=order['table_name_snapshot'] or order['order_type'])
+
+def _mark_sold_out_from_void(conn, it):
+    """'Out of stock' while voiding: stop every screen (POS, tablets, customer QR) from taking this dish again."""
+    if not it['menu_item_id']: return
+    conn.execute('UPDATE menu_items SET sold_out=1 WHERE id=? AND tenant_id=?',(it['menu_item_id'],g.tenant_id))
+    log_action('mark_sold_out',detail=f'{it["menu_item_id"]} (from void)')
+
 @app.put('/api/orders/<int:oid>/items/<int:iid>/cancel')
 @login_required
 @role_required('owner','manager','staff')
@@ -2685,9 +2742,11 @@ def cancel_order_item(oid,iid):
     it=conn.execute(item_sql,(iid,oid)).fetchone()
     if not it: return jsonify(error='ไม่พบรายการ'),404
     d=request.get_json() or {}; remaining=max(0,int(it['quantity'])-int(it['cancelled_quantity'] or 0))
-    reason=(d.get('reason') or '').strip()[:300]
+    sent=bool(it['kitchen_sent_at'])
+    reason=(d.get('reason') or '').strip()[:300] or ('' if sent else 'แก้ไขก่อนส่งครัว')
     if len(reason)<2: return jsonify(error='กรุณาระบุเหตุผลการยกเลิกรายการ'),400
-    approved_by, approval_err = _critical_approval(conn,d)
+    # Nothing was cooked yet: fixing a mistake before sending needs no manager.
+    approved_by, approval_err = _critical_approval(conn,d) if sent else (None, None)
     if approval_err: return approval_err
     try: qty=int(d.get('quantity') or remaining)
     except: return jsonify(error='จำนวนไม่ถูกต้อง'),400
@@ -2695,9 +2754,13 @@ def cancel_order_item(oid,iid):
     new_cancel=int(it['cancelled_quantity'] or 0)+qty
     conn.execute('UPDATE order_items SET cancelled_quantity=?,cancellation_reason=?,cancelled_at=? WHERE id=?',(new_cancel,reason[:200],now(),iid))
     _restore_stock(conn,g.tenant_id,it['menu_item_id'],qty); total=_recalculate_order_total(conn,oid)
-    _record_critical(conn,'cancel_item',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} qty={qty}')
+    _record_critical(conn,'cancel_item',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} qty={qty}' + ('' if sent else ' unsent'))
+    slip=_void_slip_for(conn,order,it,qty,reason) if sent else None
+    if d.get('mark_sold_out'): _mark_sold_out_from_void(conn,it)
     log_action('cancel_order_item',detail=f'{oid}/{iid}: {qty} / {reason}'); conn.commit()
-    return jsonify(ok=True,total_amount=total,cancelled_quantity=new_cancel)
+    if slip: _wake_printer()
+    return jsonify(ok=True,total_amount=total,cancelled_quantity=new_cancel,kitchen_slip=slip,
+                   printed_by_server=bool(slip) and _network_printing(conn,order['branch_id'],'kitchen'))
 
 @app.put('/api/orders/<int:oid>/items/<int:iid>/quantity')
 @login_required
@@ -2717,20 +2780,28 @@ def update_order_item_quantity(oid,iid):
     delta=new_active-old_active
     approved_by = None
     reason = ''
+    sent = bool(it['kitchen_sent_at'])
     if delta < 0:
-        reason=(d.get('reason') or '').strip()
+        reason=(d.get('reason') or '').strip() or ('' if sent else 'แก้ไขก่อนส่งครัว')
         if len(reason) < 2: return jsonify(error='กรุณาระบุเหตุผลในการลดจำนวนสินค้า'), 400
-        approved_by, approval_err = _critical_approval(conn, d)
-        if approval_err: return approval_err
+        if sent:
+            approved_by, approval_err = _critical_approval(conn, d)
+            if approval_err: return approval_err
     if delta>0: _decrement_stock(conn,g.tenant_id,it['menu_item_id'],delta)
     elif delta<0: _restore_stock(conn,g.tenant_id,it['menu_item_id'],-delta)
     new_total_qty=new_active+cancelled
     conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(new_total_qty,money_float(money_decimal(new_total_qty)*money_decimal(it['unit_price'])),iid))
     total=_recalculate_order_total(conn,oid)
+    slip = None
     if delta < 0:
-        _record_critical(conn,'reduce_item_quantity',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} {old_active}->{new_active}')
+        _record_critical(conn,'reduce_item_quantity',order['branch_id'],'order_item',iid,reason,approved_by,f'order={oid} {old_active}->{new_active}' + ('' if sent else ' unsent'))
+        if sent: slip=_void_slip_for(conn,order,it,-delta,reason)
+        if d.get('mark_sold_out'): _mark_sold_out_from_void(conn,it)
     log_action('update_order_item_quantity',detail=f'{oid}/{iid}: {old_active}->{new_active}' + (f' / {reason}' if reason else ''))
-    conn.commit(); return jsonify(ok=True,total_amount=total,quantity=new_active)
+    conn.commit()
+    if slip: _wake_printer()
+    return jsonify(ok=True,total_amount=total,quantity=new_active,kitchen_slip=slip,
+                   printed_by_server=bool(slip) and _network_printing(conn,order['branch_id'],'kitchen'))
 
 @app.put('/api/orders/<int:oid>/move-table')
 @login_required
@@ -2747,7 +2818,17 @@ def move_order_table(oid):
     occupied=conn.execute("SELECT id FROM orders WHERE tenant_id=? AND branch_id=? AND table_id=? AND id<>? AND status NOT IN ('completed','cancelled') LIMIT 1",(g.tenant_id,order['branch_id'],table_id,oid)).fetchone()
     if occupied: return jsonify(error='โต๊ะปลายทางมีออเดอร์อยู่ กรุณาปิดหรือรวมออเดอร์ก่อน'),409
     conn.execute('UPDATE orders SET table_id=?,table_name_snapshot=?,updated_at=? WHERE id=?',(table_id,tb['name'],now(),oid))
-    log_action('move_order_table',detail=f'{oid}: {order["table_id"]} -> {table_id}'); conn.commit(); return jsonify(ok=True)
+    # Food already in the kitchen must go to the new table: one note per station that is cooking it.
+    stations=conn.execute('''SELECT DISTINCT mi.kitchen_station_id AS sid FROM order_items oi LEFT JOIN menu_items mi ON mi.id=oi.menu_item_id
+                             WHERE oi.order_id=? AND oi.kitchen_sent_at IS NOT NULL AND oi.quantity>COALESCE(oi.cancelled_quantity,0)''',(oid,)).fetchall()
+    slip=None
+    if stations and order['table_name_snapshot']!=tb['name']:
+        slip={'from':order['table_name_snapshot'] or '','to':tb['name']}
+        for st in stations: _queue_kitchen_slip(conn,order,'move',st['sid'],slip)
+        slip=dict(slip,kind='move',order_no=order['order_no'])
+    log_action('move_order_table',detail=f'{oid}: {order["table_id"]} -> {table_id}'); conn.commit()
+    if slip: _wake_printer()
+    return jsonify(ok=True,kitchen_slip=slip,printed_by_server=bool(slip) and _network_printing(conn,order['branch_id'],'kitchen'))
 
 # ---------- Round 14C: critical operations / manager approval ----------
 def _critical_approval(conn, payload):
@@ -3410,7 +3491,7 @@ DEFAULT_EXPENSE_CATEGORIES = ['ค่าวัตถุดิบ', 'ค่าเ
 
 def _report_date_range():
     """from/to as YYYY-MM-DD; defaults to today when not given."""
-    today = restaurant_today()
+    today = restaurant_today(g.get('day_cutoff', 0))
     frm = (request.args.get('from') or today)[:10]
     to = (request.args.get('to') or today)[:10]
     if frm > to: frm, to = to, frm
@@ -3423,13 +3504,14 @@ def reports_summary():
     err = require_tenant()
     if err: return err
     conn = db()
-    frm, to = _report_date_range()
     branch_id = request.args.get('branch_id')
     if branch_id not in (None, ''):
         try: branch_id = int(branch_id)
         except (TypeError, ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'), 400
+    g.day_cutoff = cutoff = day_cutoff_hour(conn, g.tenant_id, branch_id)
+    frm, to = _report_date_range()
 
-    range_start, range_end = local_range_bounds_utc(frm, to)
+    range_start, range_end = local_range_bounds_utc(frm, to, cutoff)
     q = '''SELECT COUNT(*) AS c, COALESCE(SUM(total_amount),0) AS subtotal, COALESCE(SUM(tax_amount),0) AS tax,
            COALESCE(SUM(discount_amount),0) AS discount, COALESCE(SUM(service_charge_amount),0) AS service, COALESCE(SUM(delivery_fee),0) AS delivery, COALESCE(SUM(guest_count),0) AS guests
            FROM orders WHERE tenant_id=? AND payment_status='paid' AND status!='cancelled' AND COALESCE(paid_at,created_at)>=? AND COALESCE(paid_at,created_at)<?'''
@@ -3533,7 +3615,7 @@ def reports_summary():
         refund_total=refund_total, refund_count=refund_row['count'] or 0, net_sales=total_sales-refund_total,
         open_order_count=open_row['c'] or 0, open_order_total=open_row['total'] or 0,
         average_bill=(total_sales / order_count) if order_count else 0,
-        cancellations=cancellation_analytics, hourly=hourly,
+        cancellations=cancellation_analytics, hourly=hourly, day_cutoff_hour=cutoff,
     )
 
 @app.get('/api/daily-closing')
@@ -3704,7 +3786,7 @@ def _receipt_settings_defaults(conn, branch_id, tenant_id=None):
     tenant_id=g.tenant_id if tenant_id is None else tenant_id
     tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(tenant_id,)).fetchone()
     branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,tenant_id)).fetchone()
-    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True, menu_lang_primary='', menu_lang_secondary='')
+    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True, menu_lang_primary='', menu_lang_secondary='', day_cutoff_hour='0')
 
 @app.get('/api/settings/receipt')
 @login_required
@@ -3724,7 +3806,7 @@ def save_receipt_settings():
     try: branch_id=int(d.get('branch_id'))
     except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
     if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue','menu_lang_primary','menu_lang_secondary'}
+    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue','menu_lang_primary','menu_lang_secondary','day_cutoff_hour'}
     defaults=_receipt_settings_defaults(conn,branch_id); clean={}
     for k in allowed:
         v=d.get(k,defaults.get(k))
@@ -3735,6 +3817,7 @@ def save_receipt_settings():
     if clean['header_align'] not in ('left','center'): clean['header_align']='center'
     if clean['receipt_printer_route'] not in ('front','browser'): clean['receipt_printer_route']='front'
     if clean['kitchen_printer_route'] not in ('kitchen','browser'): clean['kitchen_printer_route']='kitchen'
+    if clean['day_cutoff_hour'] not in [str(h) for h in range(MAX_DAY_CUTOFF_HOUR+1)]: clean['day_cutoff_hour']='0'
     payload=json.dumps(clean,ensure_ascii=False)
     if IS_POSTGRES:
         conn.execute('''INSERT INTO receipt_settings(tenant_id,branch_id,settings_json,updated_by_user_id,updated_at) VALUES(?,?,?,?,?)

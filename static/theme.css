@@ -1,16 +1,17 @@
-/* ===== ZaabOS UI — Version E "Premium Restaurant" =====
-   Dark by default (charcoal + warm gold), light as an option (Settings → โหมดหน้าจอ).
-   One accent (gold) for primary actions and selection; status colours only for table/kitchen state.
+/* ===== ZaabOS UI — Version F "Clean Blue" (Version E layout) =====
+   Light blue-white by default (clean, minimal, like the shop's old POS but modern); the dark + gold
+   "Premium" look stays as an option (Settings → โหมดหน้าจอ).
+   One accent (blue in light, gold in dark) for primary actions and selection; status colours only for table/kitchen state.
    Loaded after style.css and overrides it. Customer pages (QR order / track) use the light tokens. */
 
 /* ---------- tokens ---------- */
-html:root[data-theme="dark"],html:root:not([data-theme]){
+html:root[data-theme="dark"]{
   --bg:#0B0B0D; --surface:#141518; --surface-2:#1A1B1F; --surface-3:#23252A; --side-bg:#0E0F11;
   --text:#F4F1EA; --text-muted:#A39E94; --text-faint:#6F6B64;
   --border:#26282D; --border-strong:#34363C;
   --primary:#E8B964; --primary-2:#F4D08A; --primary-strong:#D39F45; --primary-ink:#17120A;
   --primary-soft:rgba(232,185,100,.13); --primary-line:rgba(232,185,100,.42); --primary-text:#EFC675;
-  --grad-1:#F4D08A; --grad-2:#D9A243;
+  --grad-1:#F4D08A; --grad-2:#D9A243; --logo-1:#F6D38A; --logo-2:#C8913A; --logo-ink:#15110A;
   --pos:#4CC38A; --pos-soft:rgba(76,195,138,.14); --neg:#F2705F; --neg-soft:rgba(242,112,95,.14);
   --blue:#6FA8F2; --blue-soft:rgba(111,168,242,.14); --amber:#F0B44C; --amber-soft:rgba(240,180,76,.14);
   --tile-busy:#12251B; --tile-busy-line:#2D6446; --tile-ready:#122036; --tile-ready-line:#2F5B92; --tile-bill:#2A2113; --tile-bill-line:#8A6A2E;
@@ -20,20 +21,21 @@ html:root[data-theme="dark"],html:root:not([data-theme]){
   --focus:0 0 0 3px rgba(232,185,100,.28); --backdrop:rgba(0,0,0,.62);
   color-scheme:dark;
 }
-html:root[data-theme="light"]{
-  --bg:#F5F3EE; --surface:#FFFFFF; --surface-2:#FAF8F4; --surface-3:#EFECE5; --side-bg:#FFFFFF;
-  --text:#1B1914; --text-muted:#6B665C; --text-faint:#A19B90;
-  --border:#E6E1D7; --border-strong:#D6CFC2;
-  --primary:#C99A3C; --primary-2:#E3BA66; --primary-strong:#B08229; --primary-ink:#1A1408;
-  --primary-soft:#FBF1DC; --primary-line:#E7C98A; --primary-text:#98701F;
-  --grad-1:#EBC677; --grad-2:#C99A3C;
-  --pos:#1F8A5B; --pos-soft:#E6F5EC; --neg:#D6453A; --neg-soft:#FCEBE9;
-  --blue:#2F6FC4; --blue-soft:#E9F1FB; --amber:#B7791F; --amber-soft:#FDF3DF;
-  --tile-busy:#EAF6EF; --tile-busy-line:#9ED2B5; --tile-ready:#EAF1FB; --tile-ready-line:#A9C6EC; --tile-bill:#FCF3E1; --tile-bill-line:#E2C07C;
-  --status-received:#B7791F; --status-preparing:#2F6FC4; --status-ready:#1F8A5B; --status-served:#7C4DC4; --status-completed:#1F8A5B; --status-cancelled:#A19B90;
-  --muted:#6B665C; --card:#FFFFFF; --surface2:#FAF8F4; --line:#E6E1D7; --accent:#C99A3C; --success:#1F8A5B; --danger:#D6453A; --warning:#B7791F; --warn:#B7791F;
-  --shadow-sm:0 1px 2px rgba(27,25,20,.06); --shadow-md:0 8px 24px rgba(27,25,20,.08); --shadow-lg:0 20px 50px rgba(27,25,20,.16);
-  --focus:0 0 0 3px rgba(201,154,60,.25); --backdrop:rgba(20,17,12,.42);
+html:root[data-theme="light"],html:root:not([data-theme]){
+  --bg:#EEF3F9; --surface:#FFFFFF; --surface-2:#F5F8FC; --surface-3:#E7EEF7; --side-bg:#FFFFFF;
+  --text:#0F1B2D; --text-muted:#5B6B80; --text-faint:#98A5B6;
+  --border:#DDE6F1; --border-strong:#C7D4E5;
+  --primary:#1668DC; --primary-2:#3B82F6; --primary-strong:#0F56BD; --primary-ink:#FFFFFF;
+  --primary-soft:#E7F0FD; --primary-line:#A9C8F4; --primary-text:#1259C3;
+  --grad-1:#2C7BEA; --grad-2:#1668DC; --logo-1:#3B8BF0; --logo-2:#1260D0; --logo-ink:#FFFFFF;
+  --pos:#15965B; --pos-soft:#E5F6EC; --neg:#E5484D; --neg-soft:#FDECEC;
+  --blue:#1668DC; --blue-soft:#E7F0FD; --amber:#C27A10; --amber-soft:#FFF3DC;
+  --tile-busy:#E9F7EF; --tile-busy-line:#9ED8B8; --tile-ready:#E4F4FB; --tile-ready-line:#8CCDE8; --tile-bill:#FFF4E0; --tile-bill-line:#F0C77A;
+  --status-received:#C27A10; --status-preparing:#1668DC; --status-ready:#15965B; --status-served:#7C4DC4; --status-completed:#15965B; --status-cancelled:#98A5B6;
+  --muted:#5B6B80; --card:#FFFFFF; --surface2:#F5F8FC; --line:#DDE6F1; --accent:#1668DC; --success:#15965B; --danger:#E5484D; --warning:#C27A10; --warn:#C27A10;
+  --shadow-sm:0 1px 2px rgba(15,40,80,.06); --shadow-md:0 8px 24px rgba(15,40,80,.08); --shadow-lg:0 22px 50px rgba(15,40,80,.16);
+  --focus:0 0 0 3px rgba(22,104,220,.22); --backdrop:rgba(10,25,50,.40);
+  --app-bg:linear-gradient(165deg,#E6F0FC 0%,#F3F7FC 40%,#FBF6EE 100%);
   color-scheme:light;
 }
 :root{
@@ -43,7 +45,7 @@ html:root[data-theme="light"]{
     "PingFang SC","Microsoft YaHei",sans-serif;
   font-feature-settings:"tnum" 1;
 }
-body{background:var(--bg)!important;color:var(--text);font-size:14.5px;line-height:1.45;letter-spacing:0}
+body{background:var(--app-bg,var(--bg)) fixed!important;color:var(--text);font-size:14.5px;line-height:1.45;letter-spacing:0}
 h1,h2,h3{letter-spacing:-.01em;color:var(--text)}
 ::selection{background:var(--primary-soft)}
 *{text-shadow:none!important}
@@ -174,6 +176,7 @@ header.topbar #langSelect{display:none}
   gap:0;padding:16px 12px 12px!important;background:var(--side-bg)!important;border-right:1px solid var(--border);overflow:visible;box-shadow:none!important;border-radius:0!important}
 .nav-brand{display:flex;align-items:center;gap:11px;padding:2px 8px 18px;margin-bottom:10px;border-bottom:1px solid var(--border)}
 .nav-logo{width:38px;height:38px;flex:none;display:block}.nav-logo svg{width:100%;height:100%;display:block}
+.nav-logo stop:first-child,.login-logo stop:first-child{stop-color:var(--logo-1)}.nav-logo stop:last-child,.login-logo stop:last-child{stop-color:var(--logo-2)}.nav-logo path,.login-logo path{fill:var(--logo-ink)}
 .nav-brand-text{display:flex;flex-direction:column;line-height:1.05;min-width:0}
 .nav-brand-text b{font-size:19px;font-weight:800;letter-spacing:-.02em;color:var(--text)}
 .nav-brand-text em{font-style:normal;color:var(--primary)}
@@ -546,7 +549,7 @@ header.topbar #langSelect{display:none}
 .kitchen-frame{display:block;width:100%;height:calc(100vh - var(--top-h) - 44px);border:1px solid var(--border);border-radius:16px;background:var(--bg)}
 html.kitchen-embed body{background:var(--bg)!important}
 html.kitchen-embed #boardView>header{position:absolute;top:14px;right:16px;left:auto;height:auto;min-height:0;padding:0!important;background:transparent!important;border:0!important;backdrop-filter:none!important;z-index:5}
-html.kitchen-embed .kitchen-filters{min-height:44px;align-items:center;padding-right:330px}
+html.kitchen-embed .kitchen-filters{min-height:44px;align-items:center;padding-right:460px}
 html.kitchen-embed #boardView>header .brand,html.kitchen-embed .kitchen-home-link,html.kitchen-embed #langSelect{display:none!important}
 html.kitchen-embed #boardView>header .head-right{margin-left:auto}
 html.kitchen-embed .kitchen-main{padding:14px 16px 20px!important}
@@ -745,3 +748,77 @@ details>summary{cursor:pointer;font-weight:650}
   .payment-live-summary b{font-size:15px}
 }
 @media (max-width:390px){ #mainTabs .nav-list>button .tab-lb{font-size:9.5px} }
+
+/* ---------- Version F: clean blue light mode (default) ---------- */
+html:root:not([data-theme="dark"]) header.topbar{background:rgba(255,255,255,.72)!important;backdrop-filter:saturate(1.4) blur(10px)}
+html:root:not([data-theme="dark"]) .chip.active,html:root:not([data-theme="dark"]) #takeOrderModal .cat-chip.active{background:var(--primary)!important;color:#fff!important;border-color:var(--primary)!important}
+html:root:not([data-theme="dark"]) .save,html:root:not([data-theme="dark"]) .ghost-btn.primary,html:root:not([data-theme="dark"]) button.primary{background:var(--primary)!important;border-color:var(--primary)!important;color:#fff!important}
+html:root:not([data-theme="dark"]) #takeOrderMenuGrid .mc-add{background:var(--primary);color:#fff}
+html:root:not([data-theme="dark"]) .avatar{background:var(--primary)!important;color:#fff!important}
+html:root:not([data-theme="dark"]) #takeOrderModal.workspace{background:var(--app-bg)!important}
+html:root:not([data-theme="dark"]) #takeOrderModal .cat-scroll{background:transparent}
+html:root:not([data-theme="dark"]) .kpi-hero{background:linear-gradient(160deg,#E7F0FD,#fff 65%)}
+html:root:not([data-theme="dark"]) .hc-bar{background:linear-gradient(180deg,#5B9BF0,#1668DC)}
+html:root:not([data-theme="dark"]) .rank-track span{background:linear-gradient(90deg,#1668DC,#5B9BF0)}
+
+/* ---------- Batch A: stable, fast service ---------- */
+.toast-action{display:flex;align-items:center;gap:12px;pointer-events:auto}
+.toast-action span{flex:1}
+.toast-action button{border:0;background:transparent;color:var(--primary-text);font-weight:800;font-size:13.5px;padding:4px 6px;cursor:pointer;min-height:0}
+/* one-tap sold out on the order screen */
+#takeOrderMenuGrid .mc-so{position:absolute;top:8px;right:8px;z-index:2;height:26px;padding:0 9px;border-radius:999px;border:1px solid var(--border);background:color-mix(in srgb,var(--surface) 88%,transparent);
+  color:var(--text-muted);font-size:11.5px;font-weight:700;display:inline-flex;align-items:center;gap:4px;cursor:pointer;min-height:0;backdrop-filter:blur(6px)}
+#takeOrderMenuGrid .mc-so:hover{color:var(--neg);border-color:var(--neg)}
+#takeOrderMenuGrid .menu-card.sold-out{opacity:1}
+#takeOrderMenuGrid .menu-card.sold-out>.mc-photo,#takeOrderMenuGrid .menu-card.sold-out>.mc-body{opacity:.42}
+#takeOrderMenuGrid .menu-card.sold-out .mc-badge{left:10px;right:auto}
+#takeOrderMenuGrid .menu-card.sold-out .mc-so{color:var(--pos);border-color:var(--pos);background:var(--surface)}
+.bill-line .bl-warn{color:var(--neg)!important;font-weight:700;display:flex;align-items:center;gap:4px}
+/* unsent food before payment */
+.cp-unsent{margin:4px 0 12px;padding:12px;border:1px solid var(--amber);background:var(--amber-soft);border-radius:14px}
+.cp-unsent .cpu-text{display:flex;gap:10px;align-items:flex-start;color:var(--text)}
+.cp-unsent .cpu-text>.ic{color:var(--amber);font-size:20px;margin-top:1px}
+.cp-unsent .cpu-text b{display:block}
+.cp-unsent .cpu-text small{display:block;margin-top:2px;line-height:1.4}
+.cp-unsent .cpu-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+/* reason sheet */
+.reason-target{margin:12px 0 -4px;padding:10px 12px;border-radius:12px;background:var(--surface-2);border:1px solid var(--border);font-weight:700}
+.reason-soldout{display:flex!important;align-items:flex-start;gap:10px;margin:0 0 12px;padding:12px;border-radius:12px;border:1px solid var(--neg);background:var(--neg-soft);cursor:pointer}
+.reason-soldout.hidden{display:none!important}
+.reason-soldout input{margin-top:3px;width:18px;height:18px;accent-color:var(--neg)}
+.reason-soldout span{display:flex;flex-direction:column;gap:2px}
+.reason-approve{margin:12px 0 4px;padding:12px;border-radius:12px;border:1px solid var(--primary-line);background:var(--primary-soft)}
+.reason-approve .ra-head{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--primary-text);margin-bottom:8px}
+.reason-approve .form-grid{margin:0}
+#reasonModal .reason-choice{min-height:48px;font-size:14.5px}
+/* leave the order screen with unsaved items */
+.leave-text{margin:10px 0 14px;font-weight:600}
+.leave-actions{display:flex;flex-direction:column;gap:8px}
+.leave-actions .ghost-btn{min-height:48px;justify-content:flex-start;padding:0 14px}
+.leave-actions .ghost-btn small{margin-left:auto;font-weight:500}
+/* floor: a table with a saved draft */
+.bt-has-draft{border-style:dashed!important;border-color:var(--amber)!important}
+.bt-open.bt-draft{color:var(--amber)!important}
+.bt-flag-draft{background:var(--amber-soft);color:var(--amber);border:1px solid var(--amber)}
+@media (max-width:760px){
+  #takeOrderMenuGrid .mc-so{top:6px;right:6px;height:24px;padding:0 8px}
+  #takeOrderMenuGrid .mc-body .mc-name{padding-right:58px}
+  #takeOrderMenuGrid .menu-card.sold-out .mc-badge{left:6px;top:auto;bottom:6px}
+  .cp-unsent .cpu-actions{grid-template-columns:1fr}
+}
+/* kitchen: sold-out list */
+.so-count{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--neg);color:#fff;font-size:11.5px}
+.so-count.hidden{display:none}
+#soldOutModal .sheet{max-width:560px;width:100%}
+.so-help{margin:8px 0 10px;font-size:13px}
+#soldOutSearch{width:100%;margin-bottom:10px}
+.so-list{display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto}
+.so-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.so-row .so-name{flex:1;min-width:0;display:flex;flex-direction:column}
+.so-row .so-name b{font-size:15px}
+.so-toggle{min-height:40px;min-width:92px;border-radius:10px;border:1px solid var(--border-strong);background:var(--surface-2);color:var(--text);font-weight:800;display:inline-flex;align-items:center;justify-content:center;gap:5px;cursor:pointer}
+.so-row:not(.is-out) .so-toggle:hover{border-color:var(--neg);color:var(--neg)}
+.so-row.is-out{border-color:var(--neg);background:var(--neg-soft)}
+.so-row.is-out .so-toggle{border-color:var(--pos);color:var(--pos);background:var(--surface)}
+@media (max-width:760px){ html.kitchen-embed .kitchen-filters{padding-right:0} }
+.cl-out{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--neg);color:#fff;font-size:11px;font-weight:800;vertical-align:1px}
