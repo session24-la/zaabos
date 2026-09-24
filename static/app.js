@@ -824,7 +824,7 @@ function openMenuItemModal(id) {
     $('#menuItemDesc').value = it.description || '';
     $('#menuItemCategory').value = it.category_id || '';
     $('#menuItemPrice').value = it.base_price;
-    $('#menuItemSoldOut').checked = !!it.sold_out;
+    $('#menuItemSoldOut').checked = !!it.sold_out; $('#menuItemOpenPrice').checked = !!it.open_price;
     $('#menuItemCostPrice').value = it.cost_price || 0;
     $('#menuItemTrackStock').checked = !!it.track_stock;
     $('#menuItemStockQty').value = it.stock_qty != null ? it.stock_qty : '';
@@ -835,7 +835,7 @@ function openMenuItemModal(id) {
   } else {
     $('#menuItemModalTitle').textContent = t('modal_add_menu_item_title');
     $('#menuItemId').value = ''; $('#menuItemName').value = ''; $('#menuItemDesc').value = ''; setNameI18n('{}');
-    $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false;
+    $('#menuItemCategory').value = ''; $('#menuItemPrice').value = ''; $('#menuItemSoldOut').checked = false; $('#menuItemOpenPrice').checked = false;
     $('#menuItemCostPrice').value = ''; $('#menuItemTrackStock').checked = false;
     $('#menuItemStockQty').value = ''; $('#menuItemLowStockThreshold').value = 5;
     $('#menuItemKitchenStation').value = '';
@@ -917,7 +917,8 @@ $('#menuItemSave').addEventListener('click', async () => {
   $('#menuItemError').textContent = '';
   const id = $('#menuItemId').value;
   const name = $('#menuItemName').value.trim();
-  const price = parseFloat($('#menuItemPrice').value);
+  const openPrice = $('#menuItemOpenPrice').checked;
+  const price = openPrice && $('#menuItemPrice').value.trim() === '' ? 0 : parseFloat($('#menuItemPrice').value);
   if (!name) { $('#menuItemError').textContent = t('err_menu_item_name_required'); return; }
   if (isNaN(price) || price < 0) { $('#menuItemError').textContent = t('err_price_invalid'); return; }
   const costPrice = parseFloat($('#menuItemCostPrice').value);
@@ -931,7 +932,7 @@ $('#menuItemSave').addEventListener('click', async () => {
   }
   const payload = { name_i18n: readNameI18n(),
     name, description: $('#menuItemDesc').value.trim(), category_id: $('#menuItemCategory').value || null,
-    base_price: price, sold_out: $('#menuItemSoldOut').checked, option_groups: optGroupsDraft,
+    base_price: price, sold_out: $('#menuItemSoldOut').checked, open_price: openPrice, option_groups: optGroupsDraft,
     image_url: menuItemImageDraft,
     cost_price: isNaN(costPrice) ? 0 : costPrice, track_stock: trackStock,
     stock_qty: stockQty, low_stock_threshold: lowStockThreshold,
@@ -1076,9 +1077,9 @@ function orderCardHtml(o) {
     const editable = kitchenEligible && o.payment_status === 'unpaid' && o.status !== 'completed';
     const cb = editable && activeQty > 0 && !it.kitchen_sent_at
       ? `<input type="checkbox" class="oc-item-cb" data-item-id="${it.id}">` : '';
-    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" title="ยกเลิกรายการ" aria-label="ยกเลิกรายการ" data-cancel-item="${o.id}:${it.id}:${activeQty}"><i class="ic ic-x" aria-hidden="true"></i> ยกเลิก</button></span>` : '';
+    const editControls = editable && activeQty > 0 ? `<span class="oc-edit-controls"><button type="button" class="mini-step mini-tools" data-line-tools="${o.id}:${it.id}" title="ราคา / แถม / ห่อ / เร่ง" aria-label="เครื่องมือรายการ"><i class="ic ic-sliders-horizontal" aria-hidden="true"></i></button><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${Math.max(1,activeQty-1)}:${activeQty}" ${activeQty<=1?'disabled':''}>−</button><b>${activeQty}</b><button type="button" class="mini-step" data-item-qty="${o.id}:${it.id}:${activeQty+1}:${activeQty}">+</button><button type="button" class="mini-cancel" title="ยกเลิกรายการ" aria-label="ยกเลิกรายการ" data-cancel-item="${o.id}:${it.id}:${activeQty}"><i class="ic ic-x" aria-hidden="true"></i> ยกเลิก</button></span>` : '';
     return `<li class="oc-item-row">
-      <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<span class="name2">${escapeHtml(it.item_name2_snapshot)}</span>` : ''}${optsHtml}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
+      <label class="oc-item-label">${cb}<span><b>${activeQty}×</b> ${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<span class="name2">${escapeHtml(it.item_name2_snapshot)}</span>` : ''}${optsHtml}${it.notes ? ` <span class="hint">· ${escapeHtml(it.notes)}</span>` : ''}${itemTagsHtml(it)}${it.cancelled_quantity ? ` <small class="cancelled-note">ยกเลิก ${it.cancelled_quantity}</small>` : ''}</span></label>${editControls}
       ${sentBadge}
     </li>`;
   }).join('');
@@ -1150,6 +1151,39 @@ async function sendSelectedToKitchen(orderId, card) {
 }
 
 
+// ---- Manager approval once, usable ~15 minutes by this staff member on this device ----
+// The manager's password goes to the server once; the page only keeps the short-lived approval.
+let approvalSession = null; // {token, until, by}
+function approvalToken() { return approvalSession && approvalSession.until > Date.now() ? approvalSession.token : null; }
+function staffNeedsApproval() { return !!(me && me.role === 'staff'); }
+async function grantApproval(username, password) {
+  const r = await apiJson('/api/approvals', 'POST', { approval_username: username, approval_password: password });
+  approvalSession = { token: r.approval_token, until: Date.now() + (Number(r.expires_in || 900) - 30) * 1000, by: r.approver || username };
+  return r.approval_token;
+}
+let approveResolve = null;
+function requestApproval(text) {
+  const tok = approvalToken(); if (tok) return Promise.resolve(tok);
+  return new Promise(resolve => {
+    approveResolve = resolve;
+    $('#approveText').textContent = text || 'รายการนี้ต้องให้ผู้จัดการหรือเจ้าของร้านอนุมัติ';
+    $('#approveUser').value = ''; $('#approvePass').value = ''; $('#approveError').textContent = '';
+    openModal('#approveModal'); setTimeout(() => $('#approveUser').focus(), 60);
+  });
+}
+$('#approveBtn').addEventListener('click', async () => {
+  const u = $('#approveUser').value.trim(), pw = $('#approvePass').value, btn = $('#approveBtn');
+  $('#approveError').textContent = '';
+  if (!u || !pw) { $('#approveError').textContent = 'ใส่ชื่อผู้ใช้และรหัสผ่านของผู้จัดการ'; return; }
+  btn.disabled = true;
+  try { const tok = await grantApproval(u, pw); const r = approveResolve; approveResolve = null; $('#approvePass').value = ''; $('#approveModal').classList.remove('show'); if (r) r(tok); }
+  catch (e) { $('#approveError').textContent = e.message; }
+  finally { btn.disabled = false; }
+});
+$('#approvePass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#approveBtn').click(); });
+new MutationObserver(() => { if (!$('#approveModal').classList.contains('show') && approveResolve) { const r = approveResolve; approveResolve = null; $('#approvePass').value = ''; r(null); } })
+  .observe($('#approveModal'), { attributes: true, attributeFilter: ['class'] });
+
 // Why food is voided — the shop's own top reasons (from its old POS: ~3 in 4 voids were "ของหมด").
 const ITEM_VOID_REASONS = ['ของหมด','คุณภาพไม่ดี','ไม่สะอาด','ลูกค้ารอนาน','ใส่ผิด / กดผิด','ลูกค้าเปลี่ยนใจ'];
 const DEFAULT_OPERATION_REASONS = ['กดรายการผิด','ลูกค้าเปลี่ยนใจ / ไม่รับรายการ','ลูกค้ารอนานเกินไป','ราคา / จำนวนไม่ถูกต้อง','สินค้าหมด / หมดสต็อก'];
@@ -1159,7 +1193,7 @@ let reasonResolve = null, reasonRun = null, selectedReason = '', reasonList = DE
 function chooseOperationReason(actionLabel, opts = {}){
   return new Promise(resolve=>{
     reasonResolve=resolve; reasonRun=opts.run||null; selectedReason=''; reasonList=opts.reasons||DEFAULT_OPERATION_REASONS;
-    reasonNeedApproval = opts.needApproval != null ? !!opts.needApproval : !!(me && me.role==='staff');
+    reasonNeedApproval = (opts.needApproval != null ? !!opts.needApproval : staffNeedsApproval()) && !approvalToken();
     reasonCanMarkSoldOut = !!opts.soldOutItem;
     $('#reasonModalTitle').textContent=`เลือกเหตุผล${actionLabel}`; $('#reasonCustom').value=''; $('#reasonError').textContent='';
     $('#reasonTarget').classList.toggle('hidden',!opts.target); $('#reasonTarget').textContent=opts.target||'';
@@ -1178,7 +1212,10 @@ $('#reasonConfirmBtn').addEventListener('click',async()=>{
   const reason=($('#reasonCustom').value.trim()||selectedReason).trim();
   if(!reason){$('#reasonError').textContent='กรุณาเลือกเหตุผล';return;}
   const payload={reason};
-  if(reasonNeedApproval){const u=$('#reasonApproveUser').value.trim(),pw=$('#reasonApprovePass').value;if(!u||!pw){$('#reasonError').textContent='ให้ผู้จัดการหรือเจ้าของร้านใส่ชื่อผู้ใช้และรหัสผ่าน';return;}payload.approval_username=u;payload.approval_password=pw;}
+  if(reasonNeedApproval){const u=$('#reasonApproveUser').value.trim(),pw=$('#reasonApprovePass').value;if(!u||!pw){$('#reasonError').textContent='ให้ผู้จัดการหรือเจ้าของร้านใส่ชื่อผู้ใช้และรหัสผ่าน';return;}
+    try{payload.approval_token=await grantApproval(u,pw);}catch(e){$('#reasonError').textContent=e.message;return;}
+    $('#reasonApprovePass').value='';reasonNeedApproval=false;$('#reasonApprove').classList.add('hidden');}
+  else if(staffNeedsApproval()&&approvalToken())payload.approval_token=approvalToken();
   if(reasonCanMarkSoldOut&&!$('#reasonSoldOutRow').classList.contains('hidden')&&$('#reasonSoldOut').checked)payload.mark_sold_out=true;
   const btn=$('#reasonConfirmBtn');
   if(reasonRun){btn.disabled=true;try{await reasonRun({...payload});}catch(e){$('#reasonError').textContent=e.message;btn.disabled=false;return;}btn.disabled=false;}
@@ -1237,6 +1274,8 @@ function wireOrderActionClicks(container) {
     const sk = e.target.dataset.sendKitchen, ai = e.target.dataset.addItems, mv = e.target.dataset.moveOrder;
     const rf = e.target.dataset.refundOrder, mg = e.target.dataset.mergeOrder, sp = e.target.dataset.splitOrder, bm=e.target.dataset.billManager, ff=e.target.dataset.fulfillment, ro=e.target.dataset.reopenOrder;
     const iq = e.target.dataset.itemQty, ci = e.target.dataset.cancelItem;
+    const ltb = e.target.closest('[data-line-tools]');
+    if (ltb) { const [loid, liid] = ltb.dataset.lineTools.split(':').map(Number); openLineTools(loid, liid); return; }
     if (ff) { const [oid,status]=ff.split(':'); apiJson(`/api/orders/${oid}/fulfillment`,'PUT',{fulfillment_status:status}).then(onOrderActionDone).catch(err=>toast(err.message,'err')); }
     else if (iq) {
       const [oid,iid,qty,oldQty]=iq.split(':');
@@ -1485,10 +1524,10 @@ async function printReceipt(orderId) {
   const activeItems = (o.items || []).filter(it => Number(it.quantity || 0) - Number(it.cancelled_quantity || 0) > 0);
   const itemsRows = activeItems.map(it => {
     const qty = Number(it.quantity || 0) - Number(it.cancelled_quantity || 0);
-    const amount = qty * Number(it.unit_price || 0);
+    const amount = qty * Number(it.unit_price || 0), free = !Number(it.unit_price || 0) && it.price_reason;
     const opts = (it.options || []).length ? `<div class="rp-item-sub">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(' / '))}</div>` : '';
     const note = it.notes ? `<div class="rp-item-sub">${escapeHtml(it.notes)}</div>` : '';
-    return `<tr><td class="rp-qty">${qty}</td><td class="rp-item">${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<div class="rp-item-sub">${escapeHtml(it.item_name2_snapshot)}</div>` : ''}${opts}${note}</td><td class="rp-price">${fmtMoney(amount)}</td></tr>`;
+    return `<tr><td class="rp-qty">${qty}</td><td class="rp-item">${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<div class="rp-item-sub">${escapeHtml(it.item_name2_snapshot)}</div>` : ''}${opts}${note}</td><td class="rp-price">${free ? 'แถม' : fmtMoney(amount)}</td></tr>`;
   }).join('');
   const guest = o.guest_count != null ? o.guest_count : '-';
   $('#receiptPrintArea').className='receipt-print '+receiptClass;
@@ -1528,14 +1567,16 @@ async function printReceipt(orderId) {
 function printKitchenSlip(orderId, slip) {
   if (!slip) return;
   const o = findOrderById(orderId);
-  const move = slip.kind === 'move';
-  const body = move
+  const move = slip.kind === 'move', notice = ['rush', 'takeaway'].includes(slip.kind);
+  const body = notice
+    ? (slip.items || []).map(it => `<div class="kt-print-item">${Number(it.qty)}× ${escapeHtml(it.name)}${it.name2 ? `<div class="kt-print-opts">${escapeHtml(it.name2)}</div>` : ''}</div>`).join('')
+    : move
     ? `<div class="kt-print-item">${escapeHtml(slip.from)} → ${escapeHtml(slip.to)}</div><div class="kt-print-opts">อาหารที่ยังไม่เสิร์ฟ ส่งโต๊ะใหม่</div>`
     : (slip.items || []).map(it => `<div class="kt-print-item">− ${Number(it.qty)}× ${escapeHtml(it.name)}${it.name2 ? `<div class="kt-print-opts">${escapeHtml(it.name2)}</div>` : ''}</div>`).join('')
       + (slip.reason ? `<div class="kt-print-notes">เหตุผล: ${escapeHtml(slip.reason)}</div>` : '');
   const where = slip.where && slip.where !== 'dine_in' ? (['takeaway', 'delivery'].includes(slip.where) ? orderTypeLabel(slip.where) : slip.where) : '';
   $('#kitchenTicketPrintArea').innerHTML = `
-    <div class="kt-print-head">*** ${move ? 'ย้ายโต๊ะ / ຍ້າຍໂຕະ' : 'ยกเลิก / ຍົກເລີກ'} ***</div>
+    <div class="kt-print-head">*** ${notice ? escapeHtml(slip.title || 'เร่ง / ເລັ່ງ') : move ? 'ย้ายโต๊ะ / ຍ້າຍໂຕະ' : 'ยกเลิก / ຍົກເລີກ'} ***</div>
     ${where ? `<div class="kt-print-item">${escapeHtml(where)}</div>` : ''}
     <div class="rp-sub">#${escapeHtml(slip.order_no || (o && o.order_no) || '')} · ${zaabosDateTime(new Date())}</div>
     <div class="rp-line"></div>${body}`;
@@ -1549,7 +1590,8 @@ function printKitchenTicket(orderId, itemIds) {
   if (!items.length) return;
   const itemsHtml = items.map(it => {
     const optLine = it.options.length ? `<div class="kt-print-opts">${escapeHtml(it.options.map(op => op.option_name_snapshot).join(', '))}</div>` : '';
-    const noteLine = it.notes ? `<div class="kt-print-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : '';
+    const noteLine = (it.notes ? `<div class="kt-print-notes"><i class="ic ic-notebook-pen" aria-hidden="true"></i> ${escapeHtml(it.notes)}</div>` : '')
+      + (it.takeaway ? `<div class="kt-print-notes">&gt;&gt; ห่อกลับ / ຫໍ່ກັບ</div>` : '');
     return `<div class="kt-print-item">${it.quantity}× ${escapeHtml(it.item_name_snapshot)}${it.item_name2_snapshot ? `<div class="kt-print-opts">${escapeHtml(it.item_name2_snapshot)}</div>` : ''}${optLine}${noteLine}</div>`;
   }).join('');
   $('#kitchenTicketPrintArea').innerHTML = `
@@ -1874,7 +1916,7 @@ function renderTakeOrderMenu() {
       <button type="button" class="mc-so" data-so-toggle="${it.id}" aria-label="${it.sold_out ? 'กลับมาขาย' : 'ตั้งเป็นหมด'}">${it.sold_out ? '<i class="ic ic-undo-2" aria-hidden="true"></i> มีของ' : '<i class="ic ic-ban" aria-hidden="true"></i> หมด'}</button>
       <div class="mc-body">
         <span class="mc-name">${escapeHtml(n.main)}</span>${n.sub ? `<span class="mc-sub">${escapeHtml(n.sub)}</span>` : ''}
-        <div class="mc-foot"><span class="mc-price">${fmtMoney(it.base_price)}</span>${it.sold_out ? '' : `<span class="mc-add" aria-hidden="true"><i class="ic ic-plus"></i></span>`}</div>
+        <div class="mc-foot">${it.open_price ? `<span class="mc-price open">ใส่ราคาตอนสั่ง</span>` : `<span class="mc-price">${fmtMoney(it.base_price)}</span>`}${it.sold_out ? '' : `<span class="mc-add" aria-hidden="true"><i class="ic ic-plus"></i></span>`}</div>
       </div>
     </div>`; }).join('');
   updateTakeOrderFeedback();
@@ -1899,8 +1941,10 @@ $('#takeOrderMenuGrid').addEventListener('click', (e) => {
   const item = boot.items.find(x => x.id === parseInt(id.dataset.pickItem, 10));
   if (!item || item.sold_out) return;
   if (!item.option_groups || !item.option_groups.length) {
-    const found=cart.find(c=>c.menu_item_id===item.id && !c.optionLabels.length && !c.notes);
-    if(found) found.qty += 1; else cart.push({menu_item_id:item.id,name:menuNames(item).main,unit_price:item.base_price,qty:1,selected_options:{},optionLabels:[],notes:''});
+    const fresh = {menu_item_id:item.id,name:menuNames(item).main,unit_price:item.base_price,qty:1,selected_options:{},optionLabels:[],notes:''};
+    if (item.open_price) { openLineEditor(-1, fresh); return; }   // seafood by weight…: price first
+    const found=cart.find(c=>c.menu_item_id===item.id && !c.optionLabels.length && !c.notes && !c.takeaway && c.price == null);
+    if(found) found.qty += 1; else cart.push(fresh);
     renderCart(); return;
   }
   openItemOptionPicker(item);
@@ -1966,8 +2010,10 @@ $('#itemOptionAdd').addEventListener('click', () => {
     }
   }
   const qty = parseInt($('#itemOptionQty').textContent, 10);
-  cart.push({ menu_item_id: item.id, name: item.name, unit_price: unitPrice, qty, selected_options: selected, optionLabels: labels, notes: $('#itemOptionNotes').value.trim() });
-  $('#itemOptionModal').classList.remove('show'); renderCart();
+  const line = { menu_item_id: item.id, name: menuNames(item).main, unit_price: unitPrice, qty, selected_options: selected, optionLabels: labels, notes: $('#itemOptionNotes').value.trim() };
+  $('#itemOptionModal').classList.remove('show');
+  if (item.open_price) { openLineEditor(-1, line); return; }
+  cart.push(line); renderCart();
 });
 
 function billOrder() { return addItemsOrderId ? findOrderById(addItemsOrderId) : null; }
@@ -1988,6 +2034,7 @@ function renderBillHead() {
   }
   $('#billTitle').textContent = title; $('#billSub').textContent = sub.join(' · ');
   $('#billManageBtn').classList.toggle('hidden', !o);
+  $('#billRushBtn').classList.toggle('hidden', !o || !rushableItems(o).length);
 }
 function renderCart() {
   const o = billOrder();
@@ -1999,15 +2046,17 @@ function renderCart() {
     const q = Number(it.quantity || 0) - Number(it.cancelled_quantity || 0), line = q * Number(it.unit_price || 0);
     existingTotal += line; existingQty += q;
     const state = it.kitchen_sent_at ? `<i class="ic ic-chef-hat" aria-hidden="true" title="ส่งครัวแล้ว"></i>` : `<i class="ic ic-clock" aria-hidden="true" title="ยังไม่ส่งครัว"></i>`;
-    return `<div class="bill-line is-sent"><span class="bl-qty">${q}×</span><div class="bl-name">${escapeHtml(it.item_name_snapshot)}${it.options && it.options.length ? `<small>${it.options.map(x => escapeHtml(x.option_name_snapshot)).join(', ')}</small>` : ''}</div><span class="bl-state">${state}</span><span class="bl-price">${fmtMoney(line)}</span></div>`;
+    return `<div class="bill-line is-sent" data-bill-item="${it.id}" role="button" tabindex="0" title="แตะเพื่อ เร่ง / ห่อ / แก้ราคา"><span class="bl-qty">${q}×</span><div class="bl-name">${escapeHtml(it.item_name_snapshot)}${it.options && it.options.length ? `<small>${it.options.map(x => escapeHtml(x.option_name_snapshot)).join(', ')}</small>` : ''}${it.notes ? `<small>${escapeHtml(it.notes)}</small>` : ''}${itemTagsHtml(it)}</div><span class="bl-state">${state}</span><span class="bl-price">${!Number(it.unit_price || 0) && it.price_reason ? 'แถม' : fmtMoney(line)}</span></div>`;
   }).join('') : '';
   let total = 0, qty = 0;
   $('#takeOrderCart').innerHTML = (cart.length ? (existing.length ? `<div class="bill-group-label">เพิ่มใหม่</div>` : '') + cart.map((c, idx) => {
-    const lineTotal = c.unit_price * c.qty; total += lineTotal; qty += c.qty;
+    const unit = cartUnit(c), lineTotal = unit * c.qty, special = cartSpecial(c); total += lineTotal; qty += c.qty;
+    const tags = [c.takeaway ? `<span class="bl-tag bl-tag-take"><i class="ic ic-shopping-bag" aria-hidden="true"></i> ห่อ</span>` : '',
+      special ? `<span class="bl-tag ${unit === 0 ? 'bl-tag-free' : 'bl-tag-price'}">${unit === 0 ? 'แถม' : escapeHtml(c.price_reason || 'ราคาพิเศษ')}</span>` : ''].join('');
     return `<div class="bill-line">
       <div class="bl-steps"><button type="button" data-cart-minus="${idx}" aria-label="ลด"><i class="ic ic-minus" aria-hidden="true"></i></button><b>${c.qty}</b><button type="button" data-cart-plus="${idx}" aria-label="เพิ่ม"><i class="ic ic-plus" aria-hidden="true"></i></button></div>
-      <div class="bl-name">${escapeHtml(c.name)}${c.optionLabels.length ? `<small>${c.optionLabels.map(escapeHtml).join(', ')}</small>` : ''}${c.notes ? `<small>${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</small>` : ''}${(boot.items.find(x => x.id === c.menu_item_id) || {}).sold_out ? `<small class="bl-warn"><i class="ic ic-ban" aria-hidden="true"></i> เมนูนี้หมดแล้ว — ลบออกก่อนบันทึก</small>` : ''}</div>
-      <span class="bl-price">${fmtMoney(lineTotal)}</span>
+      <button type="button" class="bl-name bl-edit" data-cart-edit="${idx}" title="แตะเพื่อ หมายเหตุ / ห่อ / ราคา"><b>${escapeHtml(c.name)}</b>${c.optionLabels.length ? `<small>${c.optionLabels.map(escapeHtml).join(', ')}</small>` : ''}${c.notes ? `<small>${escapeHtml(t('label_notes'))}: ${escapeHtml(c.notes)}</small>` : `<small class="bl-hint">+ หมายเหตุ / ห่อ / ราคา</small>`}${tags ? `<span class="bl-tags">${tags}</span>` : ''}${(boot.items.find(x => x.id === c.menu_item_id) || {}).sold_out ? `<small class="bl-warn"><i class="ic ic-ban" aria-hidden="true"></i> เมนูนี้หมดแล้ว — ลบออกก่อนบันทึก</small>` : ''}</button>
+      <span class="bl-price">${special ? `<s>${fmtMoney(c.unit_price * c.qty)}</s>` : ''}${unit === 0 && special ? 'แถม' : fmtMoney(lineTotal)}</span>
     </div>`;
   }).join('') : (existing.length ? '' : `<div class="bill-empty"><i class="ic ic-utensils" aria-hidden="true"></i><span>${escapeHtml(t('empty_cart_staff'))}</span></div>`));
   const rows = [[`รวมรายการ ${existingQty + qty}`, fmtMoney(existingTotal + total)]];
@@ -2028,6 +2077,7 @@ function renderCart() {
 }
 $('#takeOrderDeliveryFee').addEventListener('input', renderCart);
 $('#takeOrderCart').addEventListener('click', (e) => {
+  const ed = e.target.closest('[data-cart-edit]'); if (ed) { openLineEditor(Number(ed.dataset.cartEdit)); return; }
   const b = e.target.closest('[data-cart-minus],[data-cart-plus]'); if (!b) return;
   const mi = b.dataset.cartMinus, pl = b.dataset.cartPlus;
   if (mi !== undefined) { const c = cart[Number(mi)]; if (c.qty <= 1) cart.splice(Number(mi), 1); else c.qty -= 1; }
@@ -2035,16 +2085,173 @@ $('#takeOrderCart').addEventListener('click', (e) => {
   renderCart();
 });
 
+// ---- One dish in the cart: note (typed or quick buttons), takeaway, special price / free ----
+function cartUnit(c) { return c.price != null ? Number(c.price) : Number(c.unit_price || 0); }
+function isOpenPrice(id) { return !!(boot.items.find(x => x.id === id) || {}).open_price; }
+function cartSpecial(c) { return c.price != null && !isOpenPrice(c.menu_item_id) && Number(c.price) !== Number(c.unit_price); }
+function cartLinePayload(c) {
+  const out = { menu_item_id: c.menu_item_id, quantity: c.qty, selected_options: c.selected_options, notes: c.notes };
+  if (c.price != null) { out.price = Number(c.price); if (c.price_reason) out.price_reason = c.price_reason; }
+  if (c.takeaway) out.takeaway = true;
+  return out;
+}
+function quickNotes() { const q = (boot.quick_notes || {})[String(currentBranchId)]; return Array.isArray(q) ? q : []; }
+function noteParts(v) { return String(v || '').split(/\s*,\s*/).map(x => x.trim()).filter(Boolean); }
+let leState = null;
+function openLineEditor(idx, fresh) {
+  const c = idx >= 0 ? cart[idx] : fresh; if (!c) return;
+  const item = boot.items.find(x => x.id === c.menu_item_id) || {};
+  leState = { idx, c: JSON.parse(JSON.stringify(c)), open: !!item.open_price };
+  $('#leTitle').textContent = c.name;
+  $('#leSub').textContent = [menuNames(item).sub, ...(c.optionLabels || [])].filter(Boolean).join(' · ');
+  $('#leQty').textContent = c.qty; $('#leNote').value = c.notes || ''; renderLeChips();
+  $('#leTakeaway').classList.toggle('active', !!c.takeaway);
+  $('#leMenuPrice').textContent = leState.open ? 'ใส่ราคาตอนสั่ง' : 'ราคาเมนู ' + fmtMoney(c.unit_price);
+  $('#lePrice').value = c.price != null ? c.price : (leState.open ? '' : c.unit_price);
+  $('#lePriceReason').value = c.price_reason || ''; $('#leResetPrice').classList.toggle('hidden', leState.open); $('#leFree').classList.toggle('hidden', leState.open);
+  $('#leRemove').classList.toggle('hidden', idx < 0); $('#leError').textContent = '';
+  $('#leSave').textContent = idx < 0 ? 'ใส่ในบิล' : 'ตกลง';
+  syncLePrice(); openModal('#lineEditModal');
+  if (leState.open) setTimeout(() => $('#lePrice').focus(), 80);
+}
+function renderLeChips() {
+  const parts = noteParts($('#leNote').value);
+  $('#leChips').innerHTML = quickNotes().map(q => `<button type="button" class="le-chip ${parts.includes(q) ? 'active' : ''}" data-qn="${escapeHtml(q)}">${escapeHtml(q)}</button>`).join('');
+}
+$('#leChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-qn]'); if (!b) return;
+  const q = b.dataset.qn; let parts = noteParts($('#leNote').value);
+  parts = parts.includes(q) ? parts.filter(x => x !== q) : [...parts, q];
+  $('#leNote').value = parts.join(', '); renderLeChips();
+});
+$('#leNote').addEventListener('input', renderLeChips);
+function lePriceValue() { const v = $('#lePrice').value.trim(); return v === '' ? null : Number(v); }
+function syncLePrice() {
+  if (!leState) return;
+  const p = lePriceValue(), menu = Number(leState.c.unit_price);
+  const changed = !leState.open && p != null && !isNaN(p) && p !== menu, lower = changed && p < menu;
+  $('#lePriceReason').classList.toggle('hidden', !changed);
+  $('#lePriceReason').placeholder = p === 0 ? 'ของแถม' : 'เหตุผล เช่น ลูกค้าประจำ';
+  $('#lePriceHint').textContent = lower && staffNeedsApproval() && !approvalToken() ? `ต่ำกว่าราคาเมนู (${fmtMoney(menu)}) · ผู้จัดการต้องอนุมัติ` : changed ? `ราคาเมนู ${fmtMoney(menu)}` : '';
+  $('#leFree').classList.toggle('active', p === 0);
+}
+$('#lePrice').addEventListener('input', syncLePrice);
+$('#leFree').addEventListener('click', () => { $('#lePrice').value = '0'; if (!$('#lePriceReason').value) $('#lePriceReason').value = 'ของแถม'; syncLePrice(); });
+$('#leResetPrice').addEventListener('click', () => { $('#lePrice').value = leState.c.unit_price; $('#lePriceReason').value = ''; syncLePrice(); });
+$('#leMinus').addEventListener('click', () => { $('#leQty').textContent = Math.max(1, Number($('#leQty').textContent) - 1); });
+$('#lePlus').addEventListener('click', () => { $('#leQty').textContent = Math.min(50, Number($('#leQty').textContent) + 1); });
+$('#leTakeaway').addEventListener('click', () => $('#leTakeaway').classList.toggle('active'));
+$('#leRemove').addEventListener('click', () => { if (leState && leState.idx >= 0) cart.splice(leState.idx, 1); $('#lineEditModal').classList.remove('show'); leState = null; renderCart(); });
+$('#leSave').addEventListener('click', async () => {
+  if (!leState) return;
+  const c = leState.c, p = lePriceValue(); $('#leError').textContent = '';
+  if (p != null && (isNaN(p) || p < 0)) { $('#leError').textContent = 'ราคาไม่ถูกต้อง'; return; }
+  if (leState.open && !(p > 0)) { $('#leError').textContent = 'ใส่ราคาของจานนี้ก่อน'; $('#lePrice').focus(); return; }
+  c.qty = Number($('#leQty').textContent) || 1; c.notes = $('#leNote').value.trim().slice(0, 300); c.takeaway = $('#leTakeaway').classList.contains('active');
+  if (leState.open) { c.price = p; c.price_reason = ''; }
+  else if (p != null && p !== Number(c.unit_price)) {
+    if (p < Number(c.unit_price) && staffNeedsApproval()) {
+      const tok = await requestApproval(`${c.name}: ${fmtMoney(c.unit_price)} → ${p === 0 ? 'แถม' : fmtMoney(p)}`);
+      if (!tok) return;
+    }
+    c.price = p; c.price_reason = $('#lePriceReason').value.trim() || (p === 0 ? 'ของแถม' : 'ราคาพิเศษ');
+  } else { delete c.price; c.price_reason = ''; }
+  if (leState.idx >= 0) cart[leState.idx] = c; else cart.push(c);
+  $('#lineEditModal').classList.remove('show'); leState = null; renderCart();
+});
+$('#leNote').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#leSave').click(); } });
+
+// ---- A dish already on the bill: rush, takeaway, special price / free, less, cancel ----
+function itemTagsHtml(it) {
+  const tags = [];
+  if (it.rush_at) tags.push(`<span class="bl-tag bl-tag-rush"><i class="ic ic-flame" aria-hidden="true"></i> เร่ง</span>`);
+  if (Number(it.takeaway)) tags.push(`<span class="bl-tag bl-tag-take"><i class="ic ic-shopping-bag" aria-hidden="true"></i> ห่อ</span>`);
+  if (it.list_price != null && it.price_reason) tags.push(`<span class="bl-tag ${Number(it.unit_price) === 0 ? 'bl-tag-free' : 'bl-tag-price'}">${Number(it.unit_price) === 0 ? 'แถม' : escapeHtml(it.price_reason)}</span>`);
+  return tags.length ? `<span class="bl-tags">${tags.join('')}</span>` : '';
+}
+function activeQtyOf(it) { return Math.max(0, Number(it.quantity || 0) - Number(it.cancelled_quantity || 0)); }
+function rushableItems(o) { return ['served', 'completed', 'cancelled'].includes(o.status) ? [] : (o.items || []).filter(it => it.kitchen_sent_at && activeQtyOf(it) > 0); }
+function afterKitchenNote(oid, r, msg) {
+  if (r && r.kitchen_slip && !r.printed_by_server) printKitchenSlip(oid, r.kitchen_slip);
+  toast(msg, 'ok'); onOrderActionDone();
+}
+async function rushOrder(oid, itemIds) {
+  try { const r = await apiJson(`/api/orders/${oid}/rush`, 'POST', itemIds ? { item_ids: itemIds } : {}); afterKitchenNote(oid, r, `แจ้งครัวให้เร่ง ${r.item_ids.length} รายการแล้ว`); return true; }
+  catch (e) { toast(e.message, 'err'); return false; }
+}
+$('#billRushBtn').addEventListener('click', () => { if (addItemsOrderId) rushOrder(addItemsOrderId); });
+$('#billExisting').addEventListener('click', e => {
+  const row = e.target.closest('[data-bill-item]'); if (row && addItemsOrderId) openLineTools(addItemsOrderId, Number(row.dataset.billItem));
+});
+let ltRef = null;
+function openLineTools(oid, iid) {
+  const o = findOrderById(oid), it = o && (o.items || []).find(x => x.id === iid); if (!it) return;
+  ltRef = { oid, iid };
+  const q = activeQtyOf(it), sent = !!it.kitchen_sent_at;
+  const editable = o.payment_status === 'unpaid' && !['completed', 'cancelled'].includes(o.status);
+  $('#ltTitle').textContent = `${q}× ${it.item_name_snapshot}`;
+  $('#ltSub').innerHTML = [sent ? `ส่งครัว ${fmtClock(it.kitchen_sent_at)}` : 'ยังไม่ส่งครัว', it.rush_at ? `เร่งแล้ว ${fmtClock(it.rush_at)}` : '',
+    `${Number(it.unit_price) === 0 && it.price_reason ? 'แถม' : fmtMoney(it.unit_price) + ' / จาน'}${it.list_price != null ? ` (ราคาเมนู ${fmtMoney(it.list_price)})` : ''}`,
+    it.notes ? escapeHtml(it.notes) : ''].filter(Boolean).join(' · ');
+  const btn = (act, icon, label, cls = '') => `<button type="button" class="lt-btn ${cls}" data-lt="${act}"><i class="ic ic-${icon}" aria-hidden="true"></i> ${label}</button>`;
+  $('#ltGrid').innerHTML = [
+    sent && rushableItems(o).some(x => x.id === iid) ? btn('rush', 'flame', 'เร่ง', 'rush') : '',
+    editable ? btn('takeaway', 'shopping-bag', Number(it.takeaway) ? 'ไม่ห่อแล้ว' : 'ห่อกลับ', Number(it.takeaway) ? 'on' : '') : '',
+    editable ? btn('price', 'tag', 'แก้ราคา / แถม') : '',
+    editable && q > 1 ? btn('less', 'minus', 'ลดลง 1') : '',
+    editable && q > 0 ? btn('cancel', 'circle-x', 'ยกเลิกจานนี้', 'danger') : '',
+  ].join('') || `<p class="muted">บิลนี้ปิดแล้ว</p>`;
+  $('#ltPriceBox').classList.add('hidden'); $('#ltError').textContent = '';
+  openModal('#lineToolsModal');
+}
+function ltItem() { const o = ltRef && findOrderById(ltRef.oid); return o ? (o.items || []).find(x => x.id === ltRef.iid) : null; }
+$('#ltGrid').addEventListener('click', async e => {
+  const b = e.target.closest('[data-lt]'); if (!b || !ltRef) return;
+  const { oid, iid } = ltRef, it = ltItem(); if (!it) return;
+  const act = b.dataset.lt;
+  if (act === 'rush') { b.disabled = true; if (await rushOrder(oid, [iid])) $('#lineToolsModal').classList.remove('show'); b.disabled = false; }
+  else if (act === 'takeaway') {
+    b.disabled = true;
+    try { const r = await apiJson(`/api/orders/${oid}/items/${iid}/takeaway`, 'PUT', { takeaway: !Number(it.takeaway) });
+      $('#lineToolsModal').classList.remove('show'); afterKitchenNote(oid, r, r.takeaway ? 'จานนี้ห่อกลับ' + (r.kitchen_slip ? ' · แจ้งครัวแล้ว' : '') : 'ยกเลิกห่อแล้ว'); }
+    catch (err) { $('#ltError').textContent = err.message; b.disabled = false; }
+  }
+  else if (act === 'price') {
+    $('#ltPriceBox').classList.remove('hidden');
+    const menu = it.list_price != null ? it.list_price : it.unit_price;
+    $('#ltMenuPrice').textContent = 'ราคาเมนู ' + fmtMoney(menu); $('#ltPrice').value = it.unit_price; $('#ltPriceReason').value = it.price_reason || '';
+    $('#ltResetPrice').classList.toggle('hidden', it.list_price == null); setTimeout(() => $('#ltPrice').select(), 50);
+  }
+  else if (act === 'less') { $('#lineToolsModal').classList.remove('show'); reduceOrderItemQty(oid, iid, activeQtyOf(it) - 1); }
+  else if (act === 'cancel') { $('#lineToolsModal').classList.remove('show'); cancelOrderItemCritical(oid, iid, activeQtyOf(it)); }
+});
+$('#ltFree').addEventListener('click', () => { $('#ltPrice').value = '0'; if (!$('#ltPriceReason').value) $('#ltPriceReason').value = 'ของแถม'; });
+$('#ltResetPrice').addEventListener('click', () => { const it = ltItem(); if (it && it.list_price != null) { $('#ltPrice').value = it.list_price; $('#ltPriceReason').value = ''; } });
+$('#ltPriceSave').addEventListener('click', async () => {
+  const it = ltItem(); if (!it) return;
+  const { oid, iid } = ltRef, raw = $('#ltPrice').value.trim(), p = Number(raw); $('#ltError').textContent = '';
+  if (raw === '' || isNaN(p) || p < 0) { $('#ltError').textContent = 'ราคาไม่ถูกต้อง'; return; }
+  const body = { price: p, reason: $('#ltPriceReason').value.trim() };
+  if (p < Number(it.unit_price) && staffNeedsApproval()) {
+    const tok = await requestApproval(`${it.item_name_snapshot}: ${fmtMoney(it.unit_price)} → ${p === 0 ? 'แถม' : fmtMoney(p)}`); if (!tok) return;
+    body.approval_token = tok;
+  }
+  try { const r = await apiJson(`/api/orders/${oid}/items/${iid}/price`, 'PUT', body); $('#lineToolsModal').classList.remove('show');
+    toast(r.unchanged ? 'ราคาเท่าเดิม' : p === 0 ? 'จานนี้แถมแล้ว' : `ราคาใหม่ ${fmtMoney(p)} / จาน`, 'ok'); onOrderActionDone(); }
+  catch (err) { $('#ltError').textContent = err.message; }
+});
+
 // Saves the cart (new order or items added to the open bill). Returns the order id, or null when nothing was saved.
 let takeOrderSaving = false;
-async function submitTakeOrder() {
+async function submitTakeOrder(retried) {
+  if (retried && typeof retried !== 'boolean') retried = false;   // called as a click handler
   $('#takeOrderError').textContent = '';
   if (!cart.length) { $('#takeOrderError').textContent = t('err_cart_empty_min1'); return null; }
   if (takeOrderSaving) return null; // already submitting — ignore extra clicks/taps
   const payload = {
     branch_id: currentBranchId, order_type: takeOrderType,
     customer_name: $('#takeOrderCustomerName').value.trim() || t('placeholder_customer_name'),
-    cart: cart.map(c => ({ menu_item_id: c.menu_item_id, quantity: c.qty, selected_options: c.selected_options, notes: c.notes })),
+    cart: cart.map(cartLinePayload),
   };
   const notes = $('#takeOrderNotes').value.trim(); if (notes) payload.notes = notes;
   const guestCountRaw = $('#takeOrderGuestCount').value.trim();
@@ -2059,6 +2266,7 @@ async function submitTakeOrder() {
     const sendKitchen = $('#takeOrderSendKitchen').checked;
     try { localStorage.setItem('zaabos_send_kitchen', sendKitchen ? '1' : '0'); } catch (e) {}
     const sendPayload = addItemsOrderId ? {items: payload.cart, send_to_kitchen: sendKitchen} : {...payload,send_to_kitchen:sendKitchen,client_request_id:requestId(),client_device_id:deviceId()};
+    if (cart.some(c => cartSpecial(c) && cartUnit(c) < Number(c.unit_price)) && approvalToken()) sendPayload.approval_token = approvalToken();
     let r;
     if (!addItemsOrderId && (!navigator.onLine || zaabosOfflineMode)) {
       await queueOfflineOrder(sendPayload); clearDraft(); closeModals(); toast('บันทึกออเดอร์ไว้ในเครื่องแล้ว · รอ Sync','ok'); addItemsOrderId=null; cart=[]; renderOfflineQueue(); return null;
@@ -2080,7 +2288,14 @@ async function submitTakeOrder() {
     // items with stock tracking just got decremented server-side — refresh the cached menu (boot.items)
     loadBootstrap().then(() => { if (activeTab() === 'menu') renderMenu(); });
     return sentOrderId;
-  } catch (e) { $('#takeOrderError').textContent = e.message; return null; }
+  } catch (e) {
+    if ((e.code === 'approval_required' || e.code === 'approval_expired') && !retried) {
+      takeOrderSaving = false;
+      const tok = await requestApproval('บิลนี้มีราคาพิเศษ / ของแถม — ให้ผู้จัดการอนุมัติ');
+      if (tok) return await submitTakeOrder(true);
+    }
+    $('#takeOrderError').textContent = e.message; return null;
+  }
   finally { takeOrderSaving = false; btn.disabled = false; $('#billPayBtn').disabled = false; if ($('#takeOrderModal').classList.contains('show')) renderCart(); }
 }
 $('#takeOrderSubmit').addEventListener('click', submitTakeOrder);
@@ -2202,12 +2417,12 @@ let receiptSettingsCache={};
 function rsEl(id){return document.getElementById(id)}
 function rsValue(id,fallback=''){const el=rsEl(id);return el&&typeof el.value==='string'?el.value:fallback}
 function rsChecked(id,fallback=true){const el=rsEl(id);return el?!!el.checked:fallback}
-function readReceiptSettingsForm(){return{branch_id:currentBranchId,menu_lang_primary:rsValue('rsMenuLang1',''),menu_lang_secondary:rsValue('rsMenuLang2',''),shop_name:rsValue('rsShopName').trim(),branch_name:rsValue('rsBranchName').trim(),subtitle:rsValue('rsSubtitle').trim(),address:rsValue('rsAddress').trim(),phone:rsValue('rsPhone').trim(),tax_id:rsValue('rsTaxId').trim(),footer:rsValue('rsFooter').trim(),paper_width:rsValue('rsPaper','80'),font_scale:rsValue('rsFont','normal'),header_align:rsValue('rsAlign','center'),show_branch:rsChecked('rsShowBranch'),show_guest:rsChecked('rsShowGuest'),show_cashier:rsChecked('rsShowCashier'),show_payment_breakdown:rsChecked('rsShowPayments'),show_order_time:rsChecked('rsShowOrderTime'),show_paid_time:rsChecked('rsShowPaidTime'),receipt_printer_route:rsValue('rsReceiptPrinterRoute','front'),kitchen_printer_route:rsValue('rsKitchenPrinterRoute','kitchen'),kitchen_auto_queue:rsChecked('rsKitchenAutoQueue'),day_cutoff_hour:rsValue('rsDayCutoff','0')}}
+function readReceiptSettingsForm(){return{branch_id:currentBranchId,menu_lang_primary:rsValue('rsMenuLang1',''),menu_lang_secondary:rsValue('rsMenuLang2',''),shop_name:rsValue('rsShopName').trim(),branch_name:rsValue('rsBranchName').trim(),subtitle:rsValue('rsSubtitle').trim(),address:rsValue('rsAddress').trim(),phone:rsValue('rsPhone').trim(),tax_id:rsValue('rsTaxId').trim(),footer:rsValue('rsFooter').trim(),paper_width:rsValue('rsPaper','80'),font_scale:rsValue('rsFont','normal'),header_align:rsValue('rsAlign','center'),show_branch:rsChecked('rsShowBranch'),show_guest:rsChecked('rsShowGuest'),show_cashier:rsChecked('rsShowCashier'),show_payment_breakdown:rsChecked('rsShowPayments'),show_order_time:rsChecked('rsShowOrderTime'),show_paid_time:rsChecked('rsShowPaidTime'),receipt_printer_route:rsValue('rsReceiptPrinterRoute','front'),kitchen_printer_route:rsValue('rsKitchenPrinterRoute','kitchen'),kitchen_auto_queue:rsChecked('rsKitchenAutoQueue'),day_cutoff_hour:rsValue('rsDayCutoff','0'),quick_notes:rsValue('rsQuickNotes','')}}
 let receiptPreviewMode='receipt';
 function renderReceiptSettingsPreview(){const r=readReceiptSettingsForm(),el=$('#receiptSettingsPreview');if(!el)return;el.className=`receipt-settings-preview paper-${r.paper_width} font-${r.font_scale} head-${r.header_align} preview-${receiptPreviewMode}`;const title=$('#receiptPreviewTitle');if(receiptPreviewMode==='kitchen'){if(title)title.textContent='ตัวอย่างใบสั่งห้องครัว';el.innerHTML=`<div class="rp-brand">KITCHEN ORDER</div>${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}<div class="rp-sep"></div><div class="kp-order"><b>#Z-20260921-0058</b><strong>โต๊ะ 4</strong></div><div class="kp-time">20:45 · รับออเดอร์แล้ว</div><div class="rp-sep"></div><div class="kp-item"><b>2×</b><span>ข้าวผัดตัวอย่าง<small>ไม่ใส่เผ็ด · เพิ่มไข่</small></span></div><div class="kp-item"><b>1×</b><span>น้ำตัวอย่าง</span></div><div class="rp-sep"></div><div class="kp-note"><b>หมายเหตุ</b><br>ตัวอย่างหมายเหตุจากลูกค้า</div><div class="rp-powered">ZaabOS · Kitchen</div>`;return}if(title)title.textContent='ตัวอย่างใบเสร็จหน้าร้าน';el.innerHTML=`<div class="rp-brand">${escapeHtml(r.shop_name||'ชื่อร้าน')}</div>${r.subtitle?`<div class="rp-brand-sub">${escapeHtml(r.subtitle)}</div>`:''}${r.show_branch&&r.branch_name?`<div class="rp-center">${escapeHtml(r.branch_name)}</div>`:''}${r.address?`<div class="rp-center rp-shop-detail">${escapeHtml(r.address)}</div>`:''}${r.phone?`<div class="rp-center rp-shop-detail">${escapeHtml(r.phone)}</div>`:''}<div class="rp-sep"></div><div class="rp-meta"><span>โต๊ะ</span><b>โต๊ะ 4</b>${r.show_guest?'<span>ลูกค้า</span><b>3</b>':''}</div><table class="rp-items"><tbody><tr><td>1</td><td>เมนูตัวอย่าง</td><td class="rp-price">₭50,000</td></tr></tbody></table><div class="rp-sep"></div><div class="rp-total"><span>รวม</span><span>₭50,000</span></div>${r.show_payment_breakdown?'<div class="rp-row"><span>Cash</span><span>₭50,000</span></div>':''}<div class="rp-thanks">${escapeHtml(r.footer||'ขอบใจที่ใช้บริการ')}</div><div class="rp-powered">ZaabOS</div>`}
 $('#receiptPreviewSwitch')?.addEventListener('click',e=>{const b=e.target.closest('[data-preview-mode]');if(!b)return;receiptPreviewMode=b.dataset.previewMode;$('#receiptPreviewSwitch').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));renderReceiptSettingsPreview()});
-async function loadReceiptSettings(){if(!currentBranchId)return;try{const r=await api('/api/settings/receipt?branch_id='+currentBranchId);receiptSettingsCache=r;const vals={rsShopName:r.shop_name||'',rsBranchName:r.branch_name||'',rsSubtitle:r.subtitle||'',rsAddress:r.address||'',rsPhone:r.phone||'',rsTaxId:r.tax_id||'',rsFooter:r.footer||'',rsPaper:r.paper_width||'80',rsFont:r.font_scale||'normal',rsAlign:r.header_align||'center',rsReceiptPrinterRoute:r.receipt_printer_route||'front',rsMenuLang1:r.menu_lang_primary||'',rsMenuLang2:r.menu_lang_secondary||'',rsKitchenPrinterRoute:r.kitchen_printer_route||'kitchen',rsDayCutoff:String(r.day_cutoff_hour||'0')};Object.entries(vals).forEach(([id,v])=>{const el=rsEl(id);if(el)el.value=v});const checks={rsShowBranch:r.show_branch!==false,rsShowGuest:r.show_guest!==false,rsShowCashier:r.show_cashier!==false,rsShowPayments:r.show_payment_breakdown!==false,rsShowOrderTime:r.show_order_time!==false,rsShowPaidTime:r.show_paid_time!==false,rsKitchenAutoQueue:r.kitchen_auto_queue!==false};Object.entries(checks).forEach(([id,v])=>{const el=rsEl(id);if(el)el.checked=v});renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}}
-$('#tab-receiptsettings').addEventListener('input',renderReceiptSettingsPreview);$('#tab-receiptsettings').addEventListener('change',renderReceiptSettingsPreview);$('#saveReceiptSettingsBtn').onclick=async()=>{try{const r=await apiJson('/api/settings/receipt','PUT',readReceiptSettingsForm());receiptSettingsCache=r.settings||{};if(boot){boot.day_cutoff=boot.day_cutoff||{};boot.day_cutoff[String(currentBranchId)]=Number(receiptSettingsCache.day_cutoff_hour||0);}toast('บันทึกการตั้งค่าร้านและใบเสร็จแล้ว','ok');renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}};
+async function loadReceiptSettings(){if(!currentBranchId)return;try{const r=await api('/api/settings/receipt?branch_id='+currentBranchId);receiptSettingsCache=r;const vals={rsShopName:r.shop_name||'',rsBranchName:r.branch_name||'',rsSubtitle:r.subtitle||'',rsAddress:r.address||'',rsPhone:r.phone||'',rsTaxId:r.tax_id||'',rsFooter:r.footer||'',rsPaper:r.paper_width||'80',rsFont:r.font_scale||'normal',rsAlign:r.header_align||'center',rsReceiptPrinterRoute:r.receipt_printer_route||'front',rsMenuLang1:r.menu_lang_primary||'',rsMenuLang2:r.menu_lang_secondary||'',rsKitchenPrinterRoute:r.kitchen_printer_route||'kitchen',rsDayCutoff:String(r.day_cutoff_hour||'0'),rsQuickNotes:r.quick_notes||''};Object.entries(vals).forEach(([id,v])=>{const el=rsEl(id);if(el)el.value=v});const checks={rsShowBranch:r.show_branch!==false,rsShowGuest:r.show_guest!==false,rsShowCashier:r.show_cashier!==false,rsShowPayments:r.show_payment_breakdown!==false,rsShowOrderTime:r.show_order_time!==false,rsShowPaidTime:r.show_paid_time!==false,rsKitchenAutoQueue:r.kitchen_auto_queue!==false};Object.entries(checks).forEach(([id,v])=>{const el=rsEl(id);if(el)el.checked=v});renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}}
+$('#tab-receiptsettings').addEventListener('input',renderReceiptSettingsPreview);$('#tab-receiptsettings').addEventListener('change',renderReceiptSettingsPreview);$('#saveReceiptSettingsBtn').onclick=async()=>{try{const r=await apiJson('/api/settings/receipt','PUT',readReceiptSettingsForm());receiptSettingsCache=r.settings||{};if(boot){boot.day_cutoff=boot.day_cutoff||{};boot.day_cutoff[String(currentBranchId)]=Number(receiptSettingsCache.day_cutoff_hour||0);loadBootstrap().catch(()=>{});}toast('บันทึกการตั้งค่าร้านและใบเสร็จแล้ว','ok');renderReceiptSettingsPreview()}catch(e){toast(e.message,'err')}};
 
 async function loadPricing(){
   if(!currentBranchId) return;

@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, jsonify, g, session, send_from_directory, send_file
-import sqlite3, os, functools, secrets, shutil, random, string, json, hashlib, subprocess
+import sqlite3, os, functools, secrets, shutil, random, string, json, hashlib, subprocess, re
 from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -786,6 +786,18 @@ def ensure_schema_migrations(conn):
         conn.execute("ALTER TABLE dining_tables ADD COLUMN zone TEXT NOT NULL DEFAULT ''")
     conn.commit()
     record_migration(conn, 32, 'table_zones')
+    # Per-line tools: dishes priced when ordered (seafood by weight…), price changes / free items that keep
+    # the menu price for the audit, takeaway for one dish, and "rush" for food already in the kitchen.
+    line_cols = {'menu_items': [('open_price', 'INTEGER NOT NULL DEFAULT 0')],
+                 'order_items': [('list_price', 'DOUBLE PRECISION' if IS_POSTGRES else 'REAL'), ('price_reason', "TEXT NOT NULL DEFAULT ''"),
+                                 ('takeaway', 'INTEGER NOT NULL DEFAULT 0'), ('rush_at', 'TIMESTAMP' if IS_POSTGRES else 'TEXT')]}
+    for table, defs in line_cols.items():
+        have = set() if IS_POSTGRES else {r['name'] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()}
+        for col, ddl in defs:
+            if IS_POSTGRES: conn.execute(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ddl}')
+            elif col not in have: conn.execute(f'ALTER TABLE {table} ADD COLUMN {col} {ddl}')
+    conn.commit()
+    record_migration(conn, 33, 'line_tools')
 
 
 
@@ -1542,6 +1554,8 @@ def archive_menu_category(cid):
     conn.commit()
     return jsonify(ok=True)
 
+PRIVATE_MENU_FIELDS = {'cost_price', 'stock_qty', 'track_stock', 'low_stock_threshold', 'kitchen_station_id', 'tenant_id'}
+
 def _menu_item_with_options(conn, item):
     d = dict(item)
     groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=? ORDER BY sort_order,id', (item['id'],)).fetchall()
@@ -1636,7 +1650,7 @@ def add_menu_item():
          d.get('image_url'), d.get('sort_order') or 0, cost_price, track_stock, stock_qty, low_stock_threshold, station_id, now()))
     item_id = cur.lastrowid
     _save_option_groups(conn, item_id, d.get('option_groups') or [])
-    conn.execute('UPDATE menu_items SET name_i18n=? WHERE id=?', (json.dumps(_clean_name_i18n(d.get('name_i18n')), ensure_ascii=False), cur.lastrowid))
+    conn.execute('UPDATE menu_items SET name_i18n=?,open_price=? WHERE id=?', (json.dumps(_clean_name_i18n(d.get('name_i18n')), ensure_ascii=False), 1 if d.get('open_price') else 0, cur.lastrowid))
     log_action('add_menu_item', detail=name)
     conn.commit()
     return jsonify(ok=True, id=item_id)
@@ -1707,6 +1721,8 @@ def edit_menu_item(mid):
     else: station_id=None
     if 'name_i18n' in d:
         conn.execute('UPDATE menu_items SET name_i18n=? WHERE id=?', (json.dumps(_clean_name_i18n(d.get('name_i18n')), ensure_ascii=False), mid))
+    if 'open_price' in d:
+        conn.execute('UPDATE menu_items SET open_price=? WHERE id=?', (1 if d.get('open_price') else 0, mid))
     conn.execute('''UPDATE menu_items SET name=?,description=?,base_price=?,category_id=?,image_url=?,
         sold_out=?,sort_order=?,cost_price=?,track_stock=?,stock_qty=?,low_stock_threshold=?,kitchen_station_id=? WHERE id=?''',
         ((d.get('name') or old['name']).strip(), d.get('description', old['description']), base_price,
@@ -1797,7 +1813,8 @@ def bootstrap():
     # Local shop server: QR codes must point at the shop PC's network address, not localhost.
     langs = {b['id']: dict(zip(('primary', 'secondary'), menu_langs(conn, g.tenant_id, b['id']))) for b in branches}
     cutoffs = {b['id']: day_cutoff_hour(conn, g.tenant_id, b['id']) for b in branches}
-    return jsonify(branches=branches, tables=tables, categories=categories, items=items, menu_langs=langs, day_cutoff=cutoffs,
+    quick = {b['id']: quick_notes_for(receipt_settings_for(conn, g.tenant_id, b['id'])) for b in branches}
+    return jsonify(branches=branches, tables=tables, categories=categories, items=items, menu_langs=langs, day_cutoff=cutoffs, quick_notes=quick,
                    public_url=(os.getenv('ZAABOS_PUBLIC_URL') or '').rstrip('/') or None)
 
 # =====================================================================
@@ -1848,9 +1865,19 @@ def item_display_names(item, primary, secondary):
     second = names.get(secondary, '') if secondary else ''
     return main, (second if second and second != main else '')
 
-def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
+MAX_LINE_PRICE = Decimal('1000000000')
+
+def _line_price(raw):
+    try: price = money_decimal(raw)
+    except Exception: raise ValueError('ราคาไม่ถูกต้อง')
+    if price < 0 or price > MAX_LINE_PRICE: raise ValueError('ราคาไม่ถูกต้อง')
+    return price
+
+def _validate_and_price_cart(conn, tenant_id, branch_id, cart, staff=False):
     """Recompute prices server-side from the real menu — never trust client-sent
-    totals. Returns (order_items_to_insert, total) or raises ValueError(msg)."""
+    totals. Returns (order_items_to_insert, total) or raises ValueError(msg).
+    Staff (not the customer QR page) may also send per line: price (open-price dish, a special price,
+    0 = free), price_reason and takeaway. A price below the menu price is marked needs_approval."""
     if not cart:
         raise ValueError('ตะกร้าว่างเปล่า กรุณาเลือกเมนูก่อนสั่ง')
     if not isinstance(cart, list) or len(cart) > 100:
@@ -1873,6 +1900,10 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
             raise ValueError('พบเมนูที่ไม่ถูกต้องในตะกร้า กรุณาโหลดหน้าใหม่')
         if item['sold_out']:
             raise ValueError(f'"{item["name"]}" หมดแล้ว กรุณาเอาออกจากตะกร้า')
+        open_price = bool(item['open_price']) if 'open_price' in item.keys() else False
+        override = line.get('price') if staff else None
+        if open_price and override in (None, ''):
+            raise ValueError(f'"{item["name"]}" ใส่ราคาตอนสั่ง กรุณาใส่ราคา' if staff else f'"{item["name"]}" กรุณาสั่งกับพนักงาน')
         unit_price = money_decimal(item['base_price'])
         chosen_options = []
         groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=?', (menu_item_id,)).fetchall()
@@ -1897,6 +1928,15 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
                 price_delta = money_decimal(opt['price_delta'])
                 unit_price = money_decimal(unit_price + price_delta)
                 chosen_options.append({'group_name': grp['name'], 'option_name': opt['name'], 'price_delta': money_float(price_delta)})
+        list_price, price_reason, needs_approval = None, '', False
+        if override not in (None, ''):
+            price = _line_price(override)
+            if open_price:
+                unit_price = price
+            elif price != unit_price:
+                list_price, needs_approval = money_float(unit_price), price < unit_price
+                price_reason = (str(line.get('price_reason') or '').strip()[:100]) or ('ของแถม' if price == 0 else 'ราคาพิเศษ')
+                unit_price = price
         line_total = money_decimal(unit_price * qty)
         total = money_decimal(total + line_total)
         prepared.append({
@@ -1904,6 +1944,8 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart):
             'item_name2': item_display_names(item, lang1, lang2)[1], 'quantity': qty,
             'unit_price': money_float(unit_price), 'line_total': money_float(line_total),
             'notes': (line.get('notes') or '').strip()[:300], 'options': chosen_options,
+            'list_price': list_price, 'price_reason': price_reason, 'needs_approval': needs_approval,
+            'takeaway': 1 if (staff and line.get('takeaway')) else 0,
         })
     return prepared, money_float(total)
 
@@ -1983,7 +2025,8 @@ def public_menu():
         return jsonify(error='ร้านนี้ปิดให้บริการชั่วคราว'), 404
     categories = [dict(x) for x in conn.execute('SELECT * FROM menu_categories WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY sort_order,id', (tenant_id, branch_id))]
     items_rows = conn.execute('SELECT * FROM menu_items WHERE tenant_id=? AND branch_id=? AND active=1 ORDER BY sort_order,id', (tenant_id, branch_id)).fetchall()
-    items = [_menu_item_with_options(conn, r) for r in items_rows]
+    # Customers see what they can order — never the shop's cost price or stock counts.
+    items = [{k: v for k, v in _menu_item_with_options(conn, r).items() if k not in PRIVATE_MENU_FIELDS} for r in items_rows]
     return jsonify(
         tenant=dict(name=tenant['name'], icon=tenant['icon'], currency=tenant['currency']),
         branch_id=branch_id,
@@ -2310,9 +2353,11 @@ def staff_create_order():
 
     try:
         scheduled_for, delivery_fee = _fulfillment_fields(d, order_type, public=False)
-        prepared_items, total = _validate_and_price_cart(conn, g.tenant_id, branch_id, d.get('cart') or [])
+        prepared_items, total = _validate_and_price_cart(conn, g.tenant_id, branch_id, d.get('cart') or [], staff=True)
     except ValueError as e:
         return jsonify(error=str(e)), 400
+    price_approver, approval_err = _line_price_approval(conn, d, prepared_items)
+    if approval_err: return approval_err
 
     try:
         order_no, cur = insert_order_row(conn, g.tenant_id,
@@ -2328,12 +2373,11 @@ def staff_create_order():
             raise RuntimeError('order insert did not return an id')
         new_item_ids = []
         for it in prepared_items:
-            oi_cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot)
-                VALUES(?,?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None, it.get('item_name2', '')))
-            oi_id = oi_cur.lastrowid
+            oi_id = _insert_staff_item(conn, order_id, it)
             if not oi_id:
                 raise RuntimeError('order item insert did not return an id')
             new_item_ids.append(oi_id)
+            _record_line_price(conn, int(branch_id), order_id, oi_id, it, price_approver)
             for opt in it['options']:
                 conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
                     (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
@@ -2688,13 +2732,14 @@ def add_order_items(oid):
     if not order: return jsonify(error='ไม่พบออเดอร์'),404
     if order['status'] in ('completed','cancelled') or order['payment_status']=='paid': return jsonify(error='ออเดอร์นี้ปิดแล้ว ไม่สามารถเพิ่มรายการได้'),409
     d=request.get_json() or {}
-    try: prepared,_=_validate_and_price_cart(conn,g.tenant_id,order['branch_id'],d.get('items') or [])
+    try: prepared,_=_validate_and_price_cart(conn,g.tenant_id,order['branch_id'],d.get('items') or [],staff=True)
     except ValueError as e: return jsonify(error=str(e)),400
+    price_approver, approval_err = _line_price_approval(conn, d, prepared)
+    if approval_err: return approval_err
     ids=[]
     for it in prepared:
-        cur=conn.execute('INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot) VALUES(?,?,?,?,?,?,?,?,?)',
-            (oid,it['menu_item_id'],it['item_name'],it['quantity'],it['unit_price'],it['line_total'],it['notes'],None,it.get('item_name2','')))
-        iid=cur.lastrowid; ids.append(iid)
+        iid=_insert_staff_item(conn,oid,it); ids.append(iid)
+        _record_line_price(conn,order['branch_id'],oid,iid,it,price_approver)
         for op in it['options']:
             conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
         _decrement_stock(conn,g.tenant_id,it['menu_item_id'],it['quantity'])
@@ -2706,6 +2751,29 @@ def add_order_items(oid):
     log_action('add_order_items',detail=f'{oid}: {ids}'); conn.commit()
     if sent: _wake_printer()
     return jsonify(ok=True,item_ids=ids,total_amount=total,sent_to_kitchen=sent,printed_by_server=sent and _network_printing(conn,order['branch_id'],'kitchen'))
+
+def _insert_staff_item(conn, order_id, it):
+    cur = conn.execute('''INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,item_name2_snapshot,list_price,price_reason,takeaway)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)''', (order_id, it['menu_item_id'], it['item_name'], it['quantity'], it['unit_price'], it['line_total'], it['notes'], None,
+                                             it.get('item_name2', ''), it.get('list_price'), it.get('price_reason', ''), it.get('takeaway', 0)))
+    iid = cur.lastrowid
+    for op in it['options']:
+        conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
+                     (iid, op['group_name'], op['option_name'], op['price_delta']))
+    return iid
+
+def _line_price_approval(conn, d, prepared):
+    """A price below the menu price (special price, free item) is money leaving the shop: a manager approves."""
+    if not any(it.get('needs_approval') for it in prepared): return None, None
+    approver, err = _critical_approval(conn, d)
+    if err: return None, (jsonify(error='ราคาต่ำกว่าเมนู / ของแถม ต้องให้ผู้จัดการอนุมัติ', code='approval_required'), 403)
+    return approver, None
+
+def _record_line_price(conn, branch_id, order_id, iid, it, approver):
+    if it.get('list_price') is None: return
+    free = float(it['unit_price']) == 0
+    _record_critical(conn, 'free_item' if free else 'reprice_item', branch_id, 'order_item', iid, it.get('price_reason') or '',
+                     approver if it.get('needs_approval') else None, f"order={order_id} {it['list_price']}->{it['unit_price']} x{it['quantity']}")
 
 def _item_station(conn, menu_item_id):
     row = conn.execute('SELECT kitchen_station_id FROM menu_items WHERE id=?', (menu_item_id,)).fetchone() if menu_item_id else None
@@ -2730,6 +2798,94 @@ def _mark_sold_out_from_void(conn, it):
     if not it['menu_item_id']: return
     conn.execute('UPDATE menu_items SET sold_out=1 WHERE id=? AND tenant_id=?',(it['menu_item_id'],g.tenant_id))
     log_action('mark_sold_out',detail=f'{it["menu_item_id"]} (from void)')
+
+def _open_order_item(conn, oid, iid):
+    order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
+    if not order: return None, None, (jsonify(error='ไม่พบออเดอร์'),404)
+    if order['payment_status']=='paid' or order['status'] in ('completed','cancelled'): return None, None, (jsonify(error='ออเดอร์นี้ปิดแล้ว'),409)
+    it=conn.execute('SELECT * FROM order_items WHERE id=? AND order_id=?' + _for_update(conn),(iid,oid)).fetchone()
+    if not it: return None, None, (jsonify(error='ไม่พบรายการ'),404)
+    return order, it, None
+
+def _slip_item(it, qty=None):
+    active = max(0, int(it['quantity']) - int(it['cancelled_quantity'] or 0))
+    return {'name': it['item_name_snapshot'], 'name2': (it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else '') or '',
+            'qty': int(qty if qty is not None else active)}
+
+def _notice_slips(conn, order, kind, items, title=''):
+    """'rush' / 'takeaway' note, one per kitchen station that makes these dishes."""
+    by_station = {}
+    for it in items: by_station.setdefault(_item_station(conn, it['menu_item_id']), []).append(_slip_item(it))
+    for station_id, rows in by_station.items():
+        _queue_kitchen_slip(conn, order, kind, station_id, {'items': rows, 'title': title})
+    return {'kind': kind, 'items': [_slip_item(it) for it in items], 'title': title, 'order_no': order['order_no'],
+            'where': order['table_name_snapshot'] or order['order_type']}
+
+@app.put('/api/orders/<int:oid>/items/<int:iid>/price')
+@login_required
+@role_required('owner','manager','staff')
+def reprice_order_item(oid, iid):
+    """Special price / free item on a line already on the bill. Lower than now needs a manager; the menu price is kept."""
+    conn=db(); order, it, err = _open_order_item(conn, oid, iid)
+    if err: return err
+    d=request.get_json() or {}
+    try: price=_line_price(d.get('price'))
+    except ValueError as e: return jsonify(error=str(e)),400
+    current=money_decimal(it['unit_price'])
+    if price==current: return jsonify(ok=True,unchanged=True,unit_price=money_float(current),total_amount=_recalculate_order_total(conn,oid))
+    approved_by=None
+    if price<current:
+        approved_by, approval_err = _critical_approval(conn, d)
+        if approval_err: return approval_err
+    menu=conn.execute('SELECT open_price FROM menu_items WHERE id=?',(it['menu_item_id'],)).fetchone() if it['menu_item_id'] else None
+    open_price=bool(menu and menu['open_price'])
+    list_price=it['list_price'] if it['list_price'] is not None else (None if open_price else money_float(current))
+    reason=(str(d.get('reason') or '').strip()[:100]) or ('ของแถม' if price==0 else 'ราคาพิเศษ')
+    if list_price is not None and money_decimal(list_price)==price: list_price, reason = None, ''   # back to the menu price
+    if open_price and list_price is None: reason = ''
+    qty=int(it['quantity'])
+    conn.execute('UPDATE order_items SET unit_price=?,line_total=?,list_price=?,price_reason=? WHERE id=?',
+                 (money_float(price),money_float(money_decimal(qty)*price),list_price,reason,iid))
+    total=_recalculate_order_total(conn,oid)
+    _record_critical(conn,'free_item' if price==0 else 'reprice_item',order['branch_id'],'order_item',iid,reason or 'ราคาเมนู',approved_by,f'order={oid} {money_float(current)}->{money_float(price)}')
+    log_action('reprice_order_item',detail=f'{oid}/{iid}: {money_float(current)}->{money_float(price)} {reason}'); conn.commit()
+    return jsonify(ok=True,unit_price=money_float(price),list_price=list_price,price_reason=reason,total_amount=total)
+
+@app.put('/api/orders/<int:oid>/items/<int:iid>/takeaway')
+@login_required
+@role_required('owner','manager','staff')
+def set_order_item_takeaway(oid, iid):
+    """Pack this dish to take home. When the kitchen already has it, a note tells them."""
+    conn=db(); order, it, err = _open_order_item(conn, oid, iid)
+    if err: return err
+    flag=1 if (request.get_json() or {}).get('takeaway') else 0
+    if int(it['takeaway'] or 0)==flag: return jsonify(ok=True,takeaway=bool(flag),kitchen_slip=None,printed_by_server=False)
+    conn.execute('UPDATE order_items SET takeaway=? WHERE id=?',(flag,iid))
+    slip=None
+    if it['kitchen_sent_at'] and int(it['quantity'])-int(it['cancelled_quantity'] or 0)>0:
+        slip=_notice_slips(conn,order,'takeaway',[it],'ห่อกลับ / ຫໍ່ກັບ' if flag else 'ไม่ห่อ ทานที่ร้าน / ກິນຢູ່ຮ້ານ')
+    log_action('set_item_takeaway',detail=f'{oid}/{iid}: {flag}'); conn.commit()
+    if slip: _wake_printer()
+    return jsonify(ok=True,takeaway=bool(flag),kitchen_slip=slip,printed_by_server=bool(slip) and _network_printing(conn,order['branch_id'],'kitchen'))
+
+@app.post('/api/orders/<int:oid>/rush')
+@login_required
+@role_required('owner','manager','staff')
+def rush_order_items(oid):
+    """Guest waited too long: a 'rush' slip for the dishes the kitchen has but has not finished."""
+    conn=db(); order=_row_for_update(conn, 'SELECT * FROM orders WHERE id=? AND tenant_id=?', (oid,g.tenant_id))
+    if not order: return jsonify(error='ไม่พบออเดอร์'),404
+    if order['status'] in ('completed','cancelled','served'): return jsonify(error='ออเดอร์นี้เสิร์ฟ/ปิดแล้ว'),409
+    wanted=(request.get_json() or {}).get('item_ids')
+    rows=conn.execute('SELECT * FROM order_items WHERE order_id=? ORDER BY id',(oid,)).fetchall()
+    items=[it for it in rows if it['kitchen_sent_at'] and int(it['quantity'])-int(it['cancelled_quantity'] or 0)>0
+           and (not wanted or it['id'] in {int(x) for x in wanted})]
+    if not items: return jsonify(error='ไม่มีรายการที่ส่งครัวแล้วให้เร่ง'),400
+    ts=now()
+    for it in items: conn.execute('UPDATE order_items SET rush_at=? WHERE id=?',(ts,it['id']))
+    slip=_notice_slips(conn,order,'rush',items,'เร่ง / ເລັ່ງ')
+    log_action('rush_order',detail=f'{oid}: {[it["id"] for it in items]}'); conn.commit(); _wake_printer()
+    return jsonify(ok=True,item_ids=[it['id'] for it in items],rush_at=ts,kitchen_slip=slip,printed_by_server=_network_printing(conn,order['branch_id'],'kitchen'))
 
 @app.put('/api/orders/<int:oid>/items/<int:iid>/cancel')
 @login_required
@@ -2831,10 +2987,38 @@ def move_order_table(oid):
     return jsonify(ok=True,kitchen_slip=slip,printed_by_server=bool(slip) and _network_printing(conn,order['branch_id'],'kitchen'))
 
 # ---------- Round 14C: critical operations / manager approval ----------
+APPROVAL_TTL = 15 * 60
+
+def _approval_serializer():
+    from itsdangerous import URLSafeTimedSerializer
+    return URLSafeTimedSerializer(app.secret_key, salt='zaabos-approval')
+
+@app.post('/api/approvals')
+@login_required
+@role_required('owner','manager','staff')
+def grant_approval():
+    """A manager types their password once on the staff's device and gets a short-lived approval
+    (15 min, this staff member only) — so the password is never kept in the page or a saved draft."""
+    conn=db(); d=request.get_json() or {}
+    approver, err = _critical_approval(conn, {k: d.get(k) for k in ('approval_username','approval_password')})
+    if err: return err
+    token=_approval_serializer().dumps({'t': g.tenant_id, 'u': g.user['id'], 'a': approver})
+    log_action('grant_approval', detail=f'approver={approver}'); conn.commit()
+    name=conn.execute('SELECT display_name,username FROM users WHERE id=?',(approver,)).fetchone()
+    return jsonify(ok=True, approval_token=token, approver=(name['display_name'] or name['username']) if name else '', expires_in=APPROVAL_TTL)
+
 def _critical_approval(conn, payload):
-    # Staff must provide manager/owner credentials; managers approve their own critical action.
+    # Staff must provide manager/owner credentials (or a fresh approval token); managers approve their own critical action.
     if g.user['role'] in ('owner','manager','super_admin'):
         return g.user['id'], None
+    token=payload.get('approval_token')
+    if token:
+        try: data=_approval_serializer().loads(token, max_age=APPROVAL_TTL)
+        except Exception: return None, (jsonify(error='การอนุมัติหมดเวลาแล้ว ให้ผู้จัดการอนุมัติอีกครั้ง', code='approval_expired'), 403)
+        if data.get('t')==g.tenant_id and data.get('u')==g.user['id'] and data.get('a'):
+            ok_user=conn.execute("SELECT id FROM users WHERE id=? AND tenant_id=? AND active=1 AND role IN ('owner','manager')",(data['a'],g.tenant_id)).fetchone()
+            if ok_user: return data['a'], None
+        return None, (jsonify(error='การอนุมัติไม่ถูกต้อง'), 403)
     username=(payload.get('approval_username') or '').strip()
     password=payload.get('approval_password') or ''
     if not username or not password:
@@ -3010,8 +3194,9 @@ def split_order(source_id):
             else:
                 remain=int(it['quantity'])-qty
                 conn.execute('UPDATE order_items SET quantity=?,line_total=? WHERE id=?',(remain,money_float(money_decimal(remain)*money_decimal(it['unit_price'])),it['id']))
-                nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at,item_name2_snapshot)
-                                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],money_float(money_decimal(qty)*money_decimal(it['unit_price'])),it['notes'],it['kitchen_sent_at'],0,'',None,it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else ''))
+                nc=conn.execute("""INSERT INTO order_items(order_id,menu_item_id,item_name_snapshot,quantity,unit_price,line_total,notes,kitchen_sent_at,cancelled_quantity,cancellation_reason,cancelled_at,item_name2_snapshot,list_price,price_reason,takeaway,rush_at)
+                                  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(destination_id,it['menu_item_id'],it['item_name_snapshot'],qty,it['unit_price'],money_float(money_decimal(qty)*money_decimal(it['unit_price'])),it['notes'],it['kitchen_sent_at'],0,'',None,it['item_name2_snapshot'] if 'item_name2_snapshot' in it.keys() else '',
+                                  it['list_price'],it['price_reason'] or '',it['takeaway'] or 0,it['rush_at']))
                 for op in conn.execute('SELECT * FROM order_item_options WHERE order_item_id=?',(it['id'],)).fetchall():
                     conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(nc.lastrowid,op['group_name_snapshot'],op['option_name_snapshot'],op['price_delta_snapshot']))
 
@@ -3782,11 +3967,31 @@ def receipt_settings_for(conn, tenant_id, branch_id):
         except Exception: pass
     return data
 
+# Quick note buttons under each order line (staff mostly type; these are for the rush hour).
+# Seeded from what the shop's staff typed most in their old POS.
+DEFAULT_QUICK_NOTES = {
+    'lo': ['ບໍ່ເຜັດ', 'ເຜັດໜ້ອຍ', 'ເຜັດຫຼາຍ', 'ສຸກ', 'ດິບ', 'ສົ້ມນົວ', 'ສົ້ມຫວານ', 'ບໍ່ໃສ່ປາແດກ', 'ບໍ່ໃສ່ຜັກ', 'ບໍ່ໃສ່ແປ້ງນົວ'],
+    'th': ['ไม่เผ็ด', 'เผ็ดน้อย', 'เผ็ดมาก', 'สุก', 'ดิบ', 'หวานน้อย', 'ไม่ใส่ผัก', 'ไม่ใส่ปลาร้า', 'ไม่ใส่ผงชูรส', 'แยกน้ำ'],
+    'zh': ['不辣', '微辣', '特辣', '全熟', '生', '少甜', '不要菜', '不要味精', '汤分开'],
+    'en': ['Not spicy', 'Mild', 'Extra spicy', 'Well done', 'Raw', 'Less sweet', 'No vegetables', 'No MSG', 'Sauce on the side'],
+}
+
+def _parse_quick_notes(raw):
+    parts = raw if isinstance(raw, list) else re.split(r'[\n,]+', str(raw or ''))
+    out = []
+    for x in parts:
+        x = str(x).strip()[:30]
+        if x and x not in out: out.append(x)
+    return out[:24]
+
+def quick_notes_for(rs):
+    return _parse_quick_notes(rs.get('quick_notes')) or DEFAULT_QUICK_NOTES.get(rs.get('menu_lang_primary') or 'th', DEFAULT_QUICK_NOTES['th'])
+
 def _receipt_settings_defaults(conn, branch_id, tenant_id=None):
     tenant_id=g.tenant_id if tenant_id is None else tenant_id
     tenant=conn.execute('SELECT name FROM tenants WHERE id=?',(tenant_id,)).fetchone()
     branch=conn.execute('SELECT name FROM branches WHERE id=? AND tenant_id=?',(branch_id,tenant_id)).fetchone()
-    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True, menu_lang_primary='', menu_lang_secondary='', day_cutoff_hour='0')
+    return dict(shop_name=(tenant['name'] if tenant else 'ZaabOS'), branch_name=(branch['name'] if branch else ''), subtitle='RESTAURANT · POS', address='', phone='', tax_id='', footer='ขอบใจที่ใช้บริการ', paper_width='80', font_scale='normal', header_align='center', show_branch=True, show_guest=True, show_cashier=True, show_payment_breakdown=True, show_order_time=True, show_paid_time=True, receipt_printer_route='front', kitchen_printer_route='kitchen', kitchen_auto_queue=True, menu_lang_primary='', menu_lang_secondary='', day_cutoff_hour='0', quick_notes='')
 
 @app.get('/api/settings/receipt')
 @login_required
@@ -3806,7 +4011,7 @@ def save_receipt_settings():
     try: branch_id=int(d.get('branch_id'))
     except (TypeError,ValueError): return jsonify(error='branch_id ไม่ถูกต้อง'),400
     if not conn.execute('SELECT 1 FROM branches WHERE id=? AND tenant_id=?',(branch_id,g.tenant_id)).fetchone(): return jsonify(error='ไม่พบสาขา'),404
-    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue','menu_lang_primary','menu_lang_secondary','day_cutoff_hour'}
+    allowed={'shop_name','branch_name','subtitle','address','phone','tax_id','footer','paper_width','font_scale','header_align','show_branch','show_guest','show_cashier','show_payment_breakdown','show_order_time','show_paid_time','receipt_printer_route','kitchen_printer_route','kitchen_auto_queue','menu_lang_primary','menu_lang_secondary','day_cutoff_hour','quick_notes'}
     defaults=_receipt_settings_defaults(conn,branch_id); clean={}
     for k in allowed:
         v=d.get(k,defaults.get(k))
@@ -3818,6 +4023,7 @@ def save_receipt_settings():
     if clean['receipt_printer_route'] not in ('front','browser'): clean['receipt_printer_route']='front'
     if clean['kitchen_printer_route'] not in ('kitchen','browser'): clean['kitchen_printer_route']='kitchen'
     if clean['day_cutoff_hour'] not in [str(h) for h in range(MAX_DAY_CUTOFF_HOUR+1)]: clean['day_cutoff_hour']='0'
+    clean['quick_notes']='\n'.join(_parse_quick_notes(d.get('quick_notes')))
     payload=json.dumps(clean,ensure_ascii=False)
     if IS_POSTGRES:
         conn.execute('''INSERT INTO receipt_settings(tenant_id,branch_id,settings_json,updated_by_user_id,updated_at) VALUES(?,?,?,?,?)

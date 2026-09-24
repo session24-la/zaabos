@@ -33,7 +33,7 @@ jobs:
       - run: python -m pip install -r requirements.txt -r requirements-local.txt pytest
       - name: SQLite and browser regressions
         run: |
-          python -m pytest tests/test_runtime_regressions.py tests/test_money_reconciliation.py tests/test_local_mode.py tests/test_printing.py tests/test_local_ops.py tests/test_version_e_api.py tests/test_batch_a.py -q
+          python -m pytest tests/test_runtime_regressions.py tests/test_money_reconciliation.py tests/test_local_mode.py tests/test_printing.py tests/test_local_ops.py tests/test_version_e_api.py tests/test_batch_a.py tests/test_batch_b.py -q
           python -m pytest tests/soak_shop_day.py -q -W error::pytest.PytestUnhandledThreadExceptionWarning
           python round30_customer_history_test.py
           python round31_table_open_bill_test.py
@@ -43,4 +43,4 @@ jobs:
       - name: PostgreSQL concurrent checkout and real restore
         env:
           DATABASE_URL: postgresql://zaabos_ci:disposable-ci-only@127.0.0.1:5432/zaabos_ci
-        run: python -m pytest tests/test_runtime_regressions.py tests/test_money_reconciliation.py tests/test_printing.py tests/test_version_e_api.py tests/test_batch_a.py -q
+        run: python -m pytest tests/test_runtime_regressions.py tests/test_money_reconciliation.py tests/test_printing.py tests/test_version_e_api.py tests/test_batch_a.py tests/test_batch_b.py -q

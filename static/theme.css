@@ -822,3 +822,64 @@ html:root:not([data-theme="dark"]) .rank-track span{background:linear-gradient(9
 .so-row.is-out .so-toggle{border-color:var(--pos);color:var(--pos);background:var(--surface)}
 @media (max-width:760px){ html.kitchen-embed .kitchen-filters{padding-right:0} }
 .cl-out{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--neg);color:#fff;font-size:11px;font-weight:800;vertical-align:1px}
+
+/* ---------- Batch B: per-line tools ---------- */
+/* sheets that open over the order workspace (z 35 desktop / 55 phone) and over the bill detail */
+.modal:not(.workspace){z-index:60}
+#lineEditModal,#lineToolsModal,#leaveOrderModal{z-index:72}
+#approveModal{z-index:80}
+.le-sub{color:var(--text-muted);font-size:13px;margin:6px 0 2px;min-height:0}
+.le-sub:empty{display:none}
+.le-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0}
+.le-steps{display:flex;align-items:center;gap:6px}
+.le-steps button{width:44px;height:44px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);display:grid;place-items:center;font-size:18px;cursor:pointer}
+.le-steps b{min-width:36px;text-align:center;font-size:18px}
+.le-note{display:block;margin:4px 0 8px}
+.le-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+.le-chip{min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-weight:600;font-size:13.5px;cursor:pointer}
+.le-chip.active{background:var(--primary-soft);border-color:var(--primary);color:var(--primary-text)}
+.le-toggle{width:100%;min-height:46px;display:flex;align-items:center;gap:8px;padding:0 14px;border-radius:12px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-weight:700;cursor:pointer;margin-bottom:12px}
+.le-toggle small{margin-left:auto;font-weight:500}
+.le-toggle.active{background:var(--amber-soft);border-color:var(--amber);color:var(--amber)}
+.le-price{padding:12px;border:1px solid var(--border);border-radius:14px;background:var(--surface-2);margin-bottom:10px}
+.le-price.hidden{display:none}
+.le-price-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-weight:700}
+.le-price-row{display:grid;grid-template-columns:1fr auto auto;gap:6px}
+.le-price-row input{font-size:17px;font-weight:700}
+.le-price-row .ghost-btn{min-height:42px;padding:0 12px}
+.le-price-row .ghost-btn.active{border-color:var(--pos)!important;color:var(--pos)!important}
+.le-price #lePriceReason,.le-price #ltPriceReason{margin-top:8px;width:100%}
+.le-price #ltPriceSave{width:100%;margin-top:8px}
+.le-price .hint{margin-top:6px}
+.le-actions{display:grid;grid-template-columns:auto 1fr;gap:8px;margin-top:6px}
+.le-actions .ghost-btn{min-height:46px;padding:0 16px}
+.lt-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0 10px}
+.lt-btn{min-height:56px;border-radius:14px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-weight:700;font-size:14.5px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer}
+.lt-btn .ic{font-size:18px}
+.lt-btn.rush{border-color:var(--neg);color:var(--neg);background:var(--neg-soft)}
+.lt-btn.danger{color:var(--neg)}
+.lt-btn.on{border-color:var(--amber);color:var(--amber);background:var(--amber-soft)}
+.approve-text{margin:8px 0 12px;font-weight:600}
+/* bill lines: tap to edit, small tags */
+.bill-line .bl-edit{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;min-width:0;flex:1}
+.bill-line .bl-edit:focus-visible{outline:2px solid var(--primary);border-radius:6px}
+.bill-line .bl-edit b{font-weight:600}
+.bl-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.bl-tag{display:inline-flex;align-items:center;gap:3px;height:20px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:800;background:var(--surface-3);color:var(--text-muted)}
+.bl-tag-take{background:var(--amber-soft);color:var(--amber)}
+.bl-tag-free{background:var(--pos-soft);color:var(--pos)}
+.bl-tag-rush{background:var(--neg-soft);color:var(--neg)}
+.bl-tag-price{background:var(--primary-soft);color:var(--primary-text)}
+.bl-price s{color:var(--text-faint);font-weight:500;margin-right:4px;font-size:12px}
+.bill-line.is-sent{cursor:pointer}
+.bill-rush{color:var(--neg)!important}
+.oc-item-row .bl-tags{display:inline-flex;margin:0 0 0 6px;vertical-align:1px}
+.mini-step.mini-tools{width:auto;padding:0 8px}
+/* menu: dish priced when ordered */
+#takeOrderMenuGrid .mc-price.open{color:var(--primary-text)!important;font-size:12.5px}
+/* kitchen screen: rush / takeaway */
+.kt-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.kt-tag{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 10px;border-radius:999px;font-size:13px;font-weight:800}
+.kt-tag-rush{background:var(--neg);color:#fff}
+.kt-tag-take{background:var(--amber-soft);color:var(--amber);border:1px solid var(--amber)}
+.kitchen-ticket.kt-rushed{border-color:var(--neg)!important;box-shadow:0 0 0 2px var(--neg) inset!important}
