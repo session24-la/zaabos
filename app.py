@@ -1908,11 +1908,21 @@ def _validate_and_price_cart(conn, tenant_id, branch_id, cart, staff=False):
         chosen_options = []
         groups = conn.execute('SELECT * FROM menu_option_groups WHERE menu_item_id=?', (menu_item_id,)).fetchall()
         selected = line.get('selected_options') or {}  # {group_id: option_id | [option_ids]}
+        if not isinstance(selected, dict):
+            raise ValueError('ตัวเลือกเมนูไม่ถูกต้อง กรุณาโหลดหน้าใหม่')
         for grp in groups:
             raw = selected.get(str(grp['id'])) if str(grp['id']) in selected else selected.get(grp['id'])
             opt_ids = raw if isinstance(raw, list) else ([] if raw in (None, '') else [raw])
             # Deduplicate IDs so a tampered client cannot charge/add the same modifier twice.
-            opt_ids = list(dict.fromkeys(str(x) for x in opt_ids))
+            try:
+                if any(isinstance(x, bool) or not isinstance(x, (str, int)) or not str(x).strip().isascii()
+                       or not str(x).strip().isdigit() for x in opt_ids):
+                    raise ValueError()
+                opt_ids = list(dict.fromkeys(int(str(x).strip()) for x in opt_ids))
+                if any(x < 1 or x > 9223372036854775807 for x in opt_ids):
+                    raise ValueError()
+            except (TypeError, ValueError):
+                raise ValueError('ตัวเลือกเมนูไม่ถูกต้อง กรุณาโหลดหน้าใหม่')
             selection_type = grp['selection_type'] if 'selection_type' in grp.keys() else 'single'
             min_select = int(grp['min_select'] if 'min_select' in grp.keys() else (1 if grp['required'] else 0))
             max_select = int(grp['max_select'] if 'max_select' in grp.keys() else 1)
@@ -2378,9 +2388,6 @@ def staff_create_order():
                 raise RuntimeError('order item insert did not return an id')
             new_item_ids.append(oi_id)
             _record_line_price(conn, int(branch_id), order_id, oi_id, it, price_approver)
-            for opt in it['options']:
-                conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',
-                    (oi_id, opt['group_name'], opt['option_name'], opt['price_delta']))
             _decrement_stock(conn, g.tenant_id, it['menu_item_id'], it['quantity'])
         sent = bool(d.get('send_to_kitchen'))
         if sent:   # staff already checked the order at the table: no second "send to kitchen" tap to forget
@@ -2740,8 +2747,6 @@ def add_order_items(oid):
     for it in prepared:
         iid=_insert_staff_item(conn,oid,it); ids.append(iid)
         _record_line_price(conn,order['branch_id'],oid,iid,it,price_approver)
-        for op in it['options']:
-            conn.execute('INSERT INTO order_item_options(order_item_id,group_name_snapshot,option_name_snapshot,price_delta_snapshot) VALUES(?,?,?,?)',(iid,op['group_name'],op['option_name'],op['price_delta']))
         _decrement_stock(conn,g.tenant_id,it['menu_item_id'],it['quantity'])
     total=_recalculate_order_total(conn,oid)
     if order['status'] in ('ready', 'served'):
