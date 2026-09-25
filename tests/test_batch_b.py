@@ -13,6 +13,41 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_money_reconciliation import assert_ledger, call, core, ok, open_shift, order, pay, shop  # noqa: E402,F401
 from test_printing import FakePrinter, _jobs, _only_this_shop, _wait, add_printer, local_print  # noqa: E402,F401
+
+
+@pytest.mark.parametrize('route', ['create', 'add', 'qr'])
+def test_modifier_id_aliases_are_charged_once(shop, route):
+    with core.app.app_context():
+        c = core.db()
+        gid = c.execute("INSERT INTO menu_option_groups(menu_item_id,name,selection_type,min_select,max_select) VALUES(?,?,'multi',0,5)",
+                        (shop['noodle'], 'Extras')).lastrowid
+        opt = c.execute('INSERT INTO menu_options(group_id,name,price_delta,active) VALUES(?,?,?,1)', (gid, 'Egg', 5000)).lastrowid
+        token = c.execute('SELECT qr_token FROM dining_tables WHERE id=?', (shop['tables'][0],)).fetchone()['qr_token']
+        c.commit()
+    cart = [{'menu_item_id': shop['noodle'], 'quantity': 1,
+             'selected_options': {str(gid): [opt, str(opt), f'0{opt}', f' {opt} ']}}]
+    if route == 'qr':
+        with core.app.test_client() as client:
+            r = client.post('/api/public/orders', json={'branch_id': shop['branch'], 'order_type': 'dine_in', 'table_token': token, 'cart': cart})
+        assert r.status_code == 200, r.get_json()
+        oid = r.get_json()['order_id']
+    elif route == 'add':
+        oid = ok(new_order(shop, [{'menu_item_id': shop['beer'], 'quantity': 1}]))['order_id']
+        ok(call(shop, 'staff', 'POST', f'/api/orders/{oid}/items', {'items': cart}))
+    else:
+        oid = ok(new_order(shop, cart))['order_id']
+    with core.app.app_context():
+        c = core.db()
+        it = c.execute('SELECT id,unit_price FROM order_items WHERE order_id=? AND menu_item_id=?', (oid, shop['noodle'])).fetchone()
+        assert it['unit_price'] == 30000
+        assert len(c.execute('SELECT * FROM order_item_options WHERE order_item_id=?', (it['id'],)).fetchall()) == 1
+
+
+@pytest.mark.parametrize('selected', [['invalid'], {'not-a-group': 1}])
+def test_malformed_option_selection_is_not_a_server_error(shop, selected):
+    # Unknown group IDs are ignored; a non-object selection is rejected cleanly.
+    code, _ = new_order(shop, [{'menu_item_id': shop['noodle'], 'quantity': 1, 'selected_options': selected}])
+    assert code == (400 if isinstance(selected, list) else 200)
 import printing  # noqa: E402
 
 MANAGER_PW = 'manager-pass-123'

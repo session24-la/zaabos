@@ -370,6 +370,8 @@ def test_fresh_install_is_ready_to_sell(tmp_path):
     shutil.copytree(ROOT, dest, ignore=shutil.ignore_patterns('.git', '*.db', '.secret_key', '__pycache__', '.pytest_cache', 'backups'))
     env = dict(os.environ, ZAABOS_ADMIN_PASSWORD='local-test-password-only')
     env.pop('DATABASE_URL', None)
+    env.pop('ZAABOS_DATA_DIR', None)
+    env.pop('ZAABOS_BACKUP_DIR', None)
     out = subprocess.run([sys.executable, '-c', FRESH_SCRIPT], cwd=dest, env=env, capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     res = json.loads(out.stdout.split('RESULT', 1)[1])
